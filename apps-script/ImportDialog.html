@@ -11,7 +11,7 @@
     .ai { border-color: #a7f3d0; background: #ecfdf5; }
     input, textarea, select { box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     input[type="file"], input[type="checkbox"] { width: auto; }
-    textarea { min-height: 76px; resize: vertical; }
+    textarea { min-height: 72px; resize: vertical; }
     label { font-size: 12px; font-weight: 700; }
     button { background: #2563eb; color: #fff; border: 0; border-radius: 7px; padding: 9px 13px; font-weight: 700; cursor: pointer; margin: 4px 4px 4px 0; }
     button.secondary { background: #059669; }
@@ -19,7 +19,10 @@
     button:disabled { opacity: .5; cursor: wait; }
     #status { margin-top: 12px; white-space: pre-wrap; font-size: 13px; line-height: 1.45; padding: 10px; background: #f8fafc; border-radius: 7px; min-height: 34px; }
     .muted { color: #6b7280; font-size: 12px; }
-    .row { display: grid; grid-template-columns: 1fr 110px; gap: 8px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .hidden { display:none; }
+    .ok { color:#047857; font-weight:700; }
+    .warn { color:#b45309; font-weight:700; }
   </style>
 </head>
 <body>
@@ -36,13 +39,13 @@
 
   <div class="box ai">
     <h3>2. AI phân tích cơ hội</h3>
+
     <div class="row">
       <div>
-        <label>Model</label>
-        <select id="model">
-          <option value="gpt-6-luna">gpt-6-luna</option>
-          <option value="gpt-6-sol">gpt-6-sol</option>
-          <option value="gpt-5.6-luna">gpt-5.6-luna</option>
+        <label>Nhà cung cấp AI</label>
+        <select id="provider" onchange="providerChanged()">
+          <option value="openai">OpenAI</option>
+          <option value="gemini">Google Gemini</option>
         </select>
       </div>
       <div>
@@ -51,9 +54,19 @@
       </div>
     </div>
 
-    <label>OpenAI API key</label>
-    <input id="apiKey" type="password" placeholder="Chỉ cần nhập khi cài lần đầu hoặc muốn thay key">
-    <div class="muted">Key được lưu trong Script Properties, không ghi vào Google Sheet hoặc GitHub.</div>
+    <div id="openaiBox">
+      <label>OpenAI API key</label>
+      <input id="openaiApiKey" type="password" placeholder="sk-... | để trống nếu đã lưu trước đó">
+    </div>
+
+    <div id="geminiBox" class="hidden">
+      <label>Gemini API key (Google AI)</label>
+      <input id="geminiApiKey" type="password" placeholder="Dán Gemini API key | để trống nếu đã lưu trước đó">
+      <div class="muted">Google Sheets không cần API key riêng: Apps Script đang dùng OAuth của chính file Sheet. Key này chỉ dùng nếu chọn Gemini để phân tích.</div>
+    </div>
+
+    <label>Model</label>
+    <select id="model"></select>
 
     <label style="display:block;margin-top:8px;">Business context / mình đang bán gì?</label>
     <textarea id="businessContext" placeholder="Ví dụ: Bán lốp, phụ kiện và dịch vụ bảo dưỡng VinFast Lux tại Hà Nội. Ưu tiên khách có nhu cầu thực, cần gấp hoặc đang tìm giải pháp."></textarea>
@@ -65,13 +78,26 @@
 
     <button class="secondary" onclick="saveAiConfig()">LƯU CẤU HÌNH AI</button>
     <button class="dark" onclick="testAi()">TEST AI</button>
-    <button onclick="analyzeNew()">AI PHÂN TÍCH BÀI MỚI</button>
+    <button onclick="analyzeNew()">AI PHÂN TÍCH BÀI CHỜ</button>
     <div id="aiState" class="muted">Đang đọc cấu hình...</div>
   </div>
 
   <div id="status">Sẵn sàng.</div>
 
   <script>
+    const MODELS = {
+      openai: [
+        ['gpt-5.6-luna','gpt-5.6-luna — nhanh/volume'],
+        ['gpt-5.6-terra','gpt-5.6-terra — cân bằng'],
+        ['gpt-5.6-sol','gpt-5.6-sol — chất lượng cao']
+      ],
+      gemini: [
+        ['gemini-3.5-flash','gemini-3.5-flash — nhanh/volume'],
+        ['gemini-2.5-flash','gemini-2.5-flash'],
+        ['gemini-2.5-pro','gemini-2.5-pro']
+      ]
+    };
+
     function setStatus(text) { document.getElementById('status').textContent = text; }
 
     function command(payload, ok, fail) {
@@ -81,14 +107,40 @@
         .importJsonFiles([payload]);
     }
 
+    function setModels(provider, selected) {
+      const el = document.getElementById('model');
+      el.innerHTML = '';
+      (MODELS[provider] || []).forEach(pair => {
+        const o = document.createElement('option');
+        o.value = pair[0];
+        o.textContent = pair[1];
+        el.appendChild(o);
+      });
+      if (selected && [...el.options].some(o => o.value === selected)) el.value = selected;
+    }
+
+    function providerChanged(selectedModel) {
+      const p = document.getElementById('provider').value;
+      document.getElementById('openaiBox').classList.toggle('hidden', p !== 'openai');
+      document.getElementById('geminiBox').classList.toggle('hidden', p !== 'gemini');
+      setModels(p, selectedModel);
+    }
+
     function loadAiConfig() {
       command({__command:'GET_AI_CONFIG'}, cfg => {
-        document.getElementById('model').value = cfg.model || 'gpt-6-luna';
+        document.getElementById('provider').value = cfg.provider || 'openai';
+        providerChanged(cfg.model);
         document.getElementById('maxRows').value = cfg.maxRows || 100;
         document.getElementById('businessContext').value = cfg.businessContext || '';
         document.getElementById('autoAnalyze').checked = cfg.autoAnalyze !== false;
-        document.getElementById('aiState').textContent =
-          (cfg.configured ? '✅ API key đã cấu hình' : '⚠️ Chưa có API key') + ' | Runtime V' + cfg.version;
+
+        const bits = [
+          'Runtime V' + cfg.version,
+          'OpenAI ' + (cfg.openaiConfigured ? '✅' : '—'),
+          'Gemini ' + (cfg.geminiConfigured ? '✅' : '—'),
+          'Đang chọn: ' + (cfg.provider === 'gemini' ? 'Gemini' : 'OpenAI')
+        ];
+        document.getElementById('aiState').textContent = bits.join(' | ');
       });
     }
 
@@ -112,7 +164,10 @@
           })
           .withFailureHandler(e => { setStatus('Lỗi: ' + (e.message || e)); btn.disabled = false; })
           .importJsonFiles(files);
-      } catch (e) { setStatus('Lỗi đọc file: ' + e.message); btn.disabled = false; }
+      } catch (e) {
+        setStatus('Lỗi đọc file: ' + e.message);
+        btn.disabled = false;
+      }
     }
 
     function refreshData() {
@@ -131,7 +186,9 @@
     function saveAiConfig() {
       const payload = {
         __command:'SAVE_AI_CONFIG',
-        apiKey: document.getElementById('apiKey').value.trim(),
+        provider: document.getElementById('provider').value,
+        openaiApiKey: document.getElementById('openaiApiKey').value.trim(),
+        geminiApiKey: document.getElementById('geminiApiKey').value.trim(),
         model: document.getElementById('model').value,
         maxRows: Number(document.getElementById('maxRows').value || 100),
         businessContext: document.getElementById('businessContext').value.trim(),
@@ -139,24 +196,25 @@
       };
       setStatus('Đang lưu cấu hình AI...');
       command(payload, cfg => {
-        document.getElementById('apiKey').value = '';
-        document.getElementById('aiState').textContent = '✅ API key đã cấu hình | Runtime V' + cfg.version;
-        setStatus('Đã lưu cấu hình AI. Model: ' + cfg.model + ' | Auto analyze: ' + (cfg.autoAnalyze ? 'BẬT' : 'TẮT'));
+        document.getElementById('openaiApiKey').value = '';
+        document.getElementById('geminiApiKey').value = '';
+        loadAiConfig();
+        setStatus('Đã lưu cấu hình AI. Provider: ' + cfg.provider + ' | Model: ' + cfg.model + ' | Auto analyze: ' + (cfg.autoAnalyze ? 'BẬT' : 'TẮT'));
       });
     }
 
     function testAi() {
-      setStatus('Đang test OpenAI API...');
+      setStatus('Đang test AI...');
       command({__command:'TEST_AI'}, r => {
-        setStatus((r.ok ? '✅ AI kết nối thành công' : '⚠️ AI trả về không đúng test') + '\nModel: ' + r.model + '\nRuntime: V' + r.version);
+        setStatus((r.ok ? '✅ AI kết nối thành công' : '⚠️ AI trả về không đúng test') + '\nProvider: ' + r.provider + '\nModel: ' + r.model + '\nRuntime: V' + r.version);
       });
     }
 
     function analyzeNew() {
-      setStatus('AI đang phân tích các bài chưa có Pain / Intent / Score...');
+      setStatus('AI đang phân tích các bài Chờ AI...');
       command({__command:'ANALYZE_NEW'}, r => {
         const err = r.errors && r.errors.length ? '\nLỗi:\n- ' + r.errors.join('\n- ') : '';
-        setStatus('AI XONG - V' + r.version + '\nModel: ' + r.model + '\nĐã phân tích: ' + r.analyzed + '\nCòn lại: ' + r.remaining + '\nKH tiềm năng: ' + (r.refresh ? r.refresh.leads : '-') + '\nHàng điều phối: ' + (r.refresh ? r.refresh.queue : '-') + err);
+        setStatus('AI XONG - V' + r.version + '\nProvider: ' + r.provider + '\nModel: ' + r.model + '\nĐã phân tích: ' + r.analyzed + '\nCòn lại: ' + r.remaining + '\nKH tiềm năng: ' + (r.refresh ? r.refresh.leads : '-') + '\nHàng điều phối: ' + (r.refresh ? r.refresh.queue : '-') + err);
       });
     }
 
