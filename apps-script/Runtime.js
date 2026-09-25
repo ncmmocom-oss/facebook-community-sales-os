@@ -1,12 +1,13 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.5.1',
+    VERSION: '1.5.3',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
     GROUP_SUMMARY_SHEET: 'NHÓM',
     LEAD_SHEET: 'KHÁCH HÀNG TIỀM NĂNG',
     COORDINATION_SHEET: 'ĐIỀU PHỐI',
+    AI_LOG_SHEET: 'NHẬT KÝ AI',
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -164,6 +165,7 @@ const RemoteApp = (() => {
     if (name === 'SAVE_AI_CONFIG') return saveAiConfig_(command);
     if (name === 'ANALYZE_NEW') return analyzeNewPosts_({ silent: false });
     if (name === 'TEST_AI') return testAiConnection_();
+    if (name === 'GET_AI_PROGRESS') return getAiProgress_();
     throw new Error('Lệnh giao diện không được hỗ trợ: ' + name);
   }
 
@@ -272,72 +274,212 @@ const RemoteApp = (() => {
     return analyzeNewPosts_({ silent: false });
   }
 
+  function getAiProgress_() {
+    const raw = PropertiesService.getScriptProperties().getProperty('AI_PROGRESS_JSON');
+    if (!raw) return { active: false, version: CFG.VERSION };
+    try {
+      const p = JSON.parse(raw);
+      p.version = CFG.VERSION;
+      return p;
+    } catch (_) {
+      return { active: false, version: CFG.VERSION };
+    }
+  }
+
+  function setAiProgress_(p) {
+    const payload = Object.assign({
+      version: CFG.VERSION,
+      updatedAt: new Date().toISOString()
+    }, p || {});
+    PropertiesService.getScriptProperties().setProperty('AI_PROGRESS_JSON', JSON.stringify(payload));
+    return payload;
+  }
+
+  function ensureAiLogSheet_() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(CFG.AI_LOG_SHEET);
+    if (!sheet) {
+      sheet = ss.insertSheet(CFG.AI_LOG_SHEET);
+      sheet.getRange(1, 1, 1, 12).setValues([[
+        'Thời gian','Run ID','Sự kiện','Provider','Model','Batch','Tổng batch',
+        'Đã phân tích','Tổng chọn','Còn lại','Trạng thái','Chi tiết'
+      ]]);
+      sheet.setFrozenRows(1);
+    }
+    return sheet;
+  }
+
+  function logAi_(data) {
+    try {
+      const sheet = ensureAiLogSheet_();
+      sheet.appendRow([
+        new Date(),
+        data.runId || '',
+        data.event || '',
+        data.provider || '',
+        data.model || '',
+        data.batch || '',
+        data.totalBatches || '',
+        data.analyzed || 0,
+        data.total || 0,
+        data.remaining || 0,
+        data.status || '',
+        data.message || ''
+      ]);
+    } catch (_) {}
+  }
+
   function analyzeNewPosts_(options) {
     const silent = options && options.silent;
     const cfg = getAiConfig_();
     if (!cfg.configured) throw new Error('Chưa cấu hình API key cho nhà cung cấp AI đang chọn.');
 
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
-    const last = sheet.getLastRow();
-    if (last < 2) return { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
-
-    const rows = sheet.getRange(2, 1, last - 1, 20).getValues();
-    const candidates = [];
-    rows.forEach((r, i) => {
-      const content = String(r[7] || '').trim();
-      const already = [r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
-      const status = String(r[19] || '').trim();
-      if (!content || already || status === 'Đóng') return;
-      candidates.push({
-        rowNumber: i + 2,
-        group: String(r[4] || ''),
-        author: String(r[5] || ''),
-        content: content.slice(0, 5000),
-        sourceType: String(r[3] || 'Bài viết'),
-        sourceUrl: String(r[2] || ''),
-        engagement: String(r[18] || ''),
-        postDate: r[0] instanceof Date ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') : String(r[0] || '')
-      });
-    });
-
-    const selected = candidates.slice(0, cfg.maxRows);
-    if (!selected.length) {
-      const result = { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
-      if (!silent) SpreadsheetApp.getActive().toast('Không còn bài mới cần AI phân tích.', 'AI PHÂN TÍCH', 5);
-      return result;
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(1000)) {
+      const p = getAiProgress_();
+      throw new Error('AI đang chạy ở phiên khác' + (p && p.runId ? ' (Run ' + p.runId + ')' : '') + '.');
     }
 
-    const batchSize = 20;
-    const errors = [];
-    let analyzed = 0;
-
-    for (let start = 0; start < selected.length; start += batchSize) {
-      const batch = selected.slice(start, start + batchSize);
-      try {
-        const results = cfg.provider === 'gemini' ? analyzeBatchWithGemini_(batch, cfg) : analyzeBatchWithOpenAi_(batch, cfg);
-        applyAiAnalysis_(sheet, results);
-        analyzed += results.length;
-      } catch (e) {
-        errors.push('Batch ' + (Math.floor(start / batchSize) + 1) + ': ' + e.message);
+    const runId = Utilities.getUuid().slice(0, 8);
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      const sheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
+      const last = sheet.getLastRow();
+      if (last < 2) {
+        setAiProgress_({ active:false, runId, status:'DONE', analyzed:0, total:0, remaining:0 });
+        return { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
       }
-    }
 
-    const refresh = refreshCurrentData({ silent: true });
-    const remaining = Math.max(0, candidates.length - analyzed);
-    const actualModel = cfg.provider === 'gemini'
-      ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
-      : cfg.model;
-    const result = { version: CFG.VERSION, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh };
+      const rows = sheet.getRange(2, 1, last - 1, 20).getValues();
+      const candidates = [];
+      rows.forEach((r, i) => {
+        const content = String(r[7] || '').trim();
+        const already = [r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
+        const status = String(r[19] || '').trim();
+        if (!content || already || status === 'Đóng') return;
+        candidates.push({
+          rowNumber: i + 2,
+          group: String(r[4] || ''),
+          author: String(r[5] || ''),
+          content: content.slice(0, 5000),
+          sourceType: String(r[3] || 'Bài viết'),
+          sourceUrl: String(r[2] || ''),
+          engagement: String(r[18] || ''),
+          postDate: r[0] instanceof Date
+            ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
+            : String(r[0] || '')
+        });
+      });
 
-    if (!silent) {
-      SpreadsheetApp.getActive().toast(
-        'Đã phân tích ' + analyzed + ' bài | Còn ' + remaining + (errors.length ? ' | Có lỗi' : ''),
-        'AI PHÂN TÍCH',
-        8
-      );
+      const selected = candidates.slice(0, cfg.maxRows);
+      const total = selected.length;
+      const batchSize = 20;
+      const totalBatches = Math.ceil(total / batchSize);
+
+      if (!selected.length) {
+        setAiProgress_({ active:false, runId, status:'DONE', analyzed:0, total:0, remaining:0, batch:0, totalBatches:0 });
+        const result = { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
+        if (!silent) SpreadsheetApp.getActive().toast('Không còn bài mới cần AI phân tích.', 'AI PHÂN TÍCH', 5);
+        return result;
+      }
+
+      const startModel = cfg.provider === 'gemini'
+        ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+        : cfg.model;
+
+      setAiProgress_({
+        active:true, runId, status:'RUNNING', provider:cfg.provider, model:startModel,
+        batch:0, totalBatches, analyzed:0, total, remaining:total, errors:0
+      });
+      logAi_({
+        runId, event:'START', provider:cfg.provider, model:startModel, batch:0, totalBatches,
+        analyzed:0, total, remaining:total, status:'RUNNING',
+        message:'Bắt đầu phân tích ' + total + ' bài.'
+      });
+
+      const errors = [];
+      let analyzed = 0;
+
+      for (let start = 0; start < selected.length; start += batchSize) {
+        const batch = selected.slice(start, start + batchSize);
+        const batchNo = Math.floor(start / batchSize) + 1;
+
+        setAiProgress_({
+          active:true, runId, status:'RUNNING', provider:cfg.provider,
+          model: PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model,
+          batch:batchNo, totalBatches, analyzed, total, remaining:Math.max(0,total-analyzed), errors:errors.length
+        });
+
+        try {
+          const results = cfg.provider === 'gemini'
+            ? analyzeBatchWithGemini_(batch, cfg)
+            : analyzeBatchWithOpenAi_(batch, cfg);
+
+          applyAiAnalysis_(sheet, results);
+          SpreadsheetApp.flush();
+          analyzed += results.length;
+
+          const actualModel = cfg.provider === 'gemini'
+            ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+            : cfg.model;
+
+          setAiProgress_({
+            active:true, runId, status:'RUNNING', provider:cfg.provider, model:actualModel,
+            batch:batchNo, totalBatches, analyzed, total, remaining:Math.max(0,total-analyzed), errors:errors.length
+          });
+          logAi_({
+            runId, event:'BATCH_OK', provider:cfg.provider, model:actualModel, batch:batchNo, totalBatches,
+            analyzed, total, remaining:Math.max(0,total-analyzed), status:'OK',
+            message:'Batch ' + batchNo + '/' + totalBatches + ' hoàn thành: ' + results.length + ' bài.'
+          });
+        } catch (e) {
+          const msg = 'Batch ' + batchNo + ': ' + e.message;
+          errors.push(msg);
+          setAiProgress_({
+            active:true, runId, status:'RUNNING_WITH_ERRORS', provider:cfg.provider,
+            model: PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model,
+            batch:batchNo, totalBatches, analyzed, total, remaining:Math.max(0,total-analyzed), errors:errors.length,
+            lastError:e.message
+          });
+          logAi_({
+            runId, event:'BATCH_ERROR', provider:cfg.provider,
+            model: PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model,
+            batch:batchNo, totalBatches, analyzed, total, remaining:Math.max(0,total-analyzed),
+            status:'ERROR', message:e.message
+          });
+        }
+      }
+
+      const refresh = refreshCurrentData({ silent: true });
+      const remaining = Math.max(0, candidates.length - analyzed);
+      const actualModel = cfg.provider === 'gemini'
+        ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+        : cfg.model;
+
+      setAiProgress_({
+        active:false, runId, status:errors.length ? 'DONE_WITH_ERRORS' : 'DONE',
+        provider:cfg.provider, model:actualModel, batch:totalBatches, totalBatches,
+        analyzed, total, remaining, errors:errors.length
+      });
+      logAi_({
+        runId, event:'DONE', provider:cfg.provider, model:actualModel, batch:totalBatches, totalBatches,
+        analyzed, total, remaining, status:errors.length ? 'DONE_WITH_ERRORS' : 'DONE',
+        message:errors.length ? errors.join(' | ').slice(0, 4000) : 'Hoàn thành.'
+      });
+
+      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh };
+
+      if (!silent) {
+        SpreadsheetApp.getActive().toast(
+          'Run ' + runId + ' | Đã phân tích ' + analyzed + ' bài | Còn ' + remaining + (errors.length ? ' | Có lỗi' : ''),
+          'AI PHÂN TÍCH',
+          8
+        );
+      }
+      return result;
+    } finally {
+      try { lock.releaseLock(); } catch (_) {}
     }
-    return result;
   }
 
   function analyzeBatchWithOpenAi_(batch, cfg) {
