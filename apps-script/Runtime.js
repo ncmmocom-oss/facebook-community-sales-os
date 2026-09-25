@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.4.1',
+    VERSION: '1.5.0',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -30,7 +30,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'AI V1.4.0: Pain / Intent / Score / Phân loại KH / Comment / Next Action.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'AI V1.5.0: OpenAI hoặc Gemini → Pain / Intent / Score / Phân loại KH / Comment / Next Action.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -169,10 +169,23 @@ const RemoteApp = (() => {
 
   function getAiConfig_() {
     const p = PropertiesService.getScriptProperties();
+    const provider = String(p.getProperty('AI_PROVIDER') || 'openai').toLowerCase();
+    let model = p.getProperty('AI_MODEL') || (provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-5.6-luna');
+
+    // Repair invalid legacy model IDs from earlier builds.
+    if (provider === 'openai' && /^gpt-6/i.test(model)) model = 'gpt-5.6-luna';
+
+    const openaiConfigured = !!String(p.getProperty('OPENAI_API_KEY') || '').trim();
+    const geminiConfigured = !!String(p.getProperty('GEMINI_API_KEY') || '').trim();
+    const configured = provider === 'gemini' ? geminiConfigured : openaiConfigured;
+
     return {
       version: CFG.VERSION,
-      configured: !!String(p.getProperty('OPENAI_API_KEY') || '').trim(),
-      model: p.getProperty('AI_MODEL') || 'gpt-6-luna',
+      provider,
+      configured,
+      openaiConfigured,
+      geminiConfigured,
+      model,
       businessContext: p.getProperty('AI_BUSINESS_CONTEXT') || '',
       autoAnalyze: (p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true',
       maxRows: Math.max(1, Math.min(200, Number(p.getProperty('AI_MAX_ROWS') || 100))),
@@ -181,26 +194,52 @@ const RemoteApp = (() => {
 
   function saveAiConfig_(command) {
     const p = PropertiesService.getScriptProperties();
-    const key = String(command.apiKey || '').trim();
-    const model = String(command.model || 'gpt-6-luna').trim();
+    const provider = String(command.provider || 'openai').toLowerCase() === 'gemini' ? 'gemini' : 'openai';
+    const openaiKey = String(command.openaiApiKey || command.apiKey || '').trim();
+    const geminiKey = String(command.geminiApiKey || '').trim();
+    const defaultModel = provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-5.6-luna';
+    let model = String(command.model || defaultModel).trim() || defaultModel;
+    if (provider === 'openai' && /^gpt-6/i.test(model)) model = 'gpt-5.6-luna';
+
     const businessContext = String(command.businessContext || '').trim();
     const autoAnalyze = command.autoAnalyze !== false;
     const maxRows = Math.max(1, Math.min(200, Number(command.maxRows || 100)));
 
-    if (key) p.setProperty('OPENAI_API_KEY', key);
-    p.setProperty('AI_MODEL', model || 'gpt-6-luna');
+    if (openaiKey) p.setProperty('OPENAI_API_KEY', openaiKey);
+    if (geminiKey) p.setProperty('GEMINI_API_KEY', geminiKey);
+    p.setProperty('AI_PROVIDER', provider);
+    p.setProperty('AI_MODEL', model);
     p.setProperty('AI_BUSINESS_CONTEXT', businessContext);
     p.setProperty('AI_AUTO_ANALYZE', String(autoAnalyze));
     p.setProperty('AI_MAX_ROWS', String(maxRows));
 
     const cfg = getAiConfig_();
-    if (!cfg.configured) throw new Error('Chưa có OpenAI API key.');
+    if (!cfg.configured) {
+      throw new Error(provider === 'gemini'
+        ? 'Chưa có Gemini API key cho nhà cung cấp đang chọn.'
+        : 'Chưa có OpenAI API key cho nhà cung cấp đang chọn.');
+    }
     return cfg;
   }
 
   function testAiConnection_() {
     const cfg = getAiConfig_();
-    if (!cfg.configured) throw new Error('Chưa cấu hình OpenAI API key.');
+    if (!cfg.configured) throw new Error('Chưa cấu hình API key cho ' + cfg.provider + '.');
+
+    if (cfg.provider === 'gemini') {
+      const parsed = callGeminiStructured_(
+        'Trả về JSON đúng schema. Không thêm giải thích.',
+        'Kiểm tra kết nối. Trả status=ok.',
+        {
+          type: 'object',
+          properties: { status: { type: 'string' } },
+          required: ['status']
+        },
+        cfg
+      );
+      return { ok: parsed && parsed.status === 'ok', provider: cfg.provider, model: cfg.model, version: CFG.VERSION };
+    }
+
     const payload = {
       model: cfg.model,
       input: [
@@ -224,13 +263,17 @@ const RemoteApp = (() => {
     };
     const json = callOpenAi_(payload);
     const parsed = parseStructuredResponse_(json);
-    return { ok: parsed && parsed.status === 'ok', model: cfg.model, version: CFG.VERSION };
+    return { ok: parsed && parsed.status === 'ok', provider: cfg.provider, model: cfg.model, version: CFG.VERSION };
+  }
+
+  function analyzeNewPosts() {
+    return analyzeNewPosts_({ silent: false });
   }
 
   function analyzeNewPosts_(options) {
     const silent = options && options.silent;
     const cfg = getAiConfig_();
-    if (!cfg.configured) throw new Error('Chưa cấu hình OpenAI API key trong cửa sổ Import JSON.');
+    if (!cfg.configured) throw new Error('Chưa cấu hình API key cho nhà cung cấp AI đang chọn.');
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
@@ -270,7 +313,7 @@ const RemoteApp = (() => {
     for (let start = 0; start < selected.length; start += batchSize) {
       const batch = selected.slice(start, start + batchSize);
       try {
-        const results = analyzeBatchWithOpenAi_(batch, cfg);
+        const results = cfg.provider === 'gemini' ? analyzeBatchWithGemini_(batch, cfg) : analyzeBatchWithOpenAi_(batch, cfg);
         applyAiAnalysis_(sheet, results);
         analyzed += results.length;
       } catch (e) {
@@ -280,7 +323,7 @@ const RemoteApp = (() => {
 
     const refresh = refreshCurrentData({ silent: true });
     const remaining = Math.max(0, candidates.length - analyzed);
-    const result = { version: CFG.VERSION, analyzed, remaining, errors, model: cfg.model, refresh };
+    const result = { version: CFG.VERSION, analyzed, remaining, errors, provider: cfg.provider, model: cfg.model, refresh };
 
     if (!silent) {
       SpreadsheetApp.getActive().toast(
@@ -293,7 +336,60 @@ const RemoteApp = (() => {
   }
 
   function analyzeBatchWithOpenAi_(batch, cfg) {
-    const systemPrompt = [
+    const systemPrompt = aiSystemPrompt_(cfg);
+
+    const payload = {
+      model: cfg.model,
+      input: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: JSON.stringify(batch) }
+      ],
+      max_output_tokens: 12000,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'community_sales_analysis',
+          strict: true,
+          schema: Object.assign(analysisSchema_(), { additionalProperties: false })
+        }
+      }
+    };
+
+    const response = callOpenAi_(payload);
+    const parsed = parseStructuredResponse_(response);
+    if (!parsed || !Array.isArray(parsed.analyses)) throw new Error('OpenAI không trả về analyses hợp lệ.');
+    return parsed.analyses;
+  }
+
+  function analysisSchema_() {
+    return {
+      type: 'object',
+      properties: {
+        analyses: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              row_number: { type: 'integer' },
+              pain: { type: 'string' },
+              intent: { type: 'string' },
+              score: { type: 'integer' },
+              classification: { type: 'string' },
+              value_solution: { type: 'string' },
+              suggested_comment: { type: 'string' },
+              next_action: { type: 'string' },
+              follow_up_days: { type: 'integer' }
+            },
+            required: ['row_number','pain','intent','score','classification','value_solution','suggested_comment','next_action','follow_up_days']
+          }
+        }
+      },
+      required: ['analyses']
+    };
+  }
+
+  function aiSystemPrompt_(cfg) {
+    return [
       'Bạn là Community Sales Intelligence Agent.',
       'Phân tích CHỈ dựa trên nội dung được cung cấp; không suy đoán thuộc tính nhạy cảm hay thông tin cá nhân ngoài dữ liệu.',
       'Mục tiêu là nhận diện người có nhu cầu thật, pain, intent và hành động hội thoại phù hợp.',
@@ -308,53 +404,58 @@ const RemoteApp = (() => {
       'follow_up_days: 0 nếu không cần follow-up; nếu cần thì 1-30 ngày.',
       'Business context: ' + (cfg.businessContext || '(chưa cấu hình)')
     ].join('\n');
+  }
+
+  function analyzeBatchWithGemini_(batch, cfg) {
+    const parsed = callGeminiStructured_(
+      aiSystemPrompt_(cfg),
+      JSON.stringify(batch),
+      analysisSchema_(),
+      cfg
+    );
+    if (!parsed || !Array.isArray(parsed.analyses)) throw new Error('Gemini không trả về analyses hợp lệ.');
+    return parsed.analyses;
+  }
+
+  function callGeminiStructured_(systemPrompt, userPrompt, schema, cfg) {
+    const key = String(PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
+    if (!key) throw new Error('Thiếu GEMINI_API_KEY.');
+
+    const model = String(cfg.model || 'gemini-3.5-flash');
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+      encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
 
     const payload = {
-      model: cfg.model,
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: JSON.stringify(batch) }
-      ],
-      max_output_tokens: 12000,
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'community_sales_analysis',
-          strict: true,
-          schema: {
-            type: 'object',
-            properties: {
-              analyses: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    row_number: { type: 'integer' },
-                    pain: { type: 'string' },
-                    intent: { type: 'string' },
-                    score: { type: 'integer' },
-                    classification: { type: 'string' },
-                    value_solution: { type: 'string' },
-                    suggested_comment: { type: 'string' },
-                    next_action: { type: 'string' },
-                    follow_up_days: { type: 'integer' }
-                  },
-                  required: ['row_number','pain','intent','score','classification','value_solution','suggested_comment','next_action','follow_up_days'],
-                  additionalProperties: false
-                }
-              }
-            },
-            required: ['analyses'],
-            additionalProperties: false
-          }
-        }
+      systemInstruction: { parts: [{ text: systemPrompt }] },
+      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        responseSchema: schema
       }
     };
 
-    const response = callOpenAi_(payload);
-    const parsed = parseStructuredResponse_(response);
-    if (!parsed || !Array.isArray(parsed.analyses)) throw new Error('OpenAI không trả về analyses hợp lệ.');
-    return parsed.analyses;
+    const res = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const code = res.getResponseCode();
+    const body = res.getContentText('UTF-8');
+    let json;
+    try { json = JSON.parse(body); } catch (e) { throw new Error('Gemini HTTP ' + code + ': phản hồi không phải JSON.'); }
+
+    if (code < 200 || code >= 300) {
+      const msg = json && json.error && json.error.message ? json.error.message : body.slice(0, 500);
+      throw new Error('Gemini HTTP ' + code + ': ' + msg);
+    }
+
+    const candidates = json.candidates || [];
+    const parts = candidates[0] && candidates[0].content && candidates[0].content.parts ? candidates[0].content.parts : [];
+    const text = parts.map(p => p.text || '').join('').trim();
+    if (!text) throw new Error('Gemini không trả text JSON.');
+    return JSON.parse(text);
   }
 
   function callOpenAi_(payload) {
@@ -984,5 +1085,6 @@ const RemoteApp = (() => {
     refreshCurrentData,
     syncPotentialCustomers,
     auditDuplicates,
+    analyzeNewPosts,
   };
 })();
