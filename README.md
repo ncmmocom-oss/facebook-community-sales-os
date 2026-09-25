@@ -67,3 +67,26 @@ V1.3.0 tự điền từ URL group khi ô còn trống:
 
 ### Import JSON
 Sau khi import xong, runtime tự chạy CẬP NHẬT DỮ LIỆU nên không cần bấm thêm lần hai. Các bản ghi cũ có tên group sai như `Group không rõ` được remap theo URL bài viết và registry QUÉT NHÓM.
+
+
+## V1.4.0 - AI Opportunity Engine
+Sau khi Import JSON, hệ thống có thể tự phân tích các bài chưa có kết quả và điền trực tiếp vào `CƠ HỘI`:
+
+`Pain -> Intent -> Điểm -> Phân loại KH -> Giải pháp giá trị -> Comment gợi ý -> Hành động tiếp theo -> Follow-up`
+
+### Cấu hình
+Mở `SOCIAL AIO -> Import JSON`. Trong cùng cửa sổ có khu vực **AI phân tích cơ hội**:
+- OpenAI API key
+- Model (mặc định `gpt-5.6-luna`)
+- Business context / sản phẩm đang bán
+- Số bài tối đa mỗi lần
+- Bật/tắt tự phân tích sau Import
+
+API key chỉ được lưu trong Apps Script **Script Properties**, không ghi vào Sheet hay GitHub.
+
+### Logic bảo vệ chất lượng
+- Người bán/quảng cáo không tự động được coi là khách.
+- Bài bán hàng có nhiều tương tác có thể được xếp thành `Nguồn hội thoại`.
+- Comment gợi ý không được giả trải nghiệm, testimonial hay chèn link bán hàng vô cớ.
+- Chỉ phân tích bài chưa có Pain / Intent / Score / Phân loại, nên không ghi đè phân tích thủ công.
+- Sau AI, hệ thống tự đồng bộ `KHÁCH HÀNG TIỀM NĂNG` và `ĐIỀU PHỐI`.
