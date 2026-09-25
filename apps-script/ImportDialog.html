@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+  <base target="_top">
+  <style>
+    body { font-family: Arial, sans-serif; padding: 18px; color: #1f2937; }
+    h2 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 6px 0 14px; line-height: 1.45; }
+    .box { border: 2px dashed #93c5fd; background: #eff6ff; border-radius: 10px; padding: 22px; text-align: center; }
+    input { margin: 12px 0; }
+    button { background: #2563eb; color: #fff; border: 0; border-radius: 7px; padding: 10px 16px; font-weight: 700; cursor: pointer; margin: 4px; }
+    button.secondary { background: #059669; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #status { margin-top: 14px; white-space: pre-wrap; font-size: 13px; line-height: 1.45; }
+    .muted { color: #6b7280; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h2>Import JSON từ Social AIO</h2>
+  <p>Chọn một hoặc nhiều file <b>posts*.json</b>. Hệ thống lọc trùng bằng <b>Post ID + URL</b>, ghi dữ liệu gốc vào <b>NHẬP JSON</b> và tạo record mới trong <b>CƠ HỘI</b>.</p>
+  <div class="box">
+    <input id="files" type="file" accept=".json,application/json" multiple>
+    <br>
+    <button id="run" onclick="runImport()">IMPORT JSON</button>
+    <button id="refresh" class="secondary" onclick="refreshData()">CẬP NHẬT DỮ LIỆU</button>
+    <div class="muted">Cập nhật dữ liệu = sửa Post ID, lọc trùng, đồng bộ KH, Nhóm và Điều phối. Không tự AI chấm điểm.</div>
+  </div>
+  <div id="status"></div>
+
+  <script>
+    async function runImport() {
+      const input = document.getElementById('files');
+      const btn = document.getElementById('run');
+      const status = document.getElementById('status');
+      if (!input.files.length) { status.textContent = 'Hãy chọn ít nhất 1 file JSON.'; return; }
+      btn.disabled = true;
+      status.textContent = 'Đang đọc file...';
+      try {
+        const files = [];
+        for (const f of input.files) files.push({ name: f.name, text: await f.text() });
+        status.textContent = `Đang import ${files.length} file...`;
+        google.script.run
+          .withSuccessHandler(result => {
+            const err = result.errors && result.errors.length ? `\nLỗi:\n- ${result.errors.join('\n- ')}` : '';
+            status.textContent = `XONG - V${result.version}\nFile: ${result.files}\nĐã đọc: ${result.scanned} bài\nBài mới: ${result.imported}\nTrùng bỏ qua: ${result.duplicates}${err}`;
+            btn.disabled = false;
+          })
+          .withFailureHandler(e => { status.textContent = 'Lỗi: ' + (e.message || e); btn.disabled = false; })
+          .importJsonFiles(files);
+      } catch (e) { status.textContent = 'Lỗi đọc file: ' + e.message; btn.disabled = false; }
+    }
+
+    function refreshData() {
+      const btn = document.getElementById('refresh');
+      const status = document.getElementById('status');
+      btn.disabled = true;
+      status.textContent = 'Đang cập nhật toàn bộ dữ liệu hiện tại...';
+      google.script.run
+        .withSuccessHandler(r => {
+          status.textContent = `ĐÃ CẬP NHẬT - V${r.version}\nPost ID sửa: ${r.repairedIds}\nDòng trùng xóa: ${r.rawRemoved + r.oppRemoved}\nKH tiềm năng: ${r.leads}\nGroup cập nhật: ${r.groups}\nHàng điều phối: ${r.queue}`;
+          btn.disabled = false;
+        })
+        .withFailureHandler(e => { status.textContent = 'Lỗi cập nhật: ' + (e.message || e); btn.disabled = false; })
+        .refreshCurrentData();
+    }
+  </script>
+</body>
+</html>
