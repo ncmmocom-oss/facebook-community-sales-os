@@ -49,3 +49,21 @@ Từ đây về sau không cần copy code thủ công.
 - rebuild `ĐIỀU PHỐI` từ Score/Classification/Follow-up hiện có.
 
 Nút này **không tự gọi AI** để sinh Pain/Intent/Score. Phần AI sẽ được tích hợp sau nếu cần.
+
+## V1.3.0 - Daily Ops
+Luồng vận hành hằng ngày được rút gọn thành:
+
+`QUÉT NHÓM -> Social AIO Export JSON -> Import JSON -> tự lọc trùng -> tự remap group -> tự đồng bộ KH -> tự rebuild ĐIỀU PHỐI`
+
+### Tự sửa QUÉT NHÓM
+V1.3.0 tự điền từ URL group khi ô còn trống:
+- Hoạt động = Có
+- Tên nhóm tạm = Group <id/slug>
+- Group ID/slug
+- Trạng thái = Thử nghiệm
+- Số lần quét/ngày = 3
+- Số bài/lần = 100
+- Công thức Quét tiếp theo / Cần quét?
+
+### Import JSON
+Sau khi import xong, runtime tự chạy CẬP NHẬT DỮ LIỆU nên không cần bấm thêm lần hai. Các bản ghi cũ có tên group sai như `Group không rõ` được remap theo URL bài viết và registry QUÉT NHÓM.
