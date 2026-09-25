@@ -1,12 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.5.3",
+  "version": "1.6.0",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "Live AI progress: batch counter, analyzed/total, percentage, active model and error count.",
-    "Adds NHẬT KÝ AI sheet with START, BATCH_OK, BATCH_ERROR and DONE events.",
-    "Adds a script-level lock to prevent double-click/concurrent AI analysis runs.",
-    "Corrects the runtime version display after the V1.5.2 resilience patch."
+    "Comment Intelligence: import posts*.json and comments*.json in the same dialog.",
+    "Comment records are deduplicated separately and also become CƠ HỘI rows with source type Bình luận.",
+    "AI analyzes both post authors and commenters; comment suggestions become thread replies.",
+    "Adds BÌNH LUẬN evidence sheet and LỊCH SỬ KH person timeline.",
+    "CƠ HỘI column B is generalized from Post ID to Source ID."
   ]
 }
