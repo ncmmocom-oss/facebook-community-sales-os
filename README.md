@@ -122,3 +122,14 @@ Có thể chọn:
 Google Sheets không cần API key riêng vì Apps Script sử dụng OAuth của Sheet. Chỉ nhập Gemini API key nếu muốn dùng Gemini làm AI provider.
 
 API keys được lưu trong Apps Script Script Properties, không lưu trong Sheet và không commit lên GitHub.
+
+
+## V1.5.1 - Gemini schema hotfix
+Gemini `generateContent.responseSchema` uses a restricted Schema/OpenAPI representation rather than the full JSON Schema accepted by other structured-output APIs. V1.5.0 sent `additionalProperties`, causing HTTP 400.
+
+V1.5.1 sanitizes the schema recursively for Gemini only. OpenAI keeps the stricter JSON Schema unchanged.
+
+Expected retry after update:
+- no more `Unknown name "additionalProperties"`
+- backlog batches start populating Pain / Intent / Score / Classification
+- after AI completes, KHÁCH HÀNG TIỀM NĂNG and ĐIỀU PHỐI refresh automatically
