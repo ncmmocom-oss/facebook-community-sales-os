@@ -40,9 +40,9 @@
       <div>
         <label>Model</label>
         <select id="model">
+          <option value="gpt-6-luna">gpt-6-luna</option>
+          <option value="gpt-6-sol">gpt-6-sol</option>
           <option value="gpt-5.6-luna">gpt-5.6-luna</option>
-          <option value="gpt-5.6-terra">gpt-5.6-terra</option>
-          <option value="gpt-5.6-sol">gpt-5.6-sol</option>
         </select>
       </div>
       <div>
@@ -83,7 +83,7 @@
 
     function loadAiConfig() {
       command({__command:'GET_AI_CONFIG'}, cfg => {
-        document.getElementById('model').value = cfg.model || 'gpt-5.6-luna';
+        document.getElementById('model').value = cfg.model || 'gpt-6-luna';
         document.getElementById('maxRows').value = cfg.maxRows || 100;
         document.getElementById('businessContext').value = cfg.businessContext || '';
         document.getElementById('autoAnalyze').checked = cfg.autoAnalyze !== false;
