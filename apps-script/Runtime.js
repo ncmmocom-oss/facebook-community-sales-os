@@ -548,18 +548,20 @@ const RemoteApp = (() => {
   function normalizeFacebookProfileUrl_(url) {
     let s = String(url || '').trim();
     if (!s) return '';
-    try {
-      const u = new URL(s);
-      const host = u.hostname.toLowerCase().replace(/^www\./, '');
-      if (host !== 'facebook.com' && !host.endsWith('.facebook.com')) return normalizeUrl_(s);
-      const id = u.searchParams.get('id');
-      if (/\/profile\.php$/i.test(u.pathname) && id) return `facebook.com/profile.php?id=${id}`;
-      const userMatch = u.pathname.match(/\/groups\/[^/]+\/user\/(\d+)/i);
-      if (userMatch) return `facebook.com/user/${userMatch[1]}`;
-      return `facebook.com${u.pathname}`.replace(/\/+$/, '').toLowerCase();
-    } catch (e) {
-      return normalizeUrl_(s);
+    const original = s;
+    s = s.replace(/^https?:\/\//i, '').replace(/^www\./i, '');
+    if (!/^facebook\.com\//i.test(s)) return normalizeUrl_(original);
+
+    const idMatch = original.match(/[?&]id=(\d+)/i);
+    if (/^facebook\.com\/profile\.php/i.test(s) && idMatch) {
+      return 'facebook.com/profile.php?id=' + idMatch[1];
     }
+
+    const userMatch = s.match(/^facebook\.com\/groups\/[^/]+\/user\/(\d+)/i);
+    if (userMatch) return 'facebook.com/user/' + userMatch[1];
+
+    const pathOnly = s.split('?')[0].split('#')[0].replace(/\/+$/, '');
+    return pathOnly.toLowerCase();
   }
 
   function toNumber_(value) {
