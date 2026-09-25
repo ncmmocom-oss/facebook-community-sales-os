@@ -133,3 +133,16 @@ Expected retry after update:
 - no more `Unknown name "additionalProperties"`
 - backlog batches start populating Pain / Intent / Score / Classification
 - after AI completes, KHÁCH HÀNG TIỀM NĂNG and ĐIỀU PHỐI refresh automatically
+
+
+## V1.5.2 - Gemini Resilience
+Gemini 503/429 được coi là lỗi tạm thời. Runtime mới:
+- retry cùng model tối đa 3 lần với exponential backoff + jitter;
+- gọi `models.list` bằng chính Gemini API key để chỉ chọn model có `generateContent`;
+- nếu vẫn bận, tự chuyển qua stable model khác;
+- mặc định `gemini-auto`.
+
+Fallback hiện tại:
+`3.5 Flash-Lite -> 3.8 Flash -> 3.6 Flash -> 3.5 Flash -> 3.1 Flash-Lite`.
+
+Gemini 2.5 không còn nằm trong selector mặc định vì Google đang giới hạn 2.5 cho các project/tài khoản đã dùng trước đó. Dữ liệu chưa xử lý vẫn giữ `Chờ AI` nếu mọi model đều thất bại.
