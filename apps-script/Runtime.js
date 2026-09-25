@@ -172,7 +172,7 @@ const RemoteApp = (() => {
     return {
       version: CFG.VERSION,
       configured: !!String(p.getProperty('OPENAI_API_KEY') || '').trim(),
-      model: p.getProperty('AI_MODEL') || 'gpt-5.6-luna',
+      model: p.getProperty('AI_MODEL') || 'gpt-6-luna',
       businessContext: p.getProperty('AI_BUSINESS_CONTEXT') || '',
       autoAnalyze: (p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true',
       maxRows: Math.max(1, Math.min(200, Number(p.getProperty('AI_MAX_ROWS') || 100))),
@@ -182,13 +182,13 @@ const RemoteApp = (() => {
   function saveAiConfig_(command) {
     const p = PropertiesService.getScriptProperties();
     const key = String(command.apiKey || '').trim();
-    const model = String(command.model || 'gpt-5.6-luna').trim();
+    const model = String(command.model || 'gpt-6-luna').trim();
     const businessContext = String(command.businessContext || '').trim();
     const autoAnalyze = command.autoAnalyze !== false;
     const maxRows = Math.max(1, Math.min(200, Number(command.maxRows || 100)));
 
     if (key) p.setProperty('OPENAI_API_KEY', key);
-    p.setProperty('AI_MODEL', model || 'gpt-5.6-luna');
+    p.setProperty('AI_MODEL', model || 'gpt-6-luna');
     p.setProperty('AI_BUSINESS_CONTEXT', businessContext);
     p.setProperty('AI_AUTO_ANALYZE', String(autoAnalyze));
     p.setProperty('AI_MAX_ROWS', String(maxRows));
