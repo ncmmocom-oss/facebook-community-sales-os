@@ -1,11 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "Hotfix Gemini structured output: recursively removes unsupported JSON Schema keywords such as additionalProperties before sending generationConfig.responseSchema.",
-    "Fixes Gemini HTTP 400 Invalid JSON payload on AI backlog batches.",
-    "No Sheet schema or existing data is changed."
+    "Gemini resilience: retries transient 408/429/5xx errors with exponential backoff and jitter.",
+    "Automatic fallback checks models.list and rotates across stable generateContent models.",
+    "Default Gemini routing is gemini-auto; legacy 2.5 choices are migrated to auto for new projects.",
+    "Current fallback order: gemini-3.5-flash-lite, gemini-3.8-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-flash-lite."
   ]
 }
