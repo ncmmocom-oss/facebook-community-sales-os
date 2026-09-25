@@ -170,10 +170,11 @@ const RemoteApp = (() => {
   function getAiConfig_() {
     const p = PropertiesService.getScriptProperties();
     const provider = String(p.getProperty('AI_PROVIDER') || 'openai').toLowerCase();
-    let model = p.getProperty('AI_MODEL') || (provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-5.6-luna');
+    let model = p.getProperty('AI_MODEL') || (provider === 'gemini' ? 'gemini-auto' : 'gpt-5.6-luna');
 
     // Repair invalid legacy model IDs from earlier builds.
     if (provider === 'openai' && /^gpt-6/i.test(model)) model = 'gpt-5.6-luna';
+    if (provider === 'gemini' && /^gemini-2\.5-/i.test(model)) model = 'gemini-auto';
 
     const openaiConfigured = !!String(p.getProperty('OPENAI_API_KEY') || '').trim();
     const geminiConfigured = !!String(p.getProperty('GEMINI_API_KEY') || '').trim();
@@ -186,6 +187,7 @@ const RemoteApp = (() => {
       openaiConfigured,
       geminiConfigured,
       model,
+      lastGeminiModel: p.getProperty('AI_LAST_GEMINI_MODEL') || '',
       businessContext: p.getProperty('AI_BUSINESS_CONTEXT') || '',
       autoAnalyze: (p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true',
       maxRows: Math.max(1, Math.min(200, Number(p.getProperty('AI_MAX_ROWS') || 100))),
@@ -197,7 +199,7 @@ const RemoteApp = (() => {
     const provider = String(command.provider || 'openai').toLowerCase() === 'gemini' ? 'gemini' : 'openai';
     const openaiKey = String(command.openaiApiKey || command.apiKey || '').trim();
     const geminiKey = String(command.geminiApiKey || '').trim();
-    const defaultModel = provider === 'gemini' ? 'gemini-3.5-flash' : 'gpt-5.6-luna';
+    const defaultModel = provider === 'gemini' ? 'gemini-auto' : 'gpt-5.6-luna';
     let model = String(command.model || defaultModel).trim() || defaultModel;
     if (provider === 'openai' && /^gpt-6/i.test(model)) model = 'gpt-5.6-luna';
 
@@ -227,7 +229,7 @@ const RemoteApp = (() => {
     if (!cfg.configured) throw new Error('Chưa cấu hình API key cho ' + cfg.provider + '.');
 
     if (cfg.provider === 'gemini') {
-      const parsed = callGeminiStructured_(
+      const result = callGeminiStructured_(
         'Trả về JSON đúng schema. Không thêm giải thích.',
         'Kiểm tra kết nối. Trả status=ok.',
         {
@@ -237,7 +239,7 @@ const RemoteApp = (() => {
         },
         cfg
       );
-      return { ok: parsed && parsed.status === 'ok', provider: cfg.provider, model: cfg.model, version: CFG.VERSION };
+      return { ok: result.data && result.data.status === 'ok', provider: cfg.provider, model: result.model, version: CFG.VERSION };
     }
 
     const payload = {
@@ -323,7 +325,10 @@ const RemoteApp = (() => {
 
     const refresh = refreshCurrentData({ silent: true });
     const remaining = Math.max(0, candidates.length - analyzed);
-    const result = { version: CFG.VERSION, analyzed, remaining, errors, provider: cfg.provider, model: cfg.model, refresh };
+    const actualModel = cfg.provider === 'gemini'
+      ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+      : cfg.model;
+    const result = { version: CFG.VERSION, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh };
 
     if (!silent) {
       SpreadsheetApp.getActive().toast(
@@ -409,12 +414,13 @@ const RemoteApp = (() => {
   }
 
   function analyzeBatchWithGemini_(batch, cfg) {
-    const parsed = callGeminiStructured_(
+    const result = callGeminiStructured_(
       aiSystemPrompt_(cfg),
       JSON.stringify(batch),
       analysisSchema_(),
       cfg
     );
+    const parsed = result.data;
     if (!parsed || !Array.isArray(parsed.analyses)) throw new Error('Gemini không trả về analyses hợp lệ.');
     return parsed.analyses;
   }
@@ -433,47 +439,126 @@ const RemoteApp = (() => {
     return out;
   }
 
+  function getGeminiFallbackModels_(selected) {
+    const stable = [
+      'gemini-3.5-flash-lite',
+      'gemini-3.8-flash',
+      'gemini-3.6-flash',
+      'gemini-3.5-flash',
+      'gemini-3.1-flash-lite'
+    ];
+    const s = String(selected || 'gemini-auto').trim();
+    if (!s || s === 'gemini-auto') return stable;
+    return [s].concat(stable.filter(m => m !== s));
+  }
+
+  function getGeminiAvailableModels_(key) {
+    const cache = CacheService.getScriptCache();
+    const cacheKey = 'GEMINI_AVAILABLE_MODELS_V1';
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      try { return JSON.parse(cached); } catch (_) {}
+    }
+
+    try {
+      const url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(key);
+      const res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+      if (res.getResponseCode() < 200 || res.getResponseCode() >= 300) return [];
+      const json = JSON.parse(res.getContentText('UTF-8'));
+      const models = (json.models || [])
+        .filter(m => (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0)
+        .map(m => String(m.name || '').replace(/^models\//, ''))
+        .filter(Boolean);
+      try { cache.put(cacheKey, JSON.stringify(models), 600); } catch (_) {}
+      return models;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function isTransientGeminiCode_(code) {
+    return code === 408 || code === 429 || code === 500 || code === 502 || code === 503 || code === 504;
+  }
+
   function callGeminiStructured_(systemPrompt, userPrompt, schema, cfg) {
     const key = String(PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
     if (!key) throw new Error('Thiếu GEMINI_API_KEY.');
 
-    const model = String(cfg.model || 'gemini-3.5-flash');
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
-      encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
+    const available = getGeminiAvailableModels_(key);
+    const candidates = getGeminiFallbackModels_(cfg.model);
+    let models = available.length ? candidates.filter(m => available.indexOf(m) >= 0) : candidates;
 
-    const payload = {
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-      generationConfig: {
-        responseMimeType: 'application/json',
-        // generateContent.responseSchema uses Google's legacy Schema/OpenAPI subset.
-        // It rejects JSON-Schema-only keywords such as additionalProperties.
-        responseSchema: sanitizeGeminiSchema_(schema)
+    // If the explicit model is not returned by models.list, do not get stuck on it.
+    if (!models.length) models = candidates;
+
+    const errors = [];
+    const schemaForGemini = sanitizeGeminiSchema_(schema);
+
+    for (let mi = 0; mi < models.length; mi++) {
+      const model = models[mi];
+      const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+        encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(key);
+
+      const payload = {
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema: schemaForGemini
+        }
+      };
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const res = UrlFetchApp.fetch(url, {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify(payload),
+          muteHttpExceptions: true
+        });
+
+        const code = res.getResponseCode();
+        const body = res.getContentText('UTF-8');
+
+        if (code >= 200 && code < 300) {
+          let json;
+          try { json = JSON.parse(body); } catch (e) { throw new Error('Gemini ' + model + ': phản hồi không phải JSON.'); }
+
+          const candidatesOut = json.candidates || [];
+          const parts = candidatesOut[0] && candidatesOut[0].content && candidatesOut[0].content.parts
+            ? candidatesOut[0].content.parts : [];
+          const text = parts.map(p => p.text || '').join('').trim();
+          if (!text) throw new Error('Gemini ' + model + ' không trả text JSON.');
+
+          PropertiesService.getScriptProperties().setProperty('AI_LAST_GEMINI_MODEL', model);
+          return { data: JSON.parse(text), model };
+        }
+
+        let jsonErr = null;
+        try { jsonErr = JSON.parse(body); } catch (_) {}
+        const msg = jsonErr && jsonErr.error && jsonErr.error.message
+          ? jsonErr.error.message
+          : body.slice(0, 350);
+
+        errors.push(model + ' HTTP ' + code + ': ' + msg);
+
+        if (!isTransientGeminiCode_(code)) {
+          // Model unavailable/permission/schema errors are not fixed by retrying the same request.
+          break;
+        }
+
+        if (attempt < 2) {
+          const base = Math.pow(2, attempt) * 1000;
+          const jitter = Math.floor(Math.random() * 700);
+          Utilities.sleep(base + jitter);
+        }
       }
-    };
-
-    const res = UrlFetchApp.fetch(url, {
-      method: 'post',
-      contentType: 'application/json',
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true
-    });
-
-    const code = res.getResponseCode();
-    const body = res.getContentText('UTF-8');
-    let json;
-    try { json = JSON.parse(body); } catch (e) { throw new Error('Gemini HTTP ' + code + ': phản hồi không phải JSON.'); }
-
-    if (code < 200 || code >= 300) {
-      const msg = json && json.error && json.error.message ? json.error.message : body.slice(0, 500);
-      throw new Error('Gemini HTTP ' + code + ': ' + msg);
+      // After retries, try the next currently available stable model.
     }
 
-    const candidates = json.candidates || [];
-    const parts = candidates[0] && candidates[0].content && candidates[0].content.parts ? candidates[0].content.parts : [];
-    const text = parts.map(p => p.text || '').join('').trim();
-    if (!text) throw new Error('Gemini không trả text JSON.');
-    return JSON.parse(text);
+    throw new Error(
+      'Gemini không xử lý được sau retry/fallback. ' +
+      errors.slice(-6).join(' | ')
+    );
   }
 
   function callOpenAi_(payload) {
