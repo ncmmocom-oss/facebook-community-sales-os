@@ -1,11 +1,11 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "GitHub-hosted runtime: future code updates do not require manual Apps Script copy/paste.",
-    "Added CẬP NHẬT DỮ LIỆU: repair Post ID, dedupe, sync leads, refresh group summary and coordination queue.",
-    "Dedupe uses Post ID + normalized URL."
+    "Permission hotfix: added bootstrap/appsscript.json with script.container.ui, spreadsheets.currentonly and script.external_request scopes.",
+    "GitHub-hosted runtime: future logic updates do not require manual Apps Script copy/paste.",
+    "CẬP NHẬT DỮ LIỆU repairs Post ID, dedupes, syncs leads, refreshes group summary and coordination queue."
   ]
 }
