@@ -96,3 +96,29 @@ API key chỉ được lưu trong Apps Script **Script Properties**, không ghi 
 - `NHÓM` được rebuild từ registry `QUÉT NHÓM`, nên mọi group active đều xuất hiện, kể cả khi chưa có lead.
 - Sửa mapping group legacy bằng Post ID + Group ID/file context; slug group không còn bị rút gọn kiểu `Group 3`.
 - Pipeline hiện tại: `JSON -> CƠ HỘI -> AI -> KHÁCH HÀNG TIỀM NĂNG -> ĐIỀU PHỐI`.
+
+
+## V1.5.0 - Stable Menu + OpenAI / Gemini
+### Vì sao trước đó chỉ thấy “Thử tải lại từ GitHub”?
+`onOpen()` là simple trigger. Simple trigger không được phép tự gọi một service cần authorization như `UrlFetchApp`. Bootstrap cũ cố tải Runtime.js từ GitHub ngay trong `onOpen`, nên khi cache hết hạn nó rơi vào fallback menu.
+
+### Bootstrap V2
+`bootstrap/Code.gs` V2 chỉ dựng menu local khi Sheet mở. Runtime GitHub chỉ được tải sau khi người dùng chủ động bấm menu, lúc đó Apps Script có authorization context.
+
+Menu cố định:
+- Import JSON / Cấu hình AI
+- AI PHÂN TÍCH BÀI CHỜ
+- CẬP NHẬT DỮ LIỆU
+- Đồng bộ KH tiềm năng
+- Kiểm tra bài trùng
+- Cập nhật runtime từ GitHub
+- Thông tin phiên bản
+
+### AI Provider
+Có thể chọn:
+- OpenAI — mặc định `gpt-5.6-luna`
+- Google Gemini — mặc định `gemini-3.5-flash`
+
+Google Sheets không cần API key riêng vì Apps Script sử dụng OAuth của Sheet. Chỉ nhập Gemini API key nếu muốn dùng Gemini làm AI provider.
+
+API keys được lưu trong Apps Script Script Properties, không lưu trong Sheet và không commit lên GitHub.
