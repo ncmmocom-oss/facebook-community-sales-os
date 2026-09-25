@@ -23,6 +23,9 @@
     .hidden { display:none; }
     .ok { color:#047857; font-weight:700; }
     .warn { color:#b45309; font-weight:700; }
+    .progress { margin-top:10px; background:#dbeafe; border-radius:999px; height:14px; overflow:hidden; }
+    .progress > div { height:100%; width:0%; background:#2563eb; transition:width .25s ease; }
+    #progressText { margin-top:6px; font-size:12px; font-weight:700; color:#1e3a8a; }
   </style>
 </head>
 <body>
@@ -80,6 +83,8 @@
     <button class="dark" onclick="testAi()">TEST AI</button>
     <button onclick="analyzeNew()">AI PHÂN TÍCH BÀI CHỜ</button>
     <div id="aiState" class="muted">Đang đọc cấu hình...</div>
+    <div class="progress"><div id="progressBar"></div></div>
+    <div id="progressText">Chưa có tiến trình AI.</div>
   </div>
 
   <div id="status">Sẵn sàng.</div>
@@ -148,6 +153,40 @@
       });
     }
 
+    let progressTimer = null;
+
+    function renderProgress(p) {
+      if (!p) return;
+      const total = Number(p.total || 0);
+      const done = Number(p.analyzed || 0);
+      const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(done * 100 / total))) : 0;
+      document.getElementById('progressBar').style.width = pct + '%';
+
+      const parts = [];
+      if (p.runId) parts.push('Run ' + p.runId);
+      if (p.batch || p.totalBatches) parts.push('Batch ' + (p.batch || 0) + '/' + (p.totalBatches || 0));
+      if (total) parts.push(done + '/' + total + ' bài');
+      parts.push(pct + '%');
+      if (p.model) parts.push(p.model);
+      if (p.errors) parts.push('Lỗi ' + p.errors);
+      document.getElementById('progressText').textContent = parts.join(' • ') + (p.active ? ' • ĐANG CHẠY' : (' • ' + (p.status || '')));
+    }
+
+    function pollProgressOnce() {
+      command({__command:'GET_AI_PROGRESS'}, p => renderProgress(p), () => {});
+    }
+
+    function startProgressPolling() {
+      stopProgressPolling();
+      pollProgressOnce();
+      progressTimer = setInterval(pollProgressOnce, 2000);
+    }
+
+    function stopProgressPolling() {
+      if (progressTimer) clearInterval(progressTimer);
+      progressTimer = null;
+    }
+
     async function runImport() {
       const input = document.getElementById('files');
       const btn = document.getElementById('run');
@@ -158,6 +197,7 @@
         const files = [];
         for (const f of input.files) files.push({ name: f.name, text: await f.text() });
         setStatus('Đang import ' + files.length + ' file...');
+        startProgressPolling();
         google.script.run
           .withSuccessHandler(result => {
             const err = result.errors && result.errors.length ? '\nLỗi:\n- ' + result.errors.join('\n- ') : '';
@@ -165,8 +205,10 @@
             const auto = result.refresh ? '\nĐã tự cập nhật dữ liệu: Có\nRemap group: ' + (result.refresh.remappedGroups || 0) + '\nKH tiềm năng: ' + (result.refresh.leads || 0) + '\nHàng điều phối: ' + (result.refresh.queue || 0) : '';
             setStatus('XONG - V' + result.version + '\nFile: ' + result.files + '\nĐã đọc: ' + result.scanned + ' bài\nBài mới: ' + result.imported + '\nTrùng bỏ qua: ' + result.duplicates + ai + auto + err);
             btn.disabled = false;
+            pollProgressOnce();
+            stopProgressPolling();
           })
-          .withFailureHandler(e => { setStatus('Lỗi: ' + (e.message || e)); btn.disabled = false; })
+          .withFailureHandler(e => { setStatus('Lỗi: ' + (e.message || e)); btn.disabled = false; pollProgressOnce(); stopProgressPolling(); })
           .importJsonFiles(files);
       } catch (e) {
         setStatus('Lỗi đọc file: ' + e.message);
@@ -203,6 +245,7 @@
         document.getElementById('openaiApiKey').value = '';
         document.getElementById('geminiApiKey').value = '';
         loadAiConfig();
+    pollProgressOnce();
         setStatus('Đã lưu cấu hình AI. Provider: ' + cfg.provider + ' | Model: ' + cfg.model + ' | Auto analyze: ' + (cfg.autoAnalyze ? 'BẬT' : 'TẮT'));
       });
     }
@@ -216,9 +259,16 @@
 
     function analyzeNew() {
       setStatus('AI đang phân tích các bài Chờ AI...');
+      startProgressPolling();
       command({__command:'ANALYZE_NEW'}, r => {
         const err = r.errors && r.errors.length ? '\nLỗi:\n- ' + r.errors.join('\n- ') : '';
-        setStatus('AI XONG - V' + r.version + '\nProvider: ' + r.provider + '\nModel: ' + r.model + '\nĐã phân tích: ' + r.analyzed + '\nCòn lại: ' + r.remaining + '\nKH tiềm năng: ' + (r.refresh ? r.refresh.leads : '-') + '\nHàng điều phối: ' + (r.refresh ? r.refresh.queue : '-') + err);
+        setStatus('AI XONG - V' + r.version + '\nRun: ' + (r.runId || '-') + '\nProvider: ' + r.provider + '\nModel: ' + r.model + '\nĐã phân tích: ' + r.analyzed + '\nCòn lại: ' + r.remaining + '\nKH tiềm năng: ' + (r.refresh ? r.refresh.leads : '-') + '\nHàng điều phối: ' + (r.refresh ? r.refresh.queue : '-') + err);
+        pollProgressOnce();
+        stopProgressPolling();
+      }, e => {
+        setStatus('Lỗi AI: ' + (e.message || e));
+        pollProgressOnce();
+        stopProgressPolling();
       });
     }
 
