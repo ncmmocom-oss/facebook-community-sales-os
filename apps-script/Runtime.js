@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.3.0',
+    VERSION: '1.3.1',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -77,6 +77,9 @@ const RemoteApp = (() => {
           if (!postId && !url) return;
 
           const groupKey = extractGroupKey_(url) || fileGroupKey;
+          if (groupKey && !groupMap[groupKey]) {
+            groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
+          }
           const groupInfo = groupMap[groupKey] || { name: `Group ${groupKey || 'không rõ'}`, row: null };
 
           if (groupKey) {
@@ -523,6 +526,23 @@ const RemoteApp = (() => {
       if (urlKey) map[urlKey] = info;
     });
     return map;
+  }
+
+
+  function ensureGroupRegistered_(sheet, groupKey) {
+    const key = String(groupKey || '').trim().toLowerCase();
+    if (!key) return { name: 'Group không rõ', row: null };
+
+    const row = sheet.getLastRow() + 1;
+    const name = 'Group ' + key;
+    const url = 'https://www.facebook.com/groups/' + key + '/';
+    sheet.getRange(row, 1, 1, 9).setValues([[
+      'Có', '', name, url, key, '', 'Thử nghiệm', 3, 100
+    ]]);
+    sheet.getRange(row, 11).setFormula(`=IF(OR(H${row}="";J${row}="");"";J${row}+1/H${row})`);
+    sheet.getRange(row, 12).setFormula(`=IF(A${row}<>"Có";"TẮT";IF(K${row}="";"CẦN QUÉT";IF(K${row}<=NOW();"CẦN QUÉT";"CHỜ")))`);
+    sheet.getRange(row, 16).setValue('Tự thêm khi import JSON');
+    return { name, row, active: 'Có' };
   }
 
   function updateGroupScanStatus_(sheet, stats) {
