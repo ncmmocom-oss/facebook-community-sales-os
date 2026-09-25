@@ -36,8 +36,8 @@ const RemoteApp = (() => {
 
   function showImportDialog() {
     const html = HtmlService.createHtmlOutput(getRemoteHtml_())
-      .setWidth(600)
-      .setHeight(560);
+      .setWidth(680)
+      .setHeight(720);
     SpreadsheetApp.getUi().showModalDialog(html, 'Import JSON từ Social AIO');
   }
 
@@ -143,7 +143,7 @@ const RemoteApp = (() => {
       }
     }
 
-    const refresh = refreshCurrentData({ silent: true });
+    const refresh = ai && ai.refresh ? ai.refresh : refreshCurrentData({ silent: true });
     SpreadsheetApp.flush();
     return {
       version: CFG.VERSION,
