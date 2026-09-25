@@ -33,7 +33,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'AI V1.5.0: OpenAI hoặc Gemini → Pain / Intent / Score / Phân loại KH / Comment / Next Action.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.6.0: Post + Comment Intelligence + Person Timeline. AI phân tích cả bài viết và bình luận.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -784,6 +784,7 @@ const RemoteApp = (() => {
       'Mục tiêu là nhận diện người có nhu cầu thật, pain, intent và hành động hội thoại phù hợp.',
       'Không coi người bán/quảng cáo là khách hàng chỉ vì họ đăng sản phẩm. Nếu bài của người bán có nhiều tương tác và có thể chứa người mua trong comment, phân loại là "Nguồn hội thoại".',
       'Comment gợi ý phải tự nhiên, hữu ích, không giả vờ đã dùng sản phẩm, không tạo testimonial giả, không spam và không chèn link bán hàng.',
+      'Nếu sourceType là Bình luận: coi chính người comment là đối tượng cần đánh giá; ưu tiên tín hiệu hỏi giá, hỏi cách mua, hỏi giải pháp, phản đối, so sánh hoặc cần gấp. suggested_comment phải là câu reply nối tiếp hội thoại, không phải comment mới độc lập.',
       'Ưu tiên 8+2: phần lớn là giá trị/chẩn đoán/nối hội thoại; chỉ dùng CTA khi intent mua rất rõ.',
       'Thang điểm 0-100: intent mua + pain/urgency + khả năng hành động + khả năng phản hồi + độ mới/tín hiệu tương tác + độ phù hợp thương mại.',
       'Nếu business context trống, hãy chấm cơ hội bán hàng tổng quát thay vì tự bịa product fit.',
@@ -1020,18 +1021,193 @@ const RemoteApp = (() => {
     });
   }
 
+  function normalizeAndDedupeCommentSheet_(sheet) {
+    const last = sheet.getLastRow();
+    if (last < 2) return { removed:0, rows:0 };
+    const rows = sheet.getRange(2,1,last-1,22).getValues();
+    const groups = [];
+    const keyMap = new Map();
+
+    rows.forEach(r => {
+      const keys = makeCommentKeys_(r[6],r[7]);
+      let idx = -1;
+      for (const k of keys) if (keyMap.has(k)) { idx=keyMap.get(k); break; }
+      if (idx < 0) {
+        idx = groups.length;
+        groups.push(r);
+        keys.forEach(k=>keyMap.set(k,idx));
+      } else {
+        groups[idx] = rowCompleteness_(r) > rowCompleteness_(groups[idx]) ? mergeRows_(r,groups[idx]) : mergeRows_(groups[idx],r);
+      }
+    });
+
+    const removed = rows.length-groups.length;
+    sheet.getRange(2,1,rows.length,22).clearContent();
+    if (groups.length) {
+      sheet.getRange(2,5,groups.length,4).setNumberFormat('@');
+      sheet.getRange(2,1,groups.length,22).setValues(groups);
+    }
+    return { removed, rows:groups.length };
+  }
+
+  function normalizeAndDedupeOpportunitySheet_(sheet) {
+    const last = sheet.getLastRow();
+    if (last < 2) return { removed:0, repairedIds:0, rows:0 };
+    const rows = sheet.getRange(2,1,last-1,20).getValues();
+    const groups = [];
+    const keyMap = new Map();
+    let repairedIds = 0;
+
+    rows.forEach(r => {
+      const type = String(r[3]||'');
+      if (type !== 'Bình luận') {
+        const before=r[1];
+        const after=normalizePostId_(before,r[2]);
+        if (String(before||'')!==String(after||'')) repairedIds += 1;
+        r[1]=after;
+      }
+      const id=String(r[1]||'').trim();
+      const url=normalizeUrl_(r[2]);
+      const keys=[];
+      if (id) keys.push('OID|'+id);
+      if (type !== 'Bình luận' && url) keys.push('OURL|'+url);
+
+      let idx=-1;
+      for (const k of keys) if (keyMap.has(k)) { idx=keyMap.get(k); break; }
+      if (idx<0) {
+        idx=groups.length;
+        groups.push(r);
+        keys.forEach(k=>keyMap.set(k,idx));
+      } else {
+        groups[idx]=rowCompleteness_(r)>rowCompleteness_(groups[idx]) ? mergeRows_(r,groups[idx]) : mergeRows_(groups[idx],r);
+      }
+    });
+
+    const removed=rows.length-groups.length;
+    sheet.getRange(2,1,rows.length,20).clearContent();
+    if (groups.length) {
+      sheet.getRange(2,2,groups.length,1).setNumberFormat('@');
+      sheet.getRange(2,1,groups.length,20).setValues(groups);
+    }
+    return { removed, repairedIds, rows:groups.length };
+  }
+
+  function auditCommentDuplicates_(sheet) {
+    const last=sheet.getLastRow();
+    if (last<2) return {rows:0,duplicateRows:0};
+    const rows=sheet.getRange(2,1,last-1,22).getValues();
+    const seen=new Set(); let dup=0;
+    rows.forEach(r=>{
+      const keys=makeCommentKeys_(r[6],r[7]);
+      if(keys.some(k=>seen.has(k))) dup++; else keys.forEach(k=>seen.add(k));
+    });
+    return {rows:rows.length,duplicateRows:dup};
+  }
+
+  function auditOpportunityDuplicates_(sheet) {
+    const last=sheet.getLastRow();
+    if(last<2) return {rows:0,duplicateRows:0};
+    const rows=sheet.getRange(2,1,last-1,20).getValues();
+    const seen=new Set(); let dup=0;
+    rows.forEach(r=>{
+      const type=String(r[3]||'');
+      const id=String(r[1]||'').trim();
+      const url=normalizeUrl_(r[2]);
+      const keys=[];
+      if(id) keys.push('OID|'+id);
+      if(type!=='Bình luận'&&url) keys.push('OURL|'+url);
+      if(keys.some(k=>seen.has(k))) dup++; else keys.forEach(k=>seen.add(k));
+    });
+    return {rows:rows.length,duplicateRows:dup};
+  }
+
+  function syncCommentAnalysis_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const cs=ss.getSheetByName(CFG.COMMENT_SHEET);
+    const os=ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
+    if(!cs||!os) return {rows:0};
+
+    const map={};
+    const ol=os.getLastRow();
+    if(ol>=2) {
+      os.getRange(2,1,ol-1,20).getValues().forEach(r=>{
+        if(String(r[3]||'')!=='Bình luận') return;
+        const id=String(r[1]||'').replace(/^C:/,'');
+        if(id) map[id]=r;
+      });
+    }
+
+    const cl=cs.getLastRow();
+    if(cl<2) return {rows:0};
+    const rows=cs.getRange(2,1,cl-1,22).getValues();
+    rows.forEach(r=>{
+      const o=map[String(r[6]||'')];
+      if(!o) { r[21]='Chờ AI'; return; }
+      r[15]=o[8]||'';
+      r[16]=o[9]||'';
+      r[17]=o[10]||'';
+      r[18]=o[11]||'';
+      r[19]=o[13]||'';
+      r[20]=o[15]||'';
+      r[21]=[o[8],o[9],o[10],o[11]].some(v=>v!==''&&v!==null&&v!==undefined)?'Đã phân tích':'Chờ AI';
+    });
+    cs.getRange(2,1,rows.length,22).setValues(rows);
+    return {rows:rows.length};
+  }
+
+  function refreshPersonTimeline_() {
+    ensureV16Sheets_();
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const os=mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
+    const ts=mustSheet_(ss,CFG.PERSON_TIMELINE_SHEET);
+    const last=os.getLastRow();
+    const rows=last>=2?os.getRange(2,1,last-1,20).getValues():[];
+    const out=[];
+
+    rows.forEach(r=>{
+      const name=String(r[5]||'').trim();
+      const fb=normalizeFacebookProfileUrl_(r[6]||'');
+      const source=normalizeUrl_(r[2]||'');
+      if(!name&&!fb) return;
+      const key=fb?('FB|'+fb):('ANON|'+source);
+      out.push([
+        key,name,r[6]||'',r[0]||'',r[4]||'',r[3]||'',r[1]||'',r[2]||'',r[7]||'',
+        r[8]||'',r[9]||'',Number(r[10]||0),r[11]||'',r[15]||'',r[16]||'',r[17]||'',r[19]||'',
+        r[18]||''
+      ]);
+    });
+
+    out.sort((a,b)=>{
+      const n=String(a[1]||'').localeCompare(String(b[1]||''),'vi');
+      if(n!==0) return n;
+      const ta=a[3] instanceof Date?a[3].getTime():0;
+      const tb=b[3] instanceof Date?b[3].getTime():0;
+      return tb-ta;
+    });
+
+    const old=ts.getLastRow();
+    if(old>=2) ts.getRange(2,1,old-1,18).clearContent();
+    if(out.length) ts.getRange(2,1,out.length,18).setValues(out);
+    return {rows:out.length};
+  }
+
   function refreshCurrentData(options) {
     const silent = options && options.silent;
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    ensureV16Sheets_();
     const rawSheet = mustSheet_(ss, CFG.RAW_SHEET);
     const oppSheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
+    const commentSheet = mustSheet_(ss, CFG.COMMENT_SHEET);
 
     const registryStats = repairScanRegistry_();
     const remapStats = remapGroupNames_();
-    const rawFix = normalizeAndDedupeSheet_(rawSheet, { headerRows: 4, idCol: 5, urlCol: 6, totalCols: 14, preferComplete: false });
-    const oppFix = normalizeAndDedupeSheet_(oppSheet, { headerRows: 1, idCol: 2, urlCol: 3, totalCols: 20, preferComplete: true });
+    const rawFix = normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:14, preferComplete:false });
+    const commentFix = normalizeAndDedupeCommentSheet_(commentSheet);
+    const oppFix = normalizeAndDedupeOpportunitySheet_(oppSheet);
     const rawStatusStats = syncRawProcessingStatus_();
-    const leadStats = syncPotentialCustomers({ silent: true });
+    const commentStats = syncCommentAnalysis_();
+    const timelineStats = refreshPersonTimeline_();
+    const leadStats = syncPotentialCustomers({ silent:true });
     const groupStats = refreshGroupSummary_();
     const queueStats = refreshCoordination_();
     SpreadsheetApp.flush();
@@ -1039,11 +1215,14 @@ const RemoteApp = (() => {
     const result = {
       version: CFG.VERSION,
       rawRemoved: rawFix.removed,
+      commentRemoved: commentFix.removed,
       oppRemoved: oppFix.removed,
       repairedIds: rawFix.repairedIds + oppFix.repairedIds,
       registryRows: registryStats.rows,
       remappedGroups: remapStats.changed,
       rawStatuses: rawStatusStats.rows,
+      comments: commentStats.rows,
+      timeline: timelineStats.rows,
       leads: leadStats.count,
       groups: groupStats.groups,
       queue: queueStats.count,
@@ -1051,7 +1230,7 @@ const RemoteApp = (() => {
 
     if (!silent) {
       SpreadsheetApp.getActive().toast(
-        `V${CFG.VERSION} | Trùng xóa: ${result.rawRemoved + result.oppRemoved} | Remap group: ${result.remappedGroups} | KH: ${result.leads} | Điều phối: ${result.queue}`,
+        `V${CFG.VERSION} | Trùng xóa: ${result.rawRemoved + result.commentRemoved + result.oppRemoved} | Comment: ${result.comments} | Timeline: ${result.timeline} | KH: ${result.leads}`,
         'CẬP NHẬT DỮ LIỆU',
         8
       );
@@ -1061,14 +1240,17 @@ const RemoteApp = (() => {
 
   function auditDuplicates() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    ensureV16Sheets_();
     const raw = auditSheetDuplicates_(mustSheet_(ss, CFG.RAW_SHEET), 4, 5, 6);
-    const opp = auditSheetDuplicates_(mustSheet_(ss, CFG.OPPORTUNITY_SHEET), 1, 2, 3);
+    const comments = auditCommentDuplicates_(mustSheet_(ss, CFG.COMMENT_SHEET));
+    const opp = auditOpportunityDuplicates_(mustSheet_(ss, CFG.OPPORTUNITY_SHEET));
     SpreadsheetApp.getUi().alert(
       `Kiểm tra lọc trùng - V${CFG.VERSION}\n` +
       `NHẬP JSON: ${raw.rows} dòng | ${raw.duplicateRows} dòng trùng\n` +
+      `BÌNH LUẬN: ${comments.rows} dòng | ${comments.duplicateRows} dòng trùng\n` +
       `CƠ HỘI: ${opp.rows} dòng | ${opp.duplicateRows} dòng trùng`
     );
-    return { raw, opp };
+    return { raw, comments, opp };
   }
 
   function syncPotentialCustomers(options) {
@@ -1165,8 +1347,10 @@ const RemoteApp = (() => {
       const sold = list.filter(r => String(r[17] || '').trim() === 'Đã bán').length;
       const analyzed = list.filter(r => [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined)).length;
       const pending = Math.max(0, list.length - analyzed);
-      const stat = `${list.length} bài | ${analyzed} đã phân tích | ${pending} chờ AI`;
-      const oldNote = String(prev[11] || '').split('\n').filter(x => !/\d+ bài \| \d+ đã phân tích \| \d+ chờ AI/.test(x)).join('\n').trim();
+      const posts = list.filter(r => String(r[3]||'') === 'Bài viết').length;
+      const comments = list.filter(r => String(r[3]||'') === 'Bình luận').length;
+      const stat = `${posts} bài | ${comments} comment | ${analyzed} đã phân tích | ${pending} chờ AI`;
+      const oldNote = String(prev[11] || '').split('\n').filter(x => !/\d+ bài \| (?:\d+ comment \| )?\d+ đã phân tích \| \d+ chờ AI/.test(x)).join('\n').trim();
 
       output.push([
         name,
@@ -1439,11 +1623,16 @@ const RemoteApp = (() => {
     const keys = new Set();
     const rawLast = rawSheet.getLastRow();
     if (rawLast >= 5) {
-      rawSheet.getRange(5, 5, rawLast - 4, 2).getValues().forEach(r => makePostKeys_(normalizePostId_(r[0], r[1]), r[1]).forEach(k => keys.add(k)));
+      rawSheet.getRange(5,5,rawLast-4,2).getValues().forEach(r =>
+        makePostKeys_(normalizePostId_(r[0],r[1]),r[1]).forEach(k=>keys.add(k))
+      );
     }
     const oppLast = oppSheet.getLastRow();
     if (oppLast >= 2) {
-      oppSheet.getRange(2, 2, oppLast - 1, 2).getValues().forEach(r => makePostKeys_(normalizePostId_(r[0], r[1]), r[1]).forEach(k => keys.add(k)));
+      oppSheet.getRange(2,2,oppLast-1,3).getValues().forEach(r => {
+        if(String(r[2]||'')==='Bình luận') return;
+        makePostKeys_(normalizePostId_(r[0],r[1]),r[1]).forEach(k=>keys.add(k));
+      });
     }
     return keys;
   }
