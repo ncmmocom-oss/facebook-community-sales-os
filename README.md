@@ -146,3 +146,11 @@ Fallback hiện tại:
 `3.5 Flash-Lite -> 3.8 Flash -> 3.6 Flash -> 3.5 Flash -> 3.1 Flash-Lite`.
 
 Gemini 2.5 không còn nằm trong selector mặc định vì Google đang giới hạn 2.5 cho các project/tài khoản đã dùng trước đó. Dữ liệu chưa xử lý vẫn giữ `Chờ AI` nếu mọi model đều thất bại.
+
+
+## V1.5.3 - Live Progress + AI Log
+- Cửa sổ AI hiển thị tiến độ live: Run ID, Batch x/y, số bài đã phân tích/tổng, %, model thực tế, số lỗi.
+- Poll tiến độ mỗi 2 giây trong khi AI chạy.
+- Sheet `NHẬT KÝ AI` ghi START / BATCH_OK / BATCH_ERROR / DONE.
+- Dùng ScriptLock để chặn chạy AI song song do double-click hoặc nhiều cửa sổ.
+- Runtime version được bump đúng lên 1.5.3.
