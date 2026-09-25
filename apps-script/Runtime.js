@@ -310,7 +310,7 @@ const RemoteApp = (() => {
     if (message && typeof message === 'object') message = pickPath_(message,['text','message','body']);
     message = String(message || '').trim();
 
-    const commentId = String(pickPath_(o,['comment_id','commentId','id']) || '').trim();
+    const commentId = normalizeCommentId_(pickPath_(o,['comment_id','commentId','id']) || '', commentUrl);
     const authorName = String(pickPath_(author,['name','full_name','display_name']) || pickPath_(o,['author_name','user_name','name']) || '').trim();
     const authorUrl = String(pickPath_(author,['url','profile_url','profileUrl','link']) || pickPath_(o,['author_url','profile_url','user_url']) || '').trim();
     const createdAt = toDate_(pickPath_(o,['creation_time','created_time','createdAt','created_at','timestamp','time']));
@@ -353,12 +353,42 @@ const RemoteApp = (() => {
     return keys;
   }
 
+  function extractCommentIdFromUrl_(url) {
+    const s = String(url || '');
+    let m = s.match(/[?&](?:comment_id|reply_comment_id)=([^&#]+)/i);
+    if (m) return decodeURIComponent(m[1]);
+    m = s.match(/\/comments?\/([^\/?#]+)/i);
+    if (m) return decodeURIComponent(m[1]);
+    m = s.match(/\/comment\/([^\/?#]+)/i);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+
+  function normalizeCommentId_(value, url) {
+    if (typeof value === 'number') {
+      const fromUrl = extractCommentIdFromUrl_(url);
+      if (fromUrl) return fromUrl;
+      if (Number.isSafeInteger(value)) return String(value);
+      return String(Math.trunc(value));
+    }
+    const s = String(value || '').trim();
+    if (s && !/[eE][+-]?\d+/.test(s)) return s.replace(/^'+/,'');
+    return extractCommentIdFromUrl_(url) || s.replace(/[\s,]/g,'');
+  }
+
+  function normalizeCommentUrl_(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    const cid = extractCommentIdFromUrl_(raw);
+    if (cid) return 'comment-id:' + cid.toLowerCase();
+    return raw.replace(/#.*$/,'').replace(/\/+$/,'').toLowerCase();
+  }
+
   function makeCommentKeys_(commentId, url) {
     const out = [];
-    const id = String(commentId || '').trim();
-    const u = normalizeUrl_(url);
+    const id = normalizeCommentId_(commentId, url);
+    const u = normalizeCommentUrl_(url);
     if (id) out.push('CID|' + id);
-    if (u && /comment_id=|\/comments?\/|\/comment\//i.test(String(url||''))) out.push('CURL|' + u);
+    if (u && /comment-id:|\/comments?\/|\/comment\//i.test(u)) out.push('CURL|' + u);
     return out;
   }
 
