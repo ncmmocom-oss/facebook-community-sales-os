@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.5.3',
+    VERSION: '1.6.0',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -8,6 +8,8 @@ const RemoteApp = (() => {
     LEAD_SHEET: 'KHÁCH HÀNG TIỀM NĂNG',
     COORDINATION_SHEET: 'ĐIỀU PHỐI',
     AI_LOG_SHEET: 'NHẬT KÝ AI',
+    COMMENT_SHEET: 'BÌNH LUẬN',
+    PERSON_TIMELINE_SHEET: 'LỊCH SỬ KH',
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -49,22 +51,94 @@ const RemoteApp = (() => {
     if (!Array.isArray(files) || files.length === 0) throw new Error('Chưa chọn file JSON.');
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+    ensureV16Sheets_();
     const rawSheet = mustSheet_(ss, CFG.RAW_SHEET);
     const oppSheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
     const groupSheet = mustSheet_(ss, CFG.GROUP_SCAN_SHEET);
+    const commentSheet = mustSheet_(ss, CFG.COMMENT_SHEET);
 
-    const existingKeys = loadExistingPostKeys_(rawSheet, oppSheet);
+    const existingPostKeys = loadExistingPostKeys_(rawSheet, oppSheet);
+    const existingCommentKeys = loadExistingCommentKeys_(commentSheet, oppSheet);
     const groupMap = loadGroupMap_(groupSheet);
+    const postLookup = loadPostContext_(oppSheet);
+
     const rawRows = [];
+    const commentRows = [];
     const oppRows = [];
     const groupStats = {};
     const errors = [];
     let duplicateCount = 0;
-    let scannedCount = 0;
+    let postScanned = 0;
+    let commentScanned = 0;
+    let postImported = 0;
+    let commentImported = 0;
 
     files.forEach(file => {
       try {
         const parsed = JSON.parse(file.text || '[]');
+        const kind = detectJsonKind_(file.name || '', parsed);
+
+        if (kind === 'comments') {
+          const comments = extractCommentRecords_(parsed, file.name || '');
+          if (!comments.length) {
+            errors.push(`${file.name}: nhận diện là comment JSON nhưng không bóc được comment.`);
+            return;
+          }
+
+          comments.forEach(item => {
+            commentScanned += 1;
+            const n = normalizeCommentRecord_(item.record, item.parentId, file.name || '', postLookup);
+            if (!n.message) return;
+
+            let groupKey = n.groupKey;
+            if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
+            const groupInfo = groupMap[groupKey] || { name: n.groupName || `Group ${groupKey || 'không rõ'}`, row: null };
+            const groupName = n.groupName || groupInfo.name;
+
+            if (groupKey) {
+              if (!groupStats[groupKey]) groupStats[groupKey] = { scanned:0, newCount:0, fileName:file.name || '', row:groupInfo.row };
+              groupStats[groupKey].scanned += 1;
+              groupStats[groupKey].fileName = file.name || groupStats[groupKey].fileName;
+            }
+
+            const commentId = n.commentId || stableId_([n.postId,n.authorUrl,n.authorName,n.message,n.createdAt].join('|'));
+            const sourceId = 'C:' + commentId;
+            const keys = makeCommentKeys_(commentId, n.commentUrl);
+            if (keys.some(k => existingCommentKeys.has(k))) {
+              duplicateCount += 1;
+              return;
+            }
+            keys.forEach(k => existingCommentKeys.add(k));
+
+            const postCtx = n.postId && postLookup[n.postId] ? postLookup[n.postId] : null;
+            const postUrl = n.postUrl || (postCtx ? postCtx.url : '');
+            const commentUrl = n.commentUrl || postUrl;
+            let evidence = n.message;
+            if (postCtx && postCtx.content) {
+              evidence += '\n\n[Ngữ cảnh bài gốc]\n' + String(postCtx.content).slice(0, 1400);
+            }
+
+            const now = new Date();
+            const eventDate = n.createdAt || now;
+            const resultText = `${n.reactions} reaction | ${n.replies} reply` + (n.postId ? ` | Post ID ${n.postId}` : '');
+
+            commentRows.push([
+              now,file.name || '',groupName,groupKey,n.postId,postUrl,commentId,commentUrl,n.parentId || '',
+              n.authorName,n.authorUrl,n.message,eventDate,n.reactions,n.replies,
+              '','','','','','','Chờ AI'
+            ]);
+
+            oppRows.push([
+              eventDate,sourceId,commentUrl,'Bình luận',groupName,n.authorName,n.authorUrl,evidence,
+              '','','','','','','Chưa tương tác','', '', 'Chưa có',resultText,'Mới'
+            ]);
+
+            commentImported += 1;
+            if (groupKey && groupStats[groupKey]) groupStats[groupKey].newCount += 1;
+          });
+          return;
+        }
+
         const posts = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.data) ? parsed.data : []);
         if (!posts.length) {
           errors.push(`${file.name}: không thấy danh sách bài viết.`);
@@ -75,31 +149,27 @@ const RemoteApp = (() => {
         const fileGroupKey = fileGroupKeys.length === 1 ? fileGroupKeys[0] : '';
 
         posts.forEach(post => {
-          scannedCount += 1;
+          postScanned += 1;
           const url = String(post.url || '').trim();
           const postId = normalizePostId_(post.post_id || post.id || '', url);
           if (!postId && !url) return;
 
           const groupKey = extractGroupKey_(url) || fileGroupKey;
-          if (groupKey && !groupMap[groupKey]) {
-            groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
-          }
+          if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
           const groupInfo = groupMap[groupKey] || { name: `Group ${groupKey || 'không rõ'}`, row: null };
 
           if (groupKey) {
-            if (!groupStats[groupKey]) {
-              groupStats[groupKey] = { scanned: 0, newCount: 0, fileName: file.name || '', row: groupInfo.row };
-            }
+            if (!groupStats[groupKey]) groupStats[groupKey] = { scanned:0, newCount:0, fileName:file.name || '', row:groupInfo.row };
             groupStats[groupKey].scanned += 1;
             groupStats[groupKey].fileName = file.name || groupStats[groupKey].fileName;
           }
 
           const keys = makePostKeys_(postId, url);
-          if (keys.some(k => existingKeys.has(k))) {
+          if (keys.some(k => existingPostKeys.has(k))) {
             duplicateCount += 1;
             return;
           }
-          keys.forEach(k => existingKeys.add(k));
+          keys.forEach(k => existingPostKeys.add(k));
 
           const actor = post.actor || {};
           const authorName = String(actor.name || '');
@@ -110,13 +180,13 @@ const RemoteApp = (() => {
           const shares = toNumber_(post.shares && post.shares.total);
           const attachments = post.content && Array.isArray(post.content.attachments) ? post.content.attachments : [];
           const mediaCount = attachments.length;
-          const postDate = post.creation_time ? new Date(Number(post.creation_time)) : new Date();
+          const postDate = toDate_(post.creation_time) || new Date();
           const now = new Date();
           const resultText = `${comments} bình luận | ${reactions} reaction | ${shares} share`;
 
-          rawRows.push([now, file.name || '', groupInfo.name, groupKey, postId, url, authorName, authorUrl, message, comments, reactions, shares, mediaCount, 'Chưa phân tích']);
-          oppRows.push([postDate, postId, url, 'Bài viết', groupInfo.name, authorName, authorUrl, message, '', '', '', '', '', '', 'Chưa tương tác', '', '', 'Chưa có', resultText, 'Mới']);
-
+          rawRows.push([now,file.name || '',groupInfo.name,groupKey,postId,url,authorName,authorUrl,message,comments,reactions,shares,mediaCount,'Chờ AI']);
+          oppRows.push([postDate,postId,url,'Bài viết',groupInfo.name,authorName,authorUrl,message,'','','','','','','Chưa tương tác','', '', 'Chưa có',resultText,'Mới']);
+          postImported += 1;
           if (groupKey && groupStats[groupKey]) groupStats[groupKey].newCount += 1;
         });
       } catch (err) {
@@ -125,32 +195,41 @@ const RemoteApp = (() => {
     });
 
     if (rawRows.length) {
-      const rawStart = rawSheet.getLastRow() + 1;
-      const oppStart = oppSheet.getLastRow() + 1;
-      rawSheet.getRange(rawStart, 5, rawRows.length, 1).setNumberFormat('@');
-      oppSheet.getRange(oppStart, 2, oppRows.length, 1).setNumberFormat('@');
-      rawSheet.getRange(rawStart, 1, rawRows.length, 14).setValues(rawRows);
-      oppSheet.getRange(oppStart, 1, oppRows.length, 20).setValues(oppRows);
+      const start = rawSheet.getLastRow() + 1;
+      rawSheet.getRange(start,5,rawRows.length,1).setNumberFormat('@');
+      rawSheet.getRange(start,1,rawRows.length,14).setValues(rawRows);
+    }
+    if (commentRows.length) {
+      const start = commentSheet.getLastRow() + 1;
+      commentSheet.getRange(start,5,commentRows.length,4).setNumberFormat('@');
+      commentSheet.getRange(start,1,commentRows.length,22).setValues(commentRows);
+    }
+    if (oppRows.length) {
+      const start = oppSheet.getLastRow() + 1;
+      oppSheet.getRange(start,2,oppRows.length,1).setNumberFormat('@');
+      oppSheet.getRange(start,1,oppRows.length,20).setValues(oppRows);
     }
 
     updateGroupScanStatus_(groupSheet, groupStats);
 
     let ai = null;
-    if (getAiConfig_().autoAnalyze && getAiConfig_().configured && rawRows.length) {
-      try {
-        ai = analyzeNewPosts_({ silent: true });
-      } catch (e) {
-        errors.push('AI: ' + e.message);
-      }
+    const aiCfg = getAiConfig_();
+    if (aiCfg.autoAnalyze && aiCfg.configured && oppRows.length) {
+      try { ai = analyzeNewPosts_({ silent:true }); }
+      catch (e) { errors.push('AI: ' + e.message); }
     }
 
-    const refresh = ai && ai.refresh ? ai.refresh : refreshCurrentData({ silent: true });
+    const refresh = ai && ai.refresh ? ai.refresh : refreshCurrentData({ silent:true });
     SpreadsheetApp.flush();
     return {
       version: CFG.VERSION,
       files: files.length,
-      scanned: scannedCount,
-      imported: rawRows.length,
+      scanned: postScanned + commentScanned,
+      postScanned,
+      commentScanned,
+      imported: postImported + commentImported,
+      postImported,
+      commentImported,
       duplicates: duplicateCount,
       errors,
       ai,
@@ -158,6 +237,167 @@ const RemoteApp = (() => {
     };
   }
 
+  function detectJsonKind_(fileName, parsed) {
+    const name = String(fileName || '').toLowerCase();
+    if (/comment|reply|repl(y|ies)|binh.?luan/i.test(name)) return 'comments';
+    if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.comments)) return 'comments';
+    const sample = Array.isArray(parsed) ? parsed.slice(0,5) : (parsed && Array.isArray(parsed.data) ? parsed.data.slice(0,5) : []);
+    if (sample.some(x => looksLikeComment_(x))) return 'comments';
+    return 'posts';
+  }
+
+  function looksLikeComment_(o) {
+    if (!o || typeof o !== 'object') return false;
+    if (o.comment_id || o.commentId || o.parent_comment_id || o.parentCommentId || o.reply_count || o.replies_count) return true;
+    const u = String(o.comment_url || o.permalink_url || o.url || '');
+    if (/comment_id=|\/comments?\/|\/comment\//i.test(u)) return true;
+    return false;
+  }
+
+  function extractCommentRecords_(parsed, fileName) {
+    let roots = [];
+    if (Array.isArray(parsed)) roots = parsed;
+    else if (parsed && Array.isArray(parsed.comments)) roots = parsed.comments;
+    else if (parsed && Array.isArray(parsed.data)) roots = parsed.data;
+    else if (parsed && typeof parsed === 'object') roots = [parsed];
+
+    const out = [];
+    const walk = (obj, parentId) => {
+      if (!obj || typeof obj !== 'object') return;
+      const cid = String(pickPath_(obj,['comment_id','commentId','id']) || '');
+      if (looksLikeComment_(obj) || /comment|reply/i.test(String(fileName || '')) || parentId) {
+        out.push({ record:obj, parentId: parentId || pickPath_(obj,['parent_comment_id','parentCommentId','parent.id']) || '' });
+      }
+      ['replies','children','comments'].forEach(key => {
+        let child = obj[key];
+        if (child && !Array.isArray(child) && Array.isArray(child.data)) child = child.data;
+        if (Array.isArray(child)) child.forEach(x => walk(x, cid || parentId || ''));
+      });
+    };
+    roots.forEach(x => walk(x,''));
+    return out;
+  }
+
+  function pickPath_(obj, paths) {
+    for (const p of paths) {
+      const parts = String(p).split('.');
+      let cur = obj;
+      let ok = true;
+      for (const part of parts) {
+        if (cur == null || typeof cur !== 'object' || !(part in cur)) { ok=false; break; }
+        cur = cur[part];
+      }
+      if (ok && cur !== undefined && cur !== null && cur !== '') return cur;
+    }
+    return '';
+  }
+
+  function normalizeCommentRecord_(o, parentId, fileName, postLookup) {
+    const author = pickPath_(o,['actor','author','user','commenter','owner']) || {};
+    const commentUrl = String(pickPath_(o,['comment_url','commentUrl','permalink_url','permalink','url']) || '').trim();
+    let postUrl = String(pickPath_(o,['post_url','postUrl','post.permalink_url','post.url','target.url']) || '').trim();
+    let postId = String(pickPath_(o,['post_id','postId','post.id','target_id','feedback.target_id']) || '').trim();
+    if (!postId) postId = extractPostIdFromUrl_(postUrl || commentUrl);
+    if (postId && postLookup[postId]) postUrl = postUrl || postLookup[postId].url;
+
+    const explicitGroup = String(pickPath_(o,['group_id','groupId','group.id']) || '').trim().toLowerCase();
+    const groupKey = explicitGroup || extractGroupKey_(postUrl) || extractGroupKey_(commentUrl) ||
+      (postId && postLookup[postId] ? postLookup[postId].groupKey : '');
+    const groupName = String(pickPath_(o,['group_name','groupName','group.name']) || '') ||
+      (postId && postLookup[postId] ? postLookup[postId].group : '');
+
+    let message = pickPath_(o,['message','text','body','comment_text','commentText','content.text','content']);
+    if (message && typeof message === 'object') message = pickPath_(message,['text','message','body']);
+    message = String(message || '').trim();
+
+    const commentId = String(pickPath_(o,['comment_id','commentId','id']) || '').trim();
+    const authorName = String(pickPath_(author,['name','full_name','display_name']) || pickPath_(o,['author_name','user_name','name']) || '').trim();
+    const authorUrl = String(pickPath_(author,['url','profile_url','profileUrl','link']) || pickPath_(o,['author_url','profile_url','user_url']) || '').trim();
+    const createdAt = toDate_(pickPath_(o,['creation_time','created_time','createdAt','created_at','timestamp','time']));
+    const reactions = toNumber_(pickPath_(o,['reactions.total','reaction_count','reactions_count','like_count','likes','feedback.reaction_count']));
+    const replies = toNumber_(pickPath_(o,['replies.total','reply_count','replies_count','children.total','comments_count']));
+
+    return {
+      commentId, parentId:String(parentId || ''), postId, postUrl, commentUrl, groupKey, groupName,
+      authorName, authorUrl, message, createdAt, reactions, replies
+    };
+  }
+
+  function loadPostContext_(oppSheet) {
+    const out = {};
+    const last = oppSheet.getLastRow();
+    if (last < 2) return out;
+    oppSheet.getRange(2,1,last-1,20).getValues().forEach(r => {
+      if (String(r[3] || '') !== 'Bài viết') return;
+      const id = String(r[1] || '').trim();
+      if (!id) return;
+      out[id] = { url:String(r[2]||''), group:String(r[4]||''), groupKey:extractGroupKey_(r[2]||''), content:String(r[7]||'') };
+    });
+    return out;
+  }
+
+  function loadExistingCommentKeys_(commentSheet, oppSheet) {
+    const keys = new Set();
+    const last = commentSheet.getLastRow();
+    if (last >= 2) {
+      commentSheet.getRange(2,7,last-1,2).getValues().forEach(r => makeCommentKeys_(r[0],r[1]).forEach(k=>keys.add(k)));
+    }
+    const oppLast = oppSheet.getLastRow();
+    if (oppLast >= 2) {
+      oppSheet.getRange(2,2,oppLast-1,3).getValues().forEach(r => {
+        if (String(r[2]||'') !== 'Bình luận') return;
+        const id = String(r[0]||'').replace(/^C:/,'');
+        makeCommentKeys_(id,r[1]).forEach(k=>keys.add(k));
+      });
+    }
+    return keys;
+  }
+
+  function makeCommentKeys_(commentId, url) {
+    const out = [];
+    const id = String(commentId || '').trim();
+    const u = normalizeUrl_(url);
+    if (id) out.push('CID|' + id);
+    if (u && /comment_id=|\/comments?\/|\/comment\//i.test(String(url||''))) out.push('CURL|' + u);
+    return out;
+  }
+
+  function stableId_(text) {
+    const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text || ''), Utilities.Charset.UTF_8);
+    return Utilities.base64EncodeWebSafe(bytes).replace(/=+$/,'').slice(0,24);
+  }
+
+  function toDate_(value) {
+    if (value instanceof Date) return value;
+    if (value === '' || value === null || value === undefined) return null;
+    if (typeof value === 'number') return new Date(value < 100000000000 ? value * 1000 : value);
+    const s = String(value).trim();
+    if (/^\d+$/.test(s)) {
+      const n = Number(s);
+      return new Date(n < 100000000000 ? n * 1000 : n);
+    }
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function ensureV16Sheets_() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let cs = ss.getSheetByName(CFG.COMMENT_SHEET);
+    if (!cs) cs = ss.insertSheet(CFG.COMMENT_SHEET);
+    if (cs.getLastRow() === 0) cs.getRange(1,1,1,22).setValues([[
+      'Ngày import','File JSON','Nhóm','Group ID','Post ID','URL bài','Comment ID','URL comment','Parent Comment ID',
+      'Người comment','Link Facebook','Nội dung comment','Ngày comment','Reaction','Reply','Pain','Intent','Điểm',
+      'Phân loại KH','Reply gợi ý','Hành động tiếp theo','Trạng thái xử lý'
+    ]]);
+
+    let ts = ss.getSheetByName(CFG.PERSON_TIMELINE_SHEET);
+    if (!ts) ts = ss.insertSheet(CFG.PERSON_TIMELINE_SHEET);
+    if (ts.getLastRow() === 0) ts.getRange(1,1,1,18).setValues([[
+      'Person Key','Tên','URL Facebook','Thời gian','Nhóm','Loại nguồn','Source ID','URL nguồn',
+      'Nội dung / bằng chứng','Pain','Intent','Điểm','Phân loại','Hành động tiếp theo','Follow-up',
+      'Chuyển đổi','Trạng thái','Ghi chú'
+    ]]);
+  }
 
   function handleUiCommand_(command) {
     const name = String(command.__command || '');
