@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.5.0',
+    VERSION: '1.5.1',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -419,6 +419,20 @@ const RemoteApp = (() => {
     return parsed.analyses;
   }
 
+  function sanitizeGeminiSchema_(schema) {
+    if (Array.isArray(schema)) return schema.map(sanitizeGeminiSchema_);
+    if (!schema || typeof schema !== 'object') return schema;
+
+    const out = {};
+    Object.keys(schema).forEach(key => {
+      // Legacy Gemini generateContent.responseSchema is not full JSON Schema.
+      // Keep only fields accepted by the Schema message.
+      if (key === 'additionalProperties' || key === '$schema' || key === '$id' || key === '$defs' || key === '$ref') return;
+      out[key] = sanitizeGeminiSchema_(schema[key]);
+    });
+    return out;
+  }
+
   function callGeminiStructured_(systemPrompt, userPrompt, schema, cfg) {
     const key = String(PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY') || '').trim();
     if (!key) throw new Error('Thiếu GEMINI_API_KEY.');
@@ -432,7 +446,9 @@ const RemoteApp = (() => {
       contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
       generationConfig: {
         responseMimeType: 'application/json',
-        responseSchema: schema
+        // generateContent.responseSchema uses Google's legacy Schema/OpenAPI subset.
+        // It rejects JSON-Schema-only keywords such as additionalProperties.
+        responseSchema: sanitizeGeminiSchema_(schema)
       }
     };
 
