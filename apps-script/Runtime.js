@@ -350,7 +350,7 @@ const RemoteApp = (() => {
           type: 'json_schema',
           name: 'community_sales_analysis',
           strict: true,
-          schema: Object.assign(analysisSchema_(), { additionalProperties: false })
+          schema: analysisSchema_()
         }
       }
     };
@@ -380,11 +380,13 @@ const RemoteApp = (() => {
               next_action: { type: 'string' },
               follow_up_days: { type: 'integer' }
             },
-            required: ['row_number','pain','intent','score','classification','value_solution','suggested_comment','next_action','follow_up_days']
+            required: ['row_number','pain','intent','score','classification','value_solution','suggested_comment','next_action','follow_up_days'],
+            additionalProperties: false
           }
         }
       },
-      required: ['analyses']
+      required: ['analyses'],
+      additionalProperties: false
     };
   }
 
