@@ -92,9 +92,12 @@
         ['gpt-5.6-sol','gpt-5.6-sol — chất lượng cao']
       ],
       gemini: [
-        ['gemini-3.5-flash','gemini-3.5-flash — nhanh/volume'],
-        ['gemini-2.5-flash','gemini-2.5-flash'],
-        ['gemini-2.5-pro','gemini-2.5-pro']
+        ['gemini-auto','TỰ ĐỘNG — retry + fallback model ổn định'],
+        ['gemini-3.5-flash-lite','gemini-3.5-flash-lite — nhanh/volume'],
+        ['gemini-3.8-flash','gemini-3.8-flash — stable mới'],
+        ['gemini-3.6-flash','gemini-3.6-flash — stable'],
+        ['gemini-3.5-flash','gemini-3.5-flash — stable'],
+        ['gemini-3.1-flash-lite','gemini-3.1-flash-lite — nhẹ']
       ]
     };
 
@@ -138,8 +141,9 @@
           'Runtime V' + cfg.version,
           'OpenAI ' + (cfg.openaiConfigured ? '✅' : '—'),
           'Gemini ' + (cfg.geminiConfigured ? '✅' : '—'),
-          'Đang chọn: ' + (cfg.provider === 'gemini' ? 'Gemini' : 'OpenAI')
-        ];
+          'Đang chọn: ' + (cfg.provider === 'gemini' ? 'Gemini' : 'OpenAI'),
+          (cfg.provider === 'gemini' && cfg.lastGeminiModel ? 'Model chạy gần nhất: ' + cfg.lastGeminiModel : '')
+        ].filter(Boolean);
         document.getElementById('aiState').textContent = bits.join(' | ');
       });
     }
