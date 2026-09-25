@@ -1,12 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "Gemini resilience: retries transient 408/429/5xx errors with exponential backoff and jitter.",
-    "Automatic fallback checks models.list and rotates across stable generateContent models.",
-    "Default Gemini routing is gemini-auto; legacy 2.5 choices are migrated to auto for new projects.",
-    "Current fallback order: gemini-3.5-flash-lite, gemini-3.8-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-flash-lite."
+    "Live AI progress: batch counter, analyzed/total, percentage, active model and error count.",
+    "Adds NHẬT KÝ AI sheet with START, BATCH_OK, BATCH_ERROR and DONE events.",
+    "Adds a script-level lock to prevent double-click/concurrent AI analysis runs.",
+    "Corrects the runtime version display after the V1.5.2 resilience patch."
   ]
 }
