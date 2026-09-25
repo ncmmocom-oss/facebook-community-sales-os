@@ -1,12 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "AI Opportunity Engine: automatically fills Pain, Intent, Score, customer classification, value solution, suggested comment, next action and follow-up.",
-    "Uses OpenAI Responses API with structured JSON output; default model is gpt-6-luna.",
-    "OpenAI API key is stored only in Apps Script Script Properties, not in Google Sheets or GitHub.",
-    "Optional auto-analysis runs immediately after new JSON import, followed by lead sync and coordination rebuild."
+    "Pipeline repair: NHẬP JSON processing status now reflects actual AI analysis state.",
+    "NHÓM is rebuilt from the QUÉT NHÓM registry so every active group appears automatically.",
+    "Legacy group mapping is repaired using raw Post ID + file context, including slug groups.",
+    "AI backlog remains explicit as Chờ AI until OpenAI analysis succeeds."
   ]
 }
