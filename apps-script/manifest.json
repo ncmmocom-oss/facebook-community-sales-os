@@ -1,11 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "Permission hotfix: added bootstrap/appsscript.json with script.container.ui, spreadsheets.currentonly and script.external_request scopes.",
-    "GitHub-hosted runtime: future logic updates do not require manual Apps Script copy/paste.",
-    "CẬP NHẬT DỮ LIỆU repairs Post ID, dedupes, syncs leads, refreshes group summary and coordination queue."
+    "Daily Ops: QUÉT NHÓM is repaired automatically from group URLs.",
+    "Import JSON now automatically runs data refresh after import.",
+    "Existing NHẬP JSON/CƠ HỘI rows are remapped back to the correct group using the source post URL.",
+    "Post dedupe remains Post ID + normalized URL; lead sync and coordination rebuild remain automatic."
   ]
 }
