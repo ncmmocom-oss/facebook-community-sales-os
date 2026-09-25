@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.2.1',
+    VERSION: '1.3.0',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -127,15 +127,27 @@ const RemoteApp = (() => {
     }
 
     updateGroupScanStatus_(groupSheet, groupStats);
+    const refresh = refreshCurrentData({ silent: true });
     SpreadsheetApp.flush();
-    return { version: CFG.VERSION, files: files.length, scanned: scannedCount, imported: rawRows.length, duplicates: duplicateCount, errors };
+    return {
+      version: CFG.VERSION,
+      files: files.length,
+      scanned: scannedCount,
+      imported: rawRows.length,
+      duplicates: duplicateCount,
+      errors,
+      refresh
+    };
   }
 
-  function refreshCurrentData() {
+  function refreshCurrentData(options) {
+    const silent = options && options.silent;
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const rawSheet = mustSheet_(ss, CFG.RAW_SHEET);
     const oppSheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
 
+    const registryStats = repairScanRegistry_();
+    const remapStats = remapGroupNames_();
     const rawFix = normalizeAndDedupeSheet_(rawSheet, { headerRows: 4, idCol: 5, urlCol: 6, totalCols: 14, preferComplete: false });
     const oppFix = normalizeAndDedupeSheet_(oppSheet, { headerRows: 1, idCol: 2, urlCol: 3, totalCols: 20, preferComplete: true });
     const leadStats = syncPotentialCustomers({ silent: true });
@@ -148,16 +160,20 @@ const RemoteApp = (() => {
       rawRemoved: rawFix.removed,
       oppRemoved: oppFix.removed,
       repairedIds: rawFix.repairedIds + oppFix.repairedIds,
+      registryRows: registryStats.rows,
+      remappedGroups: remapStats.changed,
       leads: leadStats.count,
       groups: groupStats.groups,
       queue: queueStats.count,
     };
 
-    SpreadsheetApp.getActive().toast(
-      `V${CFG.VERSION} | Trùng xóa: ${result.rawRemoved + result.oppRemoved} | KH: ${result.leads} | Điều phối: ${result.queue}`,
-      'CẬP NHẬT DỮ LIỆU',
-      8
-    );
+    if (!silent) {
+      SpreadsheetApp.getActive().toast(
+        `V${CFG.VERSION} | Trùng xóa: ${result.rawRemoved + result.oppRemoved} | Remap group: ${result.remappedGroups} | KH: ${result.leads} | Điều phối: ${result.queue}`,
+        'CẬP NHẬT DỮ LIỆU',
+        8
+      );
+    }
     return result;
   }
 
@@ -287,6 +303,86 @@ const RemoteApp = (() => {
     if (oldLast >= 7) outSheet.getRange(7, 1, oldLast - 6, 8).clearContent();
     if (out.length) outSheet.getRange(7, 1, out.length, 8).setValues(out);
     return { count: out.length };
+  }
+
+
+  function repairScanRegistry_() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
+    if (!sheet) return { rows: 0 };
+    const last = sheet.getLastRow();
+    if (last < 2) return { rows: 0 };
+
+    const rows = sheet.getRange(2, 1, last - 1, 16).getValues();
+    let touched = 0;
+    rows.forEach((r, i) => {
+      const rowNum = i + 2;
+      const url = String(r[3] || '').trim();
+      if (!url) return;
+      const key = extractGroupKey_(url);
+      if (!key) return;
+
+      if (!r[0]) sheet.getRange(rowNum, 1).setValue('Có');
+      if (!r[2]) sheet.getRange(rowNum, 3).setValue('Group ' + key);
+      if (!r[4]) sheet.getRange(rowNum, 5).setValue(key);
+      if (!r[6]) sheet.getRange(rowNum, 7).setValue('Thử nghiệm');
+      if (!r[7]) sheet.getRange(rowNum, 8).setValue(3);
+      if (!r[8]) sheet.getRange(rowNum, 9).setValue(100);
+
+      sheet.getRange(rowNum, 11).setFormula(`=IF(OR(H${rowNum}="";J${rowNum}="");"";J${rowNum}+1/H${rowNum})`);
+      sheet.getRange(rowNum, 12).setFormula(`=IF(A${rowNum}<>"Có";"TẮT";IF(K${rowNum}="";"CẦN QUÉT";IF(K${rowNum}<=NOW();"CẦN QUÉT";"CHỜ")))`);
+      touched += 1;
+    });
+    return { rows: touched };
+  }
+
+  function remapGroupNames_() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const scanSheet = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
+    const rawSheet = ss.getSheetByName(CFG.RAW_SHEET);
+    const oppSheet = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
+    if (!scanSheet || !rawSheet || !oppSheet) return { changed: 0 };
+
+    const map = loadGroupMap_(scanSheet);
+    let changed = 0;
+
+    const rawLast = rawSheet.getLastRow();
+    if (rawLast >= 5) {
+      const rows = rawSheet.getRange(5, 1, rawLast - 4, 14).getValues();
+      let dirty = false;
+      rows.forEach(r => {
+        const url = String(r[5] || '');
+        const key = extractGroupKey_(url);
+        if (!key) return;
+        const name = map[key] ? map[key].name : (r[2] || ('Group ' + key));
+        if (String(r[2] || '') !== String(name) || String(r[3] || '') !== String(key)) {
+          r[2] = name;
+          r[3] = key;
+          changed += 1;
+          dirty = true;
+        }
+      });
+      if (dirty) rawSheet.getRange(5, 1, rows.length, 14).setValues(rows);
+    }
+
+    const oppLast = oppSheet.getLastRow();
+    if (oppLast >= 2) {
+      const rows = oppSheet.getRange(2, 1, oppLast - 1, 20).getValues();
+      let dirty = false;
+      rows.forEach(r => {
+        const url = String(r[2] || '');
+        const key = extractGroupKey_(url);
+        if (!key) return;
+        const name = map[key] ? map[key].name : (r[4] || ('Group ' + key));
+        if (String(r[4] || '') !== String(name)) {
+          r[4] = name;
+          changed += 1;
+          dirty = true;
+        }
+      });
+      if (dirty) oppSheet.getRange(2, 1, rows.length, 20).setValues(rows);
+    }
+    return { changed };
   }
 
   function normalizeAndDedupeSheet_(sheet, cfg) {
