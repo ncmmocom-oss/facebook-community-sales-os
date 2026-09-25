@@ -90,3 +90,9 @@ API key chỉ được lưu trong Apps Script **Script Properties**, không ghi 
 - Comment gợi ý không được giả trải nghiệm, testimonial hay chèn link bán hàng vô cớ.
 - Chỉ phân tích bài chưa có Pain / Intent / Score / Phân loại, nên không ghi đè phân tích thủ công.
 - Sau AI, hệ thống tự đồng bộ `KHÁCH HÀNG TIỀM NĂNG` và `ĐIỀU PHỐI`.
+
+## V1.4.1 - Pipeline Repair
+- `NHẬP JSON` phản ánh đúng trạng thái `Chờ AI / Đã phân tích` theo dữ liệu thật trong `CƠ HỘI`.
+- `NHÓM` được rebuild từ registry `QUÉT NHÓM`, nên mọi group active đều xuất hiện, kể cả khi chưa có lead.
+- Sửa mapping group legacy bằng Post ID + Group ID/file context; slug group không còn bị rút gọn kiểu `Group 3`.
+- Pipeline hiện tại: `JSON -> CƠ HỘI -> AI -> KHÁCH HÀNG TIỀM NĂNG -> ĐIỀU PHỐI`.
