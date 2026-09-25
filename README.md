@@ -154,3 +154,42 @@ Gemini 2.5 không còn nằm trong selector mặc định vì Google đang giớ
 - Sheet `NHẬT KÝ AI` ghi START / BATCH_OK / BATCH_ERROR / DONE.
 - Dùng ScriptLock để chặn chạy AI song song do double-click hoặc nhiều cửa sổ.
 - Runtime version được bump đúng lên 1.5.3.
+
+
+## V1.6.0 - Comment Intelligence + Person Timeline
+
+### Mục tiêu
+Đưa chiến thuật Community Sales từ cấp **bài viết** xuống đúng nơi có buyer intent mạnh hơn: **bình luận và hội thoại**.
+
+### Import
+Cùng một cửa sổ Import JSON nhận:
+- `posts*.json` → NHẬP JSON + CƠ HỘI
+- `comments*.json` / `replies*.json` → BÌNH LUẬN + CƠ HỘI
+
+Runtime tự nhận diện loại file. Comment được chống trùng riêng bằng Comment ID / comment permalink. Khi comment không có ID, runtime tạo stable SHA-256 key từ post + author + content + time.
+
+### BÌNH LUẬN
+Lưu bằng chứng gốc:
+`Post ID | Comment ID | URL comment | Parent Comment | Người comment | FB URL | Nội dung | Reaction | Reply | Pain | Intent | Score | Phân loại | Reply gợi ý | Next Action`.
+
+### CƠ HỘI
+Cột B đổi từ `Post ID` thành `Source ID`:
+- bài viết: giữ Post ID
+- bình luận: `C:<comment_id>`
+
+Nhờ vậy cùng một URL bài có thể chứa nhiều comment opportunity mà không bị dedupe nhầm.
+
+### Person Timeline
+Tab `LỊCH SỬ KH` được rebuild từ toàn bộ CƠ HỘI:
+`Person Key | Người | FB URL | Thời gian | Group | Source | Evidence | Intent | Score | Action | Follow-up | Conversion`.
+
+Một người xuất hiện nhiều bài/comment sẽ có nhiều evidence trong timeline nhưng vẫn được gộp thành một dòng ở `KHÁCH HÀNG TIỀM NĂNG`.
+
+### AI
+Nếu `sourceType = Bình luận`, AI:
+- đánh giá chính người comment;
+- ưu tiên hỏi giá / hỏi mua / hỏi giải pháp / phản đối / cần gấp;
+- soạn `suggested_comment` như một **reply nối tiếp thread**, không phải comment quảng cáo độc lập.
+
+### Acceptance
+Vì cấu trúc JSON comment của Social AIO có thể thay đổi theo exporter, cần test bằng **1 file comment JSON thực tế**. Parser V1.6.0 hỗ trợ các field phổ biến: `comment_id/id`, `post_id`, `author/actor/user/commenter`, `message/text/body`, `comment_url/permalink_url`, `replies/children`.
