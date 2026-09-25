@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.4.0',
+    VERSION: '1.4.1',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -444,6 +444,7 @@ const RemoteApp = (() => {
     const remapStats = remapGroupNames_();
     const rawFix = normalizeAndDedupeSheet_(rawSheet, { headerRows: 4, idCol: 5, urlCol: 6, totalCols: 14, preferComplete: false });
     const oppFix = normalizeAndDedupeSheet_(oppSheet, { headerRows: 1, idCol: 2, urlCol: 3, totalCols: 20, preferComplete: true });
+    const rawStatusStats = syncRawProcessingStatus_();
     const leadStats = syncPotentialCustomers({ silent: true });
     const groupStats = refreshGroupSummary_();
     const queueStats = refreshCoordination_();
@@ -456,6 +457,7 @@ const RemoteApp = (() => {
       repairedIds: rawFix.repairedIds + oppFix.repairedIds,
       registryRows: registryStats.rows,
       remappedGroups: remapStats.changed,
+      rawStatuses: rawStatusStats.rows,
       leads: leadStats.count,
       groups: groupStats.groups,
       queue: queueStats.count,
@@ -535,35 +537,70 @@ const RemoteApp = (() => {
 
   function refreshGroupSummary_() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const groupSheet = ss.getSheetByName(CFG.GROUP_SUMMARY_SHEET);
-    const leadSheet = ss.getSheetByName(CFG.LEAD_SHEET);
-    if (!groupSheet || !leadSheet) return { groups: 0 };
+    const summarySheet = ss.getSheetByName(CFG.GROUP_SUMMARY_SHEET);
+    const scanSheet = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
+    const oppSheet = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
+    if (!summarySheet || !scanSheet || !oppSheet) return { groups: 0 };
 
-    const leadLast = leadSheet.getLastRow();
-    const leads = leadLast >= 2 ? leadSheet.getRange(2, 1, leadLast - 1, 16).getValues() : [];
+    const old = {};
+    const oldLast = summarySheet.getLastRow();
+    if (oldLast >= 2) {
+      summarySheet.getRange(2, 1, oldLast - 1, 12).getValues().forEach(r => {
+        const name = String(r[0] || '').trim();
+        const url = String(r[1] || '').trim();
+        if (name) old['NAME|' + name] = r;
+        if (url) old['URL|' + normalizeUrl_(url)] = r;
+      });
+    }
+
+    const scanLast = scanSheet.getLastRow();
+    const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getValues() : [];
+    const oppLast = oppSheet.getLastRow();
+    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 20).getValues() : [];
     const byGroup = {};
-    leads.forEach(r => {
-      const group = String(r[2] || '').trim();
-      if (!group) return;
-      if (!byGroup[group]) byGroup[group] = [];
-      byGroup[group].push(r);
+    oppRows.forEach(r => {
+      const g = String(r[4] || '').trim();
+      if (!g) return;
+      if (!byGroup[g]) byGroup[g] = [];
+      byGroup[g].push(r);
     });
 
-    const last = groupSheet.getLastRow();
-    if (last < 2) return { groups: 0 };
-    const names = groupSheet.getRange(2, 1, last - 1, 1).getValues().flat();
-    let touched = 0;
-    names.forEach((name, i) => {
-      const group = String(name || '').trim();
-      if (!group) return;
-      const list = (byGroup[group] || []).sort((a,b) => Number(b[8]||0)-Number(a[8]||0));
-      const leadCount = list.length;
-      const top = list.slice(0, 5).map(r => `${r[0]} (${Number(r[8] || 0)})`).join('\n');
-      const sold = list.filter(r => String(r[14] || '').trim() === 'Đã bán').length;
-      groupSheet.getRange(i + 2, 8, 1, 3).setValues([[leadCount, top, sold]]);
-      touched += 1;
+    const output = [];
+    scanRows.forEach(s => {
+      const url = String(s[3] || '').trim();
+      if (!url) return;
+      const name = String(s[2] || '').trim() || ('Group ' + String(s[4] || extractGroupKey_(url)));
+      const prev = old['NAME|' + name] || old['URL|' + normalizeUrl_(url)] || [];
+      const list = byGroup[name] || [];
+      const leads = list
+        .filter(r => ['Rất tiềm năng','Tiềm năng'].includes(String(r[11] || '').trim()))
+        .sort((a,b) => Number(b[10] || 0) - Number(a[10] || 0));
+      const top = leads.slice(0, 5).map(r => `${r[5] || '(ẩn danh)'} (${Number(r[10] || 0)})`).join('\n');
+      const sold = list.filter(r => String(r[17] || '').trim() === 'Đã bán').length;
+      const analyzed = list.filter(r => [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined)).length;
+      const pending = Math.max(0, list.length - analyzed);
+      const stat = `${list.length} bài | ${analyzed} đã phân tích | ${pending} chờ AI`;
+      const oldNote = String(prev[11] || '').split('\n').filter(x => !/\d+ bài \| \d+ đã phân tích \| \d+ chờ AI/.test(x)).join('\n').trim();
+
+      output.push([
+        name,
+        url,
+        s[1] || prev[2] || '',
+        prev[3] || '',
+        s[5] || prev[4] || '',
+        prev[5] || '',
+        prev[6] || '',
+        leads.length,
+        top,
+        sold,
+        s[6] || prev[10] || 'Thử nghiệm',
+        oldNote ? oldNote + '\n' + stat : stat
+      ]);
     });
-    return { groups: touched };
+
+    if (oldLast >= 2) summarySheet.getRange(2, 1, oldLast - 1, 12).clearContent();
+    if (output.length) summarySheet.getRange(2, 1, output.length, 12).setValues(output);
+    return { groups: output.length };
   }
 
   function refreshCoordination_() {
@@ -638,45 +675,97 @@ const RemoteApp = (() => {
     if (!scanSheet || !rawSheet || !oppSheet) return { changed: 0 };
 
     const map = loadGroupMap_(scanSheet);
-    let changed = 0;
-
     const rawLast = rawSheet.getLastRow();
-    if (rawLast >= 5) {
-      const rows = rawSheet.getRange(5, 1, rawLast - 4, 14).getValues();
-      let dirty = false;
-      rows.forEach(r => {
-        const url = String(r[5] || '');
-        const key = extractGroupKey_(url);
-        if (!key) return;
-        const name = map[key] ? map[key].name : (r[2] || ('Group ' + key));
-        if (String(r[2] || '') !== String(name) || String(r[3] || '') !== String(key)) {
-          r[2] = name;
-          r[3] = key;
-          changed += 1;
-          dirty = true;
-        }
-      });
-      if (dirty) rawSheet.getRange(5, 1, rows.length, 14).setValues(rows);
-    }
+    const rawRows = rawLast >= 5 ? rawSheet.getRange(5, 1, rawLast - 4, 14).getValues() : [];
+    const fileIds = {};
+
+    rawRows.forEach(r => {
+      const file = String(r[1] || '').trim();
+      const gid = String(r[3] || '').trim().toLowerCase();
+      if (!file) return;
+      if (!fileIds[file]) fileIds[file] = {};
+      if (gid) fileIds[file][gid] = true;
+    });
+
+    const fileSingle = {};
+    Object.keys(fileIds).forEach(file => {
+      const ids = Object.keys(fileIds[file]);
+      if (ids.length === 1) fileSingle[file] = ids[0];
+    });
+
+    const postMap = {};
+    let changed = 0;
+    let rawDirty = false;
+
+    rawRows.forEach(r => {
+      const file = String(r[1] || '').trim();
+      let gid = String(r[3] || '').trim().toLowerCase();
+      if (!gid && fileSingle[file]) gid = fileSingle[file];
+
+      let name = String(r[2] || '').trim();
+      if (gid && map[gid]) name = map[gid].name;
+      else if (gid && (!name || name === 'Group không rõ' || name === 'Group 3')) name = 'Group ' + gid;
+
+      if (String(r[3] || '').trim().toLowerCase() !== gid || String(r[2] || '') !== name) {
+        r[3] = gid;
+        r[2] = name;
+        changed += 1;
+        rawDirty = true;
+      }
+      const postId = String(r[4] || '').trim();
+      if (postId) postMap[postId] = { gid, name };
+    });
+
+    if (rawDirty && rawRows.length) rawSheet.getRange(5, 1, rawRows.length, 14).setValues(rawRows);
 
     const oppLast = oppSheet.getLastRow();
-    if (oppLast >= 2) {
-      const rows = oppSheet.getRange(2, 1, oppLast - 1, 20).getValues();
-      let dirty = false;
-      rows.forEach(r => {
-        const url = String(r[2] || '');
-        const key = extractGroupKey_(url);
-        if (!key) return;
-        const name = map[key] ? map[key].name : (r[4] || ('Group ' + key));
-        if (String(r[4] || '') !== String(name)) {
-          r[4] = name;
-          changed += 1;
-          dirty = true;
-        }
-      });
-      if (dirty) oppSheet.getRange(2, 1, rows.length, 20).setValues(rows);
-    }
+    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 20).getValues() : [];
+    let oppDirty = false;
+
+    oppRows.forEach(r => {
+      const postId = String(r[1] || '').trim();
+      const source = postMap[postId];
+      let name = source && source.name ? source.name : '';
+      if (!name) {
+        const key = extractGroupKey_(r[2] || '');
+        name = key && map[key] ? map[key].name : String(r[4] || '').trim();
+      }
+      if (name && String(r[4] || '') !== name) {
+        r[4] = name;
+        changed += 1;
+        oppDirty = true;
+      }
+    });
+
+    if (oppDirty && oppRows.length) oppSheet.getRange(2, 1, oppRows.length, 20).setValues(oppRows);
     return { changed };
+  }
+
+  function syncRawProcessingStatus_() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const rawSheet = ss.getSheetByName(CFG.RAW_SHEET);
+    const oppSheet = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
+    if (!rawSheet || !oppSheet) return { rows: 0 };
+
+    const oppLast = oppSheet.getLastRow();
+    const state = {};
+    if (oppLast >= 2) {
+      oppSheet.getRange(2, 1, oppLast - 1, 20).getValues().forEach(r => {
+        const pid = String(r[1] || '').trim();
+        if (!pid) return;
+        state[pid] = [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined);
+      });
+    }
+
+    const rawLast = rawSheet.getLastRow();
+    if (rawLast < 5) return { rows: 0 };
+    const rows = rawSheet.getRange(5, 1, rawLast - 4, 14).getValues();
+    rows.forEach(r => {
+      const pid = String(r[4] || '').trim();
+      r[13] = state[pid] ? 'Đã phân tích' : 'Chờ AI';
+    });
+    rawSheet.getRange(5, 1, rows.length, 14).setValues(rows);
+    return { rows: rows.length };
   }
 
   function normalizeAndDedupeSheet_(sheet, cfg) {
