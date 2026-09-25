@@ -42,7 +42,8 @@
         google.script.run
           .withSuccessHandler(result => {
             const err = result.errors && result.errors.length ? `\nLỗi:\n- ${result.errors.join('\n- ')}` : '';
-            const auto = result.refresh ? `\nĐã tự cập nhật dữ liệu: Có\nRemap group: ${result.refresh.remappedGroups || 0}\nKH tiềm năng: ${result.refresh.leads || 0}\nHàng điều phối: ${result.refresh.queue || 0}` : '';\n            status.textContent = `XONG - V${result.version}\nFile: ${result.files}\nĐã đọc: ${result.scanned} bài\nBài mới: ${result.imported}\nTrùng bỏ qua: ${result.duplicates}${auto}${err}`;
+            const auto = result.refresh ? `\nĐã tự cập nhật dữ liệu: Có\nRemap group: ${result.refresh.remappedGroups || 0}\nKH tiềm năng: ${result.refresh.leads || 0}\nHàng điều phối: ${result.refresh.queue || 0}` : '';
+            status.textContent = `XONG - V${result.version}\nFile: ${result.files}\nĐã đọc: ${result.scanned} bài\nBài mới: ${result.imported}\nTrùng bỏ qua: ${result.duplicates}${auto}${err}`;
             btn.disabled = false;
           })
           .withFailureHandler(e => { status.textContent = 'Lỗi: ' + (e.message || e); btn.disabled = false; })
