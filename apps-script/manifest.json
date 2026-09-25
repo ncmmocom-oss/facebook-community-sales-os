@@ -1,12 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "Daily Ops: QUÉT NHÓM is repaired automatically from group URLs.",
-    "Import JSON now automatically runs data refresh after import.",
-    "Existing NHẬP JSON/CƠ HỘI rows are remapped back to the correct group using the source post URL.",
-    "Post dedupe remains Post ID + normalized URL; lead sync and coordination rebuild remain automatic."
+    "Auto-registers previously unseen Facebook groups in QUÉT NHÓM when their JSON is imported.",
+    "QUÉT NHÓM is repaired automatically from group URLs.",
+    "Import JSON automatically runs refresh: remap groups, dedupe posts, sync leads and rebuild coordination.",
+    "Post dedupe remains Post ID + normalized URL."
   ]
 }
