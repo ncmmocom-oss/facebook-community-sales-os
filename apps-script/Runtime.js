@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.3.1',
+    VERSION: '1.4.0',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -30,7 +30,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'Nút CẬP NHẬT DỮ LIỆU chỉ đồng bộ/lọc trùng/làm mới bảng; không tự AI chấm Pain/Intent/Score.'
+      'AI V1.4.0: Pain / Intent / Score / Phân loại KH / Comment / Next Action.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -42,6 +42,9 @@ const RemoteApp = (() => {
   }
 
   function importJsonFiles(files) {
+    if (Array.isArray(files) && files.length === 1 && files[0] && files[0].__command) {
+      return handleUiCommand_(files[0]);
+    }
     if (!Array.isArray(files) || files.length === 0) throw new Error('Chưa chọn file JSON.');
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -130,6 +133,16 @@ const RemoteApp = (() => {
     }
 
     updateGroupScanStatus_(groupSheet, groupStats);
+
+    let ai = null;
+    if (getAiConfig_().autoAnalyze && getAiConfig_().configured && rawRows.length) {
+      try {
+        ai = analyzeNewPosts_({ silent: true });
+      } catch (e) {
+        errors.push('AI: ' + e.message);
+      }
+    }
+
     const refresh = refreshCurrentData({ silent: true });
     SpreadsheetApp.flush();
     return {
@@ -139,8 +152,286 @@ const RemoteApp = (() => {
       imported: rawRows.length,
       duplicates: duplicateCount,
       errors,
+      ai,
       refresh
     };
+  }
+
+
+  function handleUiCommand_(command) {
+    const name = String(command.__command || '');
+    if (name === 'GET_AI_CONFIG') return getAiConfig_();
+    if (name === 'SAVE_AI_CONFIG') return saveAiConfig_(command);
+    if (name === 'ANALYZE_NEW') return analyzeNewPosts_({ silent: false });
+    if (name === 'TEST_AI') return testAiConnection_();
+    throw new Error('Lệnh giao diện không được hỗ trợ: ' + name);
+  }
+
+  function getAiConfig_() {
+    const p = PropertiesService.getScriptProperties();
+    return {
+      version: CFG.VERSION,
+      configured: !!String(p.getProperty('OPENAI_API_KEY') || '').trim(),
+      model: p.getProperty('AI_MODEL') || 'gpt-5.6-luna',
+      businessContext: p.getProperty('AI_BUSINESS_CONTEXT') || '',
+      autoAnalyze: (p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true',
+      maxRows: Math.max(1, Math.min(200, Number(p.getProperty('AI_MAX_ROWS') || 100))),
+    };
+  }
+
+  function saveAiConfig_(command) {
+    const p = PropertiesService.getScriptProperties();
+    const key = String(command.apiKey || '').trim();
+    const model = String(command.model || 'gpt-5.6-luna').trim();
+    const businessContext = String(command.businessContext || '').trim();
+    const autoAnalyze = command.autoAnalyze !== false;
+    const maxRows = Math.max(1, Math.min(200, Number(command.maxRows || 100)));
+
+    if (key) p.setProperty('OPENAI_API_KEY', key);
+    p.setProperty('AI_MODEL', model || 'gpt-5.6-luna');
+    p.setProperty('AI_BUSINESS_CONTEXT', businessContext);
+    p.setProperty('AI_AUTO_ANALYZE', String(autoAnalyze));
+    p.setProperty('AI_MAX_ROWS', String(maxRows));
+
+    const cfg = getAiConfig_();
+    if (!cfg.configured) throw new Error('Chưa có OpenAI API key.');
+    return cfg;
+  }
+
+  function testAiConnection_() {
+    const cfg = getAiConfig_();
+    if (!cfg.configured) throw new Error('Chưa cấu hình OpenAI API key.');
+    const payload = {
+      model: cfg.model,
+      input: [
+        { role: 'system', content: 'Trả về JSON đúng schema. Không thêm giải thích.' },
+        { role: 'user', content: 'Kiểm tra kết nối. Trả status=ok.' }
+      ],
+      max_output_tokens: 50,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'connection_test',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: { status: { type: 'string' } },
+            required: ['status'],
+            additionalProperties: false
+          }
+        }
+      }
+    };
+    const json = callOpenAi_(payload);
+    const parsed = parseStructuredResponse_(json);
+    return { ok: parsed && parsed.status === 'ok', model: cfg.model, version: CFG.VERSION };
+  }
+
+  function analyzeNewPosts_(options) {
+    const silent = options && options.silent;
+    const cfg = getAiConfig_();
+    if (!cfg.configured) throw new Error('Chưa cấu hình OpenAI API key trong cửa sổ Import JSON.');
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
+    const last = sheet.getLastRow();
+    if (last < 2) return { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
+
+    const rows = sheet.getRange(2, 1, last - 1, 20).getValues();
+    const candidates = [];
+    rows.forEach((r, i) => {
+      const content = String(r[7] || '').trim();
+      const already = [r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
+      const status = String(r[19] || '').trim();
+      if (!content || already || status === 'Đóng') return;
+      candidates.push({
+        rowNumber: i + 2,
+        group: String(r[4] || ''),
+        author: String(r[5] || ''),
+        content: content.slice(0, 5000),
+        sourceType: String(r[3] || 'Bài viết'),
+        sourceUrl: String(r[2] || ''),
+        engagement: String(r[18] || ''),
+        postDate: r[0] instanceof Date ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm') : String(r[0] || '')
+      });
+    });
+
+    const selected = candidates.slice(0, cfg.maxRows);
+    if (!selected.length) {
+      const result = { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
+      if (!silent) SpreadsheetApp.getActive().toast('Không còn bài mới cần AI phân tích.', 'AI PHÂN TÍCH', 5);
+      return result;
+    }
+
+    const batchSize = 20;
+    const errors = [];
+    let analyzed = 0;
+
+    for (let start = 0; start < selected.length; start += batchSize) {
+      const batch = selected.slice(start, start + batchSize);
+      try {
+        const results = analyzeBatchWithOpenAi_(batch, cfg);
+        applyAiAnalysis_(sheet, results);
+        analyzed += results.length;
+      } catch (e) {
+        errors.push('Batch ' + (Math.floor(start / batchSize) + 1) + ': ' + e.message);
+      }
+    }
+
+    const refresh = refreshCurrentData({ silent: true });
+    const remaining = Math.max(0, candidates.length - analyzed);
+    const result = { version: CFG.VERSION, analyzed, remaining, errors, model: cfg.model, refresh };
+
+    if (!silent) {
+      SpreadsheetApp.getActive().toast(
+        'Đã phân tích ' + analyzed + ' bài | Còn ' + remaining + (errors.length ? ' | Có lỗi' : ''),
+        'AI PHÂN TÍCH',
+        8
+      );
+    }
+    return result;
+  }
+
+  function analyzeBatchWithOpenAi_(batch, cfg) {
+    const systemPrompt = [
+      'Bạn là Community Sales Intelligence Agent.',
+      'Phân tích CHỈ dựa trên nội dung được cung cấp; không suy đoán thuộc tính nhạy cảm hay thông tin cá nhân ngoài dữ liệu.',
+      'Mục tiêu là nhận diện người có nhu cầu thật, pain, intent và hành động hội thoại phù hợp.',
+      'Không coi người bán/quảng cáo là khách hàng chỉ vì họ đăng sản phẩm. Nếu bài của người bán có nhiều tương tác và có thể chứa người mua trong comment, phân loại là "Nguồn hội thoại".',
+      'Comment gợi ý phải tự nhiên, hữu ích, không giả vờ đã dùng sản phẩm, không tạo testimonial giả, không spam và không chèn link bán hàng.',
+      'Ưu tiên 8+2: phần lớn là giá trị/chẩn đoán/nối hội thoại; chỉ dùng CTA khi intent mua rất rõ.',
+      'Thang điểm 0-100: intent mua + pain/urgency + khả năng hành động + khả năng phản hồi + độ mới/tín hiệu tương tác + độ phù hợp thương mại.',
+      'Nếu business context trống, hãy chấm cơ hội bán hàng tổng quát thay vì tự bịa product fit.',
+      'Intent phải là một trong: Hỏi kinh nghiệm, Tìm giải pháp, So sánh, Xác thực, Phản đối, Muốn đổi, Muốn mua, Cần mua gấp, Chia sẻ, Thảo luận, Không ưu tiên.',
+      'Phân loại phải là một trong: Rất tiềm năng, Tiềm năng, Theo dõi, Nguồn hội thoại, Không phải KH.',
+      'Hành động tiếp theo phải là một trong: Bỏ qua, Theo dõi, Comment giá trị, Hỏi chẩn đoán, Tạo nhu cầu, Nối tiếp hội thoại, Xử lý phản đối, Gợi ý giải pháp, Mời inbox, Kết bạn, CTA.',
+      'follow_up_days: 0 nếu không cần follow-up; nếu cần thì 1-30 ngày.',
+      'Business context: ' + (cfg.businessContext || '(chưa cấu hình)')
+    ].join('\n');
+
+    const payload = {
+      model: cfg.model,
+      input: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: JSON.stringify(batch) }
+      ],
+      max_output_tokens: 12000,
+      text: {
+        format: {
+          type: 'json_schema',
+          name: 'community_sales_analysis',
+          strict: true,
+          schema: {
+            type: 'object',
+            properties: {
+              analyses: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    row_number: { type: 'integer' },
+                    pain: { type: 'string' },
+                    intent: { type: 'string' },
+                    score: { type: 'integer' },
+                    classification: { type: 'string' },
+                    value_solution: { type: 'string' },
+                    suggested_comment: { type: 'string' },
+                    next_action: { type: 'string' },
+                    follow_up_days: { type: 'integer' }
+                  },
+                  required: ['row_number','pain','intent','score','classification','value_solution','suggested_comment','next_action','follow_up_days'],
+                  additionalProperties: false
+                }
+              }
+            },
+            required: ['analyses'],
+            additionalProperties: false
+          }
+        }
+      }
+    };
+
+    const response = callOpenAi_(payload);
+    const parsed = parseStructuredResponse_(response);
+    if (!parsed || !Array.isArray(parsed.analyses)) throw new Error('OpenAI không trả về analyses hợp lệ.');
+    return parsed.analyses;
+  }
+
+  function callOpenAi_(payload) {
+    const key = String(PropertiesService.getScriptProperties().getProperty('OPENAI_API_KEY') || '').trim();
+    if (!key) throw new Error('Thiếu OPENAI_API_KEY.');
+
+    const res = UrlFetchApp.fetch('https://api.openai.com/v1/responses', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + key },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const code = res.getResponseCode();
+    const text = res.getContentText('UTF-8');
+    let json;
+    try { json = JSON.parse(text); } catch (e) { throw new Error('OpenAI HTTP ' + code + ': phản hồi không phải JSON.'); }
+    if (code < 200 || code >= 300) {
+      const msg = json && json.error && json.error.message ? json.error.message : text.slice(0, 500);
+      throw new Error('OpenAI HTTP ' + code + ': ' + msg);
+    }
+    return json;
+  }
+
+  function parseStructuredResponse_(json) {
+    if (!json) throw new Error('OpenAI trả về dữ liệu rỗng.');
+    let text = String(json.output_text || '').trim();
+    if (!text && Array.isArray(json.output)) {
+      for (const item of json.output) {
+        if (!item || !Array.isArray(item.content)) continue;
+        for (const part of item.content) {
+          if (part && part.type === 'output_text' && part.text) {
+            text = String(part.text).trim();
+            break;
+          }
+        }
+        if (text) break;
+      }
+    }
+    if (!text) throw new Error('Không tìm thấy output_text trong Responses API.');
+    return JSON.parse(text);
+  }
+
+  function applyAiAnalysis_(sheet, analyses) {
+    const allowedIntent = new Set(['Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối','Muốn đổi','Muốn mua','Cần mua gấp','Chia sẻ','Thảo luận','Không ưu tiên']);
+    const allowedClass = new Set(['Rất tiềm năng','Tiềm năng','Theo dõi','Nguồn hội thoại','Không phải KH']);
+    const allowedAction = new Set(['Bỏ qua','Theo dõi','Comment giá trị','Hỏi chẩn đoán','Tạo nhu cầu','Nối tiếp hội thoại','Xử lý phản đối','Gợi ý giải pháp','Mời inbox','Kết bạn','CTA']);
+    const now = new Date();
+
+    analyses.forEach(a => {
+      const row = Number(a.row_number || 0);
+      if (row < 2 || row > sheet.getLastRow()) return;
+
+      const intent = allowedIntent.has(String(a.intent)) ? String(a.intent) : 'Thảo luận';
+      const classification = allowedClass.has(String(a.classification)) ? String(a.classification) : 'Theo dõi';
+      const action = allowedAction.has(String(a.next_action)) ? String(a.next_action) : 'Theo dõi';
+      const score = Math.max(0, Math.min(100, Math.round(Number(a.score || 0))));
+      const days = Math.max(0, Math.min(30, Math.round(Number(a.follow_up_days || 0))));
+      const follow = days > 0 ? new Date(now.getTime() + days * 86400000) : '';
+
+      let status = 'Theo dõi';
+      if (classification === 'Rất tiềm năng' || classification === 'Tiềm năng') status = 'Đang xử lý';
+      if (classification === 'Không phải KH' && action === 'Bỏ qua') status = 'Đóng';
+
+      sheet.getRange(row, 9, 1, 6).setValues([[
+        String(a.pain || ''),
+        intent,
+        score,
+        classification,
+        String(a.value_solution || ''),
+        String(a.suggested_comment || '')
+      ]]);
+      sheet.getRange(row, 16).setValue(action);
+      sheet.getRange(row, 17).setValue(follow);
+      sheet.getRange(row, 20).setValue(status);
+    });
   }
 
   function refreshCurrentData(options) {
