@@ -1,12 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.4.1",
+  "version": "1.5.0",
   "channel": "stable",
   "updated_at": "2026-09-25",
   "notes": [
-    "Pipeline repair: NHẬP JSON processing status now reflects actual AI analysis state.",
-    "NHÓM is rebuilt from the QUÉT NHÓM registry so every active group appears automatically.",
-    "Legacy group mapping is repaired using raw Post ID + file context, including slug groups.",
-    "AI backlog remains explicit as Chờ AI until OpenAI analysis succeeds."
+    "Stable Bootstrap V2: onOpen builds a local menu and never calls GitHub/UrlFetch from the simple trigger.",
+    "AI backlog action is visible directly in the SOCIAL AIO menu.",
+    "AI provider can be OpenAI or Google Gemini.",
+    "Google Sheets itself does not need an API key; Gemini API key is only required when Gemini is selected as the AI provider.",
+    "Default OpenAI model is gpt-5.6-luna; default Gemini model is gemini-3.5-flash."
   ]
 }
