@@ -77,7 +77,7 @@ Sau khi Import JSON, hệ thống có thể tự phân tích các bài chưa có
 ### Cấu hình
 Mở `SOCIAL AIO -> Import JSON`. Trong cùng cửa sổ có khu vực **AI phân tích cơ hội**:
 - OpenAI API key
-- Model (mặc định `gpt-5.6-luna`)
+- Model (mặc định `gpt-6-luna`)
 - Business context / sản phẩm đang bán
 - Số bài tối đa mỗi lần
 - Bật/tắt tự phân tích sau Import
