@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.1-poc',
+    VERSION: '1.8.2-poc',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -40,13 +40,12 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
   function showImportDialog() {
     ensureV16Sheets_(true);
-    ensureBridgeEditTrigger_();
     const html = HtmlService.createHtmlOutput(getRemoteHtml_())
       .setWidth(680)
       .setHeight(760);
@@ -851,6 +850,7 @@ const RemoteApp = (() => {
     if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl);
     if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
     if (name === 'GET_GROUP_SCAN_CONTROL') return getGroupScanControlState_();
+    if (name === 'RUN_ACTIVE_GROUP') return scanActiveGroupApiBridge_();
     if (name === 'RUN_CHECKED_GROUPS') return scanCheckedGroupsApiBridge_();
     if (name === 'STOP_CHECKED_GROUPS') return stopCheckedGroupsApiBridge_();
     if (name === 'CLEAR_CHECKED_GROUPS') return clearCheckedGroups_();
@@ -2370,7 +2370,7 @@ const RemoteApp = (() => {
     }
 
     sheet.getRange(1,23,1,4).setValues([[
-      'Chọn API','API Quét / Dừng','API trạng thái','API chi tiết'
+      'Chọn API','API trạng thái','API chi tiết','API Run'
     ]]);
     sheet.getRange(1,23,1,4)
       .setFontWeight('bold')
@@ -2378,56 +2378,32 @@ const RemoteApp = (() => {
 
     const last=Math.max(2,sheet.getLastRow());
     const n=Math.max(1,last-1);
-    const selectRange=sheet.getRange(2,23,n,1);
-    selectRange.insertCheckboxes();
+    sheet.getRange(2,23,n,1).insertCheckboxes();
 
-    const commandRule=SpreadsheetApp.newDataValidation()
-      .requireValueInList(['SẴN SÀNG','▶ QUÉT','ĐANG QUÉT…','■ DỪNG'], true)
-      .setAllowInvalid(false)
-      .build();
-    const commandRange=sheet.getRange(2,24,n,1);
-    commandRange.setDataValidation(commandRule);
-
-    const commandValues=commandRange.getDisplayValues();
-    let commandDirty=false;
-    commandValues.forEach(r=>{
-      if(!String(r[0]||'').trim()){r[0]='SẴN SÀNG';commandDirty=true;}
-    });
-    if(commandDirty) commandRange.setValues(commandValues);
-
-    const statusRange=sheet.getRange(2,25,n,1);
+    const statusRange=sheet.getRange(2,24,n,1);
     const statusValues=statusRange.getDisplayValues();
     let statusDirty=false;
     statusValues.forEach(r=>{
-      if(!String(r[0]||'').trim()){r[0]='SẴN SÀNG';statusDirty=true;}
+      const current=String(r[0]||'').trim();
+      // Repair V1.8.1 command values into read-only status values.
+      if(!current || current==='▶ QUÉT' || current==='■ DỪNG' || current==='ĐANG QUÉT…'){
+        r[0]='SẴN SÀNG';
+        statusDirty=true;
+      }
     });
     if(statusDirty) statusRange.setValues(statusValues);
 
     sheet.setColumnWidth(23,70);
-    sheet.setColumnWidth(24,110);
-    sheet.setColumnWidth(25,120);
-    sheet.setColumnWidth(26,300);
+    sheet.setColumnWidth(24,120);
+    sheet.setColumnWidth(25,300);
+    sheet.setColumnWidth(26,150);
     sheet.getRange(2,23,n,4).setVerticalAlignment('middle');
-    sheet.getRange(2,26,n,1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    sheet.getRange(2,25,n,1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
 
-    // These six counters remain in the sheet and in THỐNG KÊ NGÀY.
-    // Hide them only in the operator registry so the action controls sit next to Ghi chú.
+    // Q:V keep the daily metrics but are hidden in the operator registry.
     try { sheet.hideColumns(17,6); } catch (_) {}
 
     return { rows:n };
-  }
-
-  function ensureBridgeEditTrigger_() {
-    const ss=SpreadsheetApp.getActiveSpreadsheet();
-    const triggers=ScriptApp.getProjectTriggers();
-    const exists=triggers.some(t=>
-      t.getHandlerFunction && t.getHandlerFunction()==='importJsonFiles' &&
-      t.getEventType && t.getEventType()===ScriptApp.EventType.ON_EDIT
-    );
-    if(!exists) {
-      ScriptApp.newTrigger('importJsonFiles').forSpreadsheet(ss).onEdit().create();
-    }
-    return { installed:!exists, exists:true };
   }
 
   function setupGroupScanControls_() {
@@ -2435,41 +2411,27 @@ const RemoteApp = (() => {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sheet=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
     const schema=setupBridgeControlColumns_(sheet);
-    const trigger=ensureBridgeEditTrigger_();
     SpreadsheetApp.flush();
-    return { version:CFG.VERSION, rows:schema.rows, trigger };
+    return {
+      version:CFG.VERSION,
+      rows:schema.rows,
+      mode:'SIDEBAR_CONTROL',
+      triggerRequired:false
+    };
   }
 
-  function handleBridgeSheetEdit_(e) {
-    try {
-      const range=e && e.range;
-      if(!range) return { ignored:true };
-      const sheet=range.getSheet();
-      if(!sheet || sheet.getName()!==CFG.GROUP_SCAN_SHEET) return { ignored:true };
-      const row=range.getRow();
-      const col=range.getColumn();
-      if(row<2 || col!==24) return { ignored:true };
-
-      const value=String(e.value || range.getDisplayValue() || '').trim();
-      if(value==='▶ QUÉT') {
-        return scanGroupRowApiBridge_(row,{source:'ROW_COMMAND'});
-      }
-      if(value==='■ DỪNG') {
-        return requestStopGroupRow_(row);
-      }
-      return { ignored:true };
-    } catch(err) {
-      try {
-        const r=e && e.range;
-        if(r && r.getSheet().getName()===CFG.GROUP_SCAN_SHEET && r.getRow()>=2) {
-          const sh=r.getSheet();
-          sh.getRange(r.getRow(),24).setValue('SẴN SÀNG');
-          setGroupRowStatus_(sh,r.getRow(),'LỖI',String(err.message||err));
-        }
-      } catch (_) {}
-      throw err;
+  function scanActiveGroupApiBridge_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sheet=ss.getActiveSheet();
+    if(!sheet || sheet.getName()!==CFG.GROUP_SCAN_SHEET) {
+      throw new Error('Hãy mở sheet QUÉT NHÓM và chọn một ô trên dòng Group cần quét.');
     }
+    const range=sheet.getActiveRange();
+    const row=range ? range.getRow() : 0;
+    if(row<2) throw new Error('Hãy chọn một dòng Group từ dòng 2 trở xuống.');
+    return scanGroupRowApiBridge_(row,{source:'ACTIVE_ROW'});
   }
+
 
   function groupStopKey_(groupKey) {
     return CFG.BRIDGE_STOP_PREFIX + String(groupKey || '').toLowerCase();
@@ -2485,11 +2447,12 @@ const RemoteApp = (() => {
       (groupKey && p.getProperty(groupStopKey_(groupKey))==='1');
   }
 
-  function setGroupRowStatus_(sheet,row,status,detail) {
-    sheet.getRange(row,25).setValue(status || '');
-    if(detail!==undefined) sheet.getRange(row,26).setValue(String(detail || '').slice(0,1500));
+  function setGroupRowStatus_(sheet,row,status,detail,runId) {
+    sheet.getRange(row,24).setValue(status || '');
+    if(detail!==undefined) sheet.getRange(row,25).setValue(String(detail || '').slice(0,1500));
+    if(runId!==undefined) sheet.getRange(row,26).setValue(String(runId || '').slice(0,300));
 
-    const cell=sheet.getRange(row,25);
+    const cell=sheet.getRange(row,24);
     if(status==='ĐANG QUÉT') cell.setBackground('#fff2cc');
     else if(status==='XONG') cell.setBackground('#d9ead3');
     else if(status==='LỖI') cell.setBackground('#f4cccc');
@@ -2503,7 +2466,6 @@ const RemoteApp = (() => {
     const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
     if(groupKey) PropertiesService.getDocumentProperties().setProperty(groupStopKey_(groupKey),'1');
     setGroupRowStatus_(sheet,row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
-    sheet.getRange(row,24).setValue('SẴN SÀNG');
     SpreadsheetApp.flush();
     return { ok:true, row, groupKey, stopRequested:true };
   }
@@ -2522,14 +2484,14 @@ const RemoteApp = (() => {
       throw new Error('Dòng '+row+' không có URL Group Facebook hợp lệ.');
     }
 
-    const currentStatus=String(sheet.getRange(row,25).getDisplayValue()||'');
+    const currentStatus=String(sheet.getRange(row,24).getDisplayValue()||'');
     if(currentStatus==='ĐANG QUÉT' && options.source!=='BATCH') {
       return { ok:false, alreadyRunning:true, row, name, groupUrl };
     }
 
     clearGroupStop_(groupKey);
-    sheet.getRange(row,24).setValue('ĐANG QUÉT…');
-    setGroupRowStatus_(sheet,row,'ĐANG QUÉT','Đang gọi Social AIO API…');
+    const operatorRunId='GR-' + Utilities.getUuid().slice(0,8);
+    setGroupRowStatus_(sheet,row,'ĐANG QUÉT','Đang gọi Social AIO API…',operatorRunId);
     SpreadsheetApp.flush();
 
     const started=Date.now();
@@ -2553,12 +2515,10 @@ const RemoteApp = (() => {
       if(stopped) setGroupRowStatus_(sheet,row,'DỪNG',detail);
       else setGroupRowStatus_(sheet,row,'XONG',detail);
 
-      sheet.getRange(row,24).setValue('SẴN SÀNG');
       clearGroupStop_(groupKey);
       SpreadsheetApp.flush();
       return Object.assign({},result,{row,name,groupKey,stopped,detail});
     } catch(err) {
-      sheet.getRange(row,24).setValue('SẴN SÀNG');
       setGroupRowStatus_(sheet,row,'LỖI',String(err.message||err));
       SpreadsheetApp.flush();
       return {
@@ -2585,7 +2545,7 @@ const RemoteApp = (() => {
           name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
           url,
           groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
-          status:String(r[24]||'')
+          status:String(r[23]||'')
         });
       }
     });
@@ -2599,7 +2559,7 @@ const RemoteApp = (() => {
     const last=sheet.getLastRow();
     let running=0, errors=0;
     if(last>=2) {
-      sheet.getRange(2,25,last-1,1).getDisplayValues().forEach(r=>{
+      sheet.getRange(2,24,last-1,1).getDisplayValues().forEach(r=>{
         if(r[0]==='ĐANG QUÉT') running++;
         if(r[0]==='LỖI') errors++;
       });
@@ -2637,7 +2597,6 @@ const RemoteApp = (() => {
       const item=selected[i];
       if(isGroupStopRequested_(item.groupKey)) {
         setGroupRowStatus_(sheet,item.row,'DỪNG','Bỏ qua theo yêu cầu dừng.');
-        sheet.getRange(item.row,24).setValue('SẴN SÀNG');
         results.push({ok:false,stopped:true,row:item.row,name:item.name});
         continue;
       }
@@ -3124,6 +3083,7 @@ const RemoteApp = (() => {
     apiBridgeStatus,
     setupGroupScanControls_,
     getGroupScanControlState_,
+    scanActiveGroupApiBridge_,
     scanCheckedGroupsApiBridge_,
     stopCheckedGroupsApiBridge_,
     clearCheckedGroups_,
