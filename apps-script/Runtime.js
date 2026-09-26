@@ -452,7 +452,7 @@ const RemoteApp = (() => {
     const output=todayRows.concat(history);
     if(statSheet.getLastRow()>=2) statSheet.getRange(2,1,statSheet.getLastRow()-1,18).clearContent();
     if(output.length) statSheet.getRange(2,1,output.length,18).setValues(output);
-    if(scanRows.length) scanSheet.getRange(2,1,scanRows.length,22).setValues(scanRows);
+    if(scanRows.length) scanSheet.getRange(2,17,scanRows.length,6).setValues(scanRows.map(r=>r.slice(16,22)));
     return {rows:todayRows.length,today};
   }
 
@@ -531,10 +531,14 @@ const RemoteApp = (() => {
     else if (parsed && typeof parsed === 'object') roots = [parsed];
 
     const out = [];
+    const visited = [];
     const forceRootComment = /comment|reply/i.test(String(fileName || ''));
 
-    const walk = (obj, parentCommentId, forceComment) => {
-      if (!obj || typeof obj !== 'object') return;
+    const walk = (obj, parentCommentId, forceComment, depth) => {
+      if (!obj || typeof obj !== 'object' || depth > 8) return;
+      if (visited.indexOf(obj) >= 0) return;
+      visited.push(obj);
+
       const isComment = !!forceComment || looksLikeComment_(obj);
       const cid = isComment ? String(pickPath_(obj,['comment_id','commentId','id']) || '') : '';
 
@@ -545,17 +549,20 @@ const RemoteApp = (() => {
         });
       }
 
-      ['replies','children','comments'].forEach(key => {
+      Object.keys(obj).forEach(key => {
+        if (!/comment|repl(?:y|ies)|children/i.test(key)) return;
         let child = obj[key];
         if (child && !Array.isArray(child) && Array.isArray(child.data)) child = child.data;
         if (child && !Array.isArray(child) && Array.isArray(child.items)) child = child.items;
         if (Array.isArray(child)) {
-          child.forEach(x => walk(x, isComment ? cid : parentCommentId, true));
+          child.forEach(x => walk(x, isComment ? cid : parentCommentId, true, depth+1));
+        } else if (child && typeof child === 'object' && !('total' in child && Object.keys(child).length <= 2)) {
+          walk(child, isComment ? cid : parentCommentId, false, depth+1);
         }
       });
     };
 
-    roots.forEach(x => walk(x,'',forceRootComment));
+    roots.forEach(x => walk(x,'',forceRootComment,0));
     return out;
   }
 
@@ -649,7 +656,7 @@ const RemoteApp = (() => {
       const fromUrl = extractCommentIdFromUrl_(url);
       if (fromUrl) return fromUrl;
       if (Number.isSafeInteger(value)) return String(value);
-      return String(Math.trunc(value));
+      return '';
     }
     const s = String(value || '').trim();
     if (s && !/[eE][+-]?\d+/.test(s)) return s.replace(/^'+/,'');
