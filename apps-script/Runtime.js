@@ -3294,8 +3294,10 @@ const RemoteApp = (() => {
     if(!jobs.length) throw new Error(retryMode?'Không có Group LỖI/THIẾU để retry.':'Chưa chọn Group nào.');
 
     const override=targetOverride?normalizeGroupTarget_(targetOverride):0;
-    const pool=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
-    if(!pool.length) throw new Error('Chưa cấu hình Worker. Mở Cấu hình nâng cao → Worker Pool.');
+    const configured=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
+    if(!configured.length) throw new Error('Chưa cấu hình Worker. Mở Cấu hình nâng cao → Worker Pool.');
+    const online=configured.filter(w=>w.testOk);
+    const pool=online.length ? online : configured;
 
     const loads={};
     pool.forEach(w=>loads[w.slot]=0);
