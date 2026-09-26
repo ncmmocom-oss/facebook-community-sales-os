@@ -129,9 +129,10 @@
     <h3>4. QUÉT NHÓM API — điều khiển trực tiếp từ sheet QUÉT NHÓM</h3>
     <p>
       Trong sheet <b>QUÉT NHÓM</b>, cột <b>Chọn API</b> dùng để chọn nhiều Group.
-      Cột <b>API Quét / Dừng</b> cho phép chạy từng dòng. Khi đang chạy, lệnh sẽ chuyển sang
-      <b>ĐANG QUÉT…</b>; muốn dừng chọn <b>■ DỪNG</b>.
+      Muốn quét một Group, chỉ cần click vào bất kỳ ô nào trên dòng đó rồi bấm
+      <b>QUÉT DÒNG ĐANG CHỌN</b>. Cách này không cần Apps Script onEdit trigger và không cần thêm quyền ScriptApp.
     </p>
+    <button onclick="runActiveGroup()">▶ QUÉT DÒNG ĐANG CHỌN</button>
     <button id="scanSelectedBtn" onclick="runCheckedGroups()">▶ QUÉT CÁC GROUP ĐÃ CHỌN</button>
     <button class="dark" onclick="stopCheckedGroups()">■ DỪNG CÁC GROUP ĐÃ CHỌN</button>
     <button class="secondary" onclick="clearCheckedGroups()">BỎ CHỌN</button>
@@ -139,7 +140,7 @@
     <div id="scanList" class="scanlist">Chưa chọn Group.</div>
     <div class="muted" style="margin-top:8px;">
       POC dùng page đầu. Batch tự dừng trước giới hạn thời gian Apps Script; các Group chưa chạy vẫn giữ dấu chọn để bấm tiếp.
-      Lệnh DỪNG có hiệu lực sau API call/page đang chạy.
+      Lệnh DỪNG có hiệu lực sau API call/page đang chạy. Control Center là modeless nên anh có thể chọn dòng/tick Group trong Sheet trong khi cửa sổ này vẫn mở.
     </div>
   </div>
 
@@ -494,6 +495,31 @@
       if (scanStateTimer) clearInterval(scanStateTimer);
       pollGroupScanState();
       scanStateTimer = setInterval(pollGroupScanState, 2000);
+    }
+
+    function runActiveGroup() {
+      setStatus('Đang quét Group ở dòng đang chọn...');
+      command({__command:'RUN_ACTIVE_GROUP'}, r => {
+        if (!r || !r.ok) {
+          setStatus('Quét dòng hiện tại chưa hoàn tất: ' + ((r && r.error) || 'Không có kết quả.'));
+          pollGroupScanState();
+          return;
+        }
+        const x = r.imported || {};
+        setStatus(
+          '✅ QUÉT DÒNG XONG' +
+          '\nGroup: ' + (r.name || r.groupUrl || '') +
+          '\nAPI đọc: ' + (r.postsRead || 0) + ' post' +
+          '\nPost mới: ' + (x.postImported || 0) +
+          '\nTrùng: ' + (x.duplicates || 0) +
+          '\nCursor: ' + (r.nextCursor ? 'CÓ' : 'KHÔNG') +
+          '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
+        );
+        pollGroupScanState();
+      }, e => {
+        setStatus('Lỗi quét dòng hiện tại: ' + (e.message || e));
+        pollGroupScanState();
+      });
     }
 
     function runCheckedGroups() {
