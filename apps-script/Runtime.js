@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.7-identity-fix.2',
+    VERSION: '1.8.7-worker-health.1',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -20,6 +20,7 @@ const RemoteApp = (() => {
     BRIDGE_STOP_PREFIX: 'SOCIAL_AIO_BRIDGE_STOP_',
     GROUP_CONTROL_START_COL: 23,
     LAST_SCAN_SOURCE_IDS_KEY: 'SOCIAL_AIO_LAST_SCAN_SOURCE_IDS_V1',
+    WORKER_HEALTH_TTL_MS: 15 * 60 * 1000,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -43,7 +44,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -3110,25 +3111,28 @@ const RemoteApp = (() => {
       setGroupRowStatus_(sheet,row,status,progress,note);
       if(status==='XONG') sheet.getRange(row,23).setValue(false);
       clearGroupStop_(groupKey);
+      const health=recordWorkerJobHealth_(worker.slot,true,Date.now()-started,'');
       SpreadsheetApp.flush();
 
       return Object.assign({},result,{
         row,name,groupKey,status,targetCount:target,
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
+        workerHealth:health&&health.health?health.health:'ONLINE',
         stopped,incomplete:status==='THIẾU',progress,note
       });
     }catch(err){
       const msg=String(err.message||err);
+      const health=recordWorkerJobHealth_(worker.slot,false,Date.now()-started,msg);
       setGroupRowStatus_(sheet,row,'LỖI',worker.slot+' • 0/'+target+' bài',msg);
       SpreadsheetApp.flush();
       return {
         ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
+        workerHealth:health&&health.health?health.health:workerHealthState_(worker),
         error:msg,durationMs:Date.now()-started
       };
     }
   }
-
   function finalizeWorkerBatch_(command) {
     const started=Date.now();
     const sourceIds=saveLastScanSourceIds_((command&&command.sourceIds)||[]);
@@ -3888,10 +3892,14 @@ const RemoteApp = (() => {
       socialAioVersion:'',
       latencyMs:0,
       testOk:false,
-      lastTestAt:''
+      lastTestAt:'',
+      lastSuccessAt:'',
+      lastFailureAt:'',
+      lastJobAt:'',
+      lastJobLatencyMs:0,
+      lastError:''
     }));
   }
-
   function getWorkerPoolRaw_() {
     const props=PropertiesService.getDocumentProperties();
     const raw=props.getProperty(CFG.WORKER_POOL_KEY);
@@ -3909,6 +3917,12 @@ const RemoteApp = (() => {
     }
     return defaults.map(d=>{
       const x=bySlot[d.slot]||{};
+      const legacySuccess=String(x.lastSuccessAt || (x.testOk ? x.lastTestAt : '') || '');
+      const legacyFailure=String(
+        x.lastFailureAt ||
+        ((!x.testOk && x.lastTestAt && (x.error||x.lastError)) ? x.lastTestAt : '') ||
+        ''
+      );
       return Object.assign({},d,x,{
         slot:d.slot,
         label:String(x.label||d.label).trim()||d.label,
@@ -3918,16 +3932,100 @@ const RemoteApp = (() => {
         socialAioVersion:String(x.socialAioVersion||'').trim(),
         latencyMs:Number(x.latencyMs||0),
         testOk:!!x.testOk,
-        lastTestAt:String(x.lastTestAt||'')
+        lastTestAt:String(x.lastTestAt||''),
+        lastSuccessAt:legacySuccess,
+        lastFailureAt:legacyFailure,
+        lastJobAt:String(x.lastJobAt||''),
+        lastJobLatencyMs:Number(x.lastJobLatencyMs||0),
+        lastError:String(x.lastError||x.error||'')
       });
     });
   }
-
   function saveWorkerPoolRaw_(pool) {
     PropertiesService.getDocumentProperties().setProperty(CFG.WORKER_POOL_KEY,JSON.stringify(pool||[]));
   }
 
+  function workerTimeMs_(value) {
+    const t=Date.parse(String(value||''));
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function workerHealthState_(worker,nowMs) {
+    if(!worker || !worker.clientId) return 'UNCONFIGURED';
+    const now=Number(nowMs||Date.now());
+    const success=Math.max(
+      workerTimeMs_(worker.lastSuccessAt),
+      worker.testOk ? workerTimeMs_(worker.lastTestAt) : 0
+    );
+    const failure=Math.max(
+      workerTimeMs_(worker.lastFailureAt),
+      (!worker.testOk && (worker.lastError||worker.error)) ? workerTimeMs_(worker.lastTestAt) : 0
+    );
+    if(failure>success) return 'OFFLINE';
+    if(success>0) {
+      return (now-success)<=CFG.WORKER_HEALTH_TTL_MS ? 'ONLINE' : 'STALE';
+    }
+    return 'UNKNOWN';
+  }
+
+  function workerHealthEvidenceAt_(worker) {
+    const success=workerTimeMs_(worker&&worker.lastSuccessAt);
+    const failure=workerTimeMs_(worker&&worker.lastFailureAt);
+    const test=workerTimeMs_(worker&&worker.lastTestAt);
+    const job=workerTimeMs_(worker&&worker.lastJobAt);
+    const max=Math.max(success,failure,test,job);
+    return max ? new Date(max).toISOString() : '';
+  }
+
+  function isWorkerConnectionError_(message) {
+    const s=String(message||'');
+    return /client\s+not\s+connected|not\s+connected|thiếu\s+client_id|chưa\s+có\s+client_id|client_id[^\n]*(?:invalid|không hợp lệ)|automation[^\n]*apis[^\n]*connect|tab[^\n]*apis[^\n]*connect/i.test(s);
+  }
+
+  function recordWorkerJobHealth_(slot,ok,durationMs,errorMessage) {
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return null;
+    try{
+      const pool=getWorkerPoolRaw_();
+      const key=String(slot||'').trim().toUpperCase();
+      const idx=pool.findIndex(w=>w.slot===key);
+      if(idx<0) return null;
+
+      const now=new Date().toISOString();
+      const msg=String(errorMessage||'').slice(0,500);
+      const patch={
+        lastJobAt:now,
+        lastJobLatencyMs:Math.max(0,Number(durationMs||0))
+      };
+
+      if(ok){
+        patch.testOk=true;
+        patch.lastSuccessAt=now;
+        patch.lastError='';
+        patch.error='';
+      } else {
+        patch.lastError=msg;
+        patch.error=msg;
+        if(isWorkerConnectionError_(msg)){
+          patch.testOk=false;
+          patch.lastFailureAt=now;
+        }
+      }
+
+      pool[idx]=Object.assign({},pool[idx],patch);
+      saveWorkerPoolRaw_(pool);
+      return workerPublic_(pool[idx]);
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
   function workerPublic_(w) {
+    const health=workerHealthState_(w);
+    const successMs=Math.max(
+      workerTimeMs_(w&&w.lastSuccessAt),
+      w&&w.testOk ? workerTimeMs_(w.lastTestAt) : 0
+    );
     return {
       slot:w.slot,
       label:w.label,
@@ -3938,18 +4036,33 @@ const RemoteApp = (() => {
       socialAioVersion:w.socialAioVersion||'',
       latencyMs:Number(w.latencyMs||0),
       testOk:!!w.testOk,
-      lastTestAt:w.lastTestAt||''
+      health,
+      healthTtlMs:CFG.WORKER_HEALTH_TTL_MS,
+      healthEvidenceAt:workerHealthEvidenceAt_(w),
+      lastTestAt:w.lastTestAt||'',
+      lastSuccessAt:w.lastSuccessAt||'',
+      lastFailureAt:w.lastFailureAt||'',
+      lastJobAt:w.lastJobAt||'',
+      lastJobLatencyMs:Number(w.lastJobLatencyMs||0),
+      lastSuccessAgeMs:successMs ? Math.max(0,Date.now()-successMs) : null,
+      lastError:w.lastError||w.error||''
     };
   }
-
   function getWorkerPoolPublic_() {
+    const workers=getWorkerPoolRaw_().map(workerPublic_);
+    const enabledConfigured=workers.filter(w=>w.enabled&&w.configured);
     return {
       version:CFG.VERSION,
       relay:CFG.BRIDGE_SERVER,
-      workers:getWorkerPoolRaw_().map(workerPublic_)
+      healthTtlMs:CFG.WORKER_HEALTH_TTL_MS,
+      onlineCount:enabledConfigured.filter(w=>w.health==='ONLINE').length,
+      staleCount:enabledConfigured.filter(w=>w.health==='STALE').length,
+      offlineCount:enabledConfigured.filter(w=>w.health==='OFFLINE').length,
+      unknownCount:enabledConfigured.filter(w=>w.health==='UNKNOWN').length,
+      configuredCount:enabledConfigured.length,
+      workers
     };
   }
-
   function saveWorkerPool_(inputWorkers) {
     const old=getWorkerPoolRaw_();
     const incoming={};
@@ -3960,11 +4073,31 @@ const RemoteApp = (() => {
     const merged=old.map(prev=>{
       const x=incoming[prev.slot]||{};
       const clientInput=String(x.clientId||'').trim();
-      return Object.assign({},prev,{
+      const nextClientId=clientInput || prev.clientId;
+      const clientChanged=!!clientInput && clientInput!==prev.clientId;
+      const next=Object.assign({},prev,{
         label:String(x.label!==undefined?x.label:prev.label).trim()||prev.label,
         enabled:x.enabled!==undefined?!!x.enabled:prev.enabled,
-        clientId:clientInput || prev.clientId
+        clientId:nextClientId
       });
+
+      // A new CLIENT_ID must not inherit ONLINE/OFFLINE evidence from the old identity.
+      if(clientChanged){
+        Object.assign(next,{
+          profile:'',
+          socialAioVersion:'',
+          latencyMs:0,
+          testOk:false,
+          lastTestAt:'',
+          lastSuccessAt:'',
+          lastFailureAt:'',
+          lastJobAt:'',
+          lastJobLatencyMs:0,
+          lastError:'',
+          error:''
+        });
+      }
+      return next;
     });
 
     saveWorkerPoolRaw_(merged);
@@ -3975,11 +4108,17 @@ const RemoteApp = (() => {
     }
     return getWorkerPoolPublic_();
   }
-
   function testOneWorker_(worker) {
     const started=Date.now();
     if(!worker.clientId){
-      return Object.assign({},worker,{testOk:false,profile:'',latencyMs:0,lastTestAt:new Date().toISOString(),error:'Chưa có CLIENT_ID'});
+      return Object.assign({},worker,{
+        testOk:false,
+        profile:'',
+        latencyMs:0,
+        lastTestAt:new Date().toISOString(),
+        lastError:'Chưa có CLIENT_ID',
+        error:'Chưa có CLIENT_ID'
+      });
     }
     try{
       const ver=callSocialAioApiWithClient_(worker.clientId,'get_ext_version',{});
@@ -3987,38 +4126,50 @@ const RemoteApp = (() => {
       try{profileRes=callSocialAioApiWithClient_(worker.clientId,'get_my_profile_lite',{});}catch(_){}
       const profile=pickBridgeValue_(profileRes,['name','profile.name'])||worker.profile||'';
       const socialAioVersion=pickBridgeValue_(ver,['version'])||compactBridgePreview_(ver,80)||'OK';
+      const now=new Date().toISOString();
       return Object.assign({},worker,{
         testOk:true,
         profile,
         socialAioVersion,
         latencyMs:Date.now()-started,
-        lastTestAt:new Date().toISOString(),
+        lastTestAt:now,
+        lastSuccessAt:now,
+        lastError:'',
         error:''
       });
     }catch(err){
+      const now=new Date().toISOString();
+      const msg=String(err.message||err).slice(0,500);
       return Object.assign({},worker,{
         testOk:false,
         latencyMs:Date.now()-started,
-        lastTestAt:new Date().toISOString(),
-        error:String(err.message||err).slice(0,500)
+        lastTestAt:now,
+        lastFailureAt:now,
+        lastError:msg,
+        error:msg
       });
     }
   }
-
   function testWorkerPool_() {
     const pool=getWorkerPoolRaw_();
-    const tested=pool.map(w=>w.enabled?testOneWorker_(w):Object.assign({},w,{testOk:false}));
+    const tested=pool.map(w=>w.enabled?testOneWorker_(w):Object.assign({},w));
     saveWorkerPoolRaw_(tested);
     const first=tested.find(w=>w.enabled&&w.clientId);
     if(first) PropertiesService.getDocumentProperties().setProperty(CFG.BRIDGE_CLIENT_ID_KEY,first.clientId);
+    const workers=tested.map(w=>Object.assign(workerPublic_(w),{error:w.lastError||w.error||''}));
+    const enabledConfigured=workers.filter(w=>w.enabled&&w.configured);
     return {
       version:CFG.VERSION,
       relay:CFG.BRIDGE_SERVER,
-      onlineCount:tested.filter(w=>w.enabled&&w.testOk).length,
-      workers:tested.map(w=>Object.assign(workerPublic_(w),{error:w.error||''}))
+      healthTtlMs:CFG.WORKER_HEALTH_TTL_MS,
+      onlineCount:enabledConfigured.filter(w=>w.health==='ONLINE').length,
+      staleCount:enabledConfigured.filter(w=>w.health==='STALE').length,
+      offlineCount:enabledConfigured.filter(w=>w.health==='OFFLINE').length,
+      unknownCount:enabledConfigured.filter(w=>w.health==='UNKNOWN').length,
+      configuredCount:enabledConfigured.length,
+      workers
     };
   }
-
   function workerMatchesProfile_(worker, profile) {
     const p=String(profile||'').trim().toLowerCase();
     if(!p || p==='auto') return true;
@@ -4056,10 +4207,17 @@ const RemoteApp = (() => {
     if(!jobs.length) throw new Error(retryMode?'Không có Group LỖI/THIẾU để retry.':'Chưa chọn Group nào.');
 
     const override=targetOverride?normalizeGroupTarget_(targetOverride):0;
-    const configured=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
+    const configured=getWorkerPoolRaw_()
+      .filter(w=>w.enabled&&w.clientId)
+      .map(w=>Object.assign({},w,{health:workerHealthState_(w)}));
     if(!configured.length) throw new Error('Chưa cấu hình Worker. Mở Cấu hình nâng cao → Worker Pool.');
-    const online=configured.filter(w=>w.testOk);
-    const pool=online.length ? online : configured;
+
+    // OFFLINE means there is newer explicit failure evidence than success evidence.
+    // UNKNOWN and STALE remain usable so a normal scan can prove the Worker ONLINE.
+    const pool=configured.filter(w=>w.health!=='OFFLINE');
+    if(!pool.length){
+      throw new Error('Tất cả Worker đã cấu hình đang OFFLINE. Hãy mở Social AIO → Automation → APIs → Connect rồi TEST WORKER.');
+    }
 
     const loads={};
     pool.forEach(w=>loads[w.slot]=0);
@@ -4071,16 +4229,18 @@ const RemoteApp = (() => {
       const pinned=String(job.profile||'').trim() && String(job.profile||'').trim().toLowerCase()!=='auto';
       let candidates=pool.filter(w=>workerMatchesProfile_(w,job.profile));
       if(!candidates.length && pinned){
-        job.assignmentError='Không có Worker khớp Profile "'+job.profile+'".';
+        job.assignmentError='Không có Worker khả dụng khớp Profile "'+job.profile+'".';
         return;
       }
       if(!candidates.length) candidates=pool.slice();
 
       candidates.sort((a,b)=>{
+        const rank={ONLINE:0,UNKNOWN:1,STALE:2,OFFLINE:3};
+        const ha=rank[a.health]!==undefined?rank[a.health]:9;
+        const hb=rank[b.health]!==undefined?rank[b.health]:9;
+        if(ha!==hb) return ha-hb;
         const la=loads[a.slot]||0, lb=loads[b.slot]||0;
         if(la!==lb) return la-lb;
-        const aa=a.testOk?0:1, bb=b.testOk?0:1;
-        if(aa!==bb) return aa-bb;
         return Number(a.latencyMs||999999)-Number(b.latencyMs||999999);
       });
       const chosen=candidates[0];
@@ -4090,7 +4250,8 @@ const RemoteApp = (() => {
     });
 
     const workers=pool.map(w=>({
-      slot:w.slot,label:w.label,profile:w.profile||'',testOk:!!w.testOk,latencyMs:Number(w.latencyMs||0),
+      slot:w.slot,label:w.label,profile:w.profile||'',health:w.health,
+      testOk:!!w.testOk,latencyMs:Number(w.latencyMs||0),
       jobs:assignments[w.slot]||[]
     })).filter(w=>w.jobs.length);
 
@@ -4102,11 +4263,13 @@ const RemoteApp = (() => {
       assigned:workers.reduce((n,w)=>n+w.jobs.length,0),
       unassigned,
       workers,
-      onlineCount:pool.filter(w=>w.testOk).length,
-      configuredCount:pool.length
+      onlineCount:configured.filter(w=>w.health==='ONLINE').length,
+      staleCount:configured.filter(w=>w.health==='STALE').length,
+      unknownCount:configured.filter(w=>w.health==='UNKNOWN').length,
+      offlineCount:configured.filter(w=>w.health==='OFFLINE').length,
+      configuredCount:configured.length
     };
   }
-
   function maskBridgeClientId_(id) {
     const s = String(id || '');
     if (s.length <= 8) return s.slice(0,2) + '***' + s.slice(-2);
