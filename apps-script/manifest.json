@@ -1,9 +1,17 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.7-worker-health.1",
+  "version": "1.9.0-200g-pilot",
   "channel": "pilot",
   "updated_at": "2026-09-26",
   "notes": [
+    "V1.9.0 200G Pilot: adds Monitoring Overview and a priority-aware Due Queue for up to 200 active Facebook Groups using the existing QUET NHOM cadence/next-scan fields.",
+    "Control Center adds an operational dashboard with active/due/running/exception/new-post/AI-backlog/PASS/Worker KPIs and AUTO MONITOR orchestration while the Control Center remains open.",
+    "Due Queue excludes confirmed ERROR/INCOMPLETE/STOPPED Groups from unattended loops, prioritizes Uu tien > Giu > Thu nghiem > Giam uu tien, and processes up to 30 Groups per cycle.",
+    "Worker imports now use a Document Lock, single-source fast dedupe reads, append-only writes during parallel jobs, and one CƠ HỘI sort at batch finalization to reduce sheet row shifting.",
+    "Post-scan finalization uses a lighter refresh path; the full lead/timeline refresh is deferred to AI completion.",
+    "AUTO AI processes exact new Source IDs in sequential chunks of 150 so a large 200-Group cycle cannot silently leave newly scanned sources unanalyzed because of the previous maxRows=200 ceiling.",
+    "Group-state polling is reduced from 2s to 5s and Monitoring Overview polls every 15s to lower Apps Script chatter.",
+    "Pagination/cursor behavior, Group identity normalization, Worker health semantics, manual JSON fallback and Lead Qualification Hard Gate are preserved.",
     "Worker Health hotfix: replace ambiguous testOk-only ONLINE/OFFLINE semantics with evidence-based UNCONFIGURED, UNKNOWN, ONLINE, STALE and OFFLINE states.",
     "ONLINE evidence can come from TEST WORKER or a successful Group scan; successful batch and direct-row scans now update lastSuccessAt/lastJobAt automatically.",
     "OFFLINE is reserved for newer explicit connection/test failure evidence; UNKNOWN means configured but unverified, and STALE means the last success is older than the 15-minute health TTL.",
