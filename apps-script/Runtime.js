@@ -1889,22 +1889,26 @@ const RemoteApp = (() => {
     const oppLast = oppSheet.getLastRow();
     const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,26).getValues() : [];
     const existing = loadExistingLeadState_(leadSheet);
+    const oldLast=leadSheet.getLastRow();
+    const oldRows=oldLast>=2 ? leadSheet.getRange(2,1,oldLast-1,21).getValues() : [];
     const grouped = {};
+    const evaluatedKeys=new Set();
 
     opp.forEach(r => {
+      const sourceUrl = normalizeUrl_(r[2] || '');
+      const fbUrl = normalizeFacebookProfileUrl_(r[6] || '');
+      const key = fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
+      if (!key || key === 'ANON|') return;
+
       const gate=String(r[24]||'').trim();
+      if(gate) evaluatedKeys.add(key);
       if(gate!=='PASS') return;
 
       const classification = String(r[11] || '').trim();
       if (classification !== 'Rất tiềm năng' && classification !== 'Tiềm năng') return;
       if(String(r[21]||'')!=='Có' || String(r[22]||'')!=='Có') return;
 
-      const sourceUrl = normalizeUrl_(r[2] || '');
-      const fbUrl = normalizeFacebookProfileUrl_(r[6] || '');
-      const key = fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
-      if (!key || key === 'ANON|') return;
       const score = Number(r[10] || 0);
-
       if (!grouped[key]) grouped[key] = { count:0, best:r, bestScore:score };
       grouped[key].count += 1;
       if (score > grouped[key].bestScore) {
@@ -1913,10 +1917,11 @@ const RemoteApp = (() => {
       }
     });
 
-    const keys=Object.keys(grouped);
-    const newCount=keys.filter(key=>!existing[key]).length;
+    const passKeys=Object.keys(grouped);
+    const passSet=new Set(passKeys);
+    const newCount=passKeys.filter(key=>!existing[key]).length;
     const now = new Date();
-    const output = keys.map(key => {
+    const passRows = passKeys.map(key => {
       const g = grouped[key];
       const r = g.best;
       const old = existing[key] || {};
@@ -1925,11 +1930,32 @@ const RemoteApp = (() => {
         Number(r[10] || 0), r[11] || '', g.count,
         old.lastAction || r[14] || '', old.nextAction || r[15] || '', old.followUp || r[16] || '',
         old.conversion || r[17] || 'Chưa có', old.note || '', old.firstLeadAt || now,
-        r[21] || '', r[22] || '', r[24] || '', r[23] || ''
+        r[21] || '', r[22] || '', 'PASS', r[23] || ''
       ];
-    }).sort((a,b)=>Number(b[8]||0)-Number(a[8]||0));
+    });
 
-    const oldLast = leadSheet.getLastRow();
+    // Preserve old derived leads only until their source/person is re-qualified.
+    // They are visibly marked LEGACY and excluded from every PASS counter.
+    const legacyRows=[];
+    oldRows.forEach(r=>{
+      const sourceUrl=normalizeUrl_(r[4]||'');
+      const fbUrl=normalizeFacebookProfileUrl_(r[1]||'');
+      const key=fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
+      if(!key || key==='ANON|' || passSet.has(key) || evaluatedKeys.has(key)) return;
+      const x=r.slice(0,21);
+      while(x.length<21) x.push('');
+      x[19]='LEGACY';
+      x[20]=x[20] || 'Chưa đánh giá lại bằng Lead Qualification Hard Gate V1.8.7';
+      legacyRows.push(x);
+    });
+
+    const output=passRows.concat(legacyRows).sort((a,b)=>{
+      const ga=String(a[19]||'')==='PASS'?1:0;
+      const gb=String(b[19]||'')==='PASS'?1:0;
+      if(gb!==ga) return gb-ga;
+      return Number(b[8]||0)-Number(a[8]||0);
+    });
+
     if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,21).clearContent();
     if (output.length) {
       leadSheet.getRange(2,1,output.length,21).setValues(output);
@@ -1938,8 +1964,8 @@ const RemoteApp = (() => {
     }
     SpreadsheetApp.flush();
 
-    if (!silent) SpreadsheetApp.getUi().alert(`Đã đồng bộ ${output.length} KH PASS Hard Gate | Mới ${newCount}.`);
-    return { count:output.length, newCount };
+    if (!silent) SpreadsheetApp.getUi().alert(`KH PASS: ${passRows.length} | Mới: ${newCount} | Legacy chờ đánh giá lại: ${legacyRows.length}.`);
+    return { count:passRows.length, newCount, legacyCount:legacyRows.length, rows:output.length };
   }
 
   function refreshGroupSummary_() {
