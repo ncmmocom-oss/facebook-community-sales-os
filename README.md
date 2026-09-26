@@ -326,3 +326,45 @@ No onEdit trigger, no `ScriptApp`, no extra Apps Script OAuth scope.
 ### Why
 
 Long-running network work should not be tied directly to a cell edit. The modeless sidebar/dialog gives explicit operator intent, visible progress and better error handling while keeping the narrow existing scopes: current spreadsheet, container UI and external requests.
+
+
+## V1.8.3-POC — Operator Simple
+
+Mục tiêu: người vận hành không cần hiểu API/Apps Script.
+
+### Luồng mặc định
+
+1. Tick **Chọn** cho các Group cần quét.
+2. Chọn **10 / 15 / 20 / 25 bài mỗi Group** nếu không dùng mặc định 25.
+3. Bấm **QUÉT ĐÃ CHỌN**.
+
+Nếu giữ mặc định 25 bài, thực tế chỉ còn 2 thao tác: tick Group → QUÉT.
+
+### QUÉT NHÓM
+
+- Cột I: **Số bài/lần**, dropdown 10/15/20/25.
+- W: **Chọn**.
+- X: **Trạng thái** — CHỜ / ĐANG QUÉT / XONG / THIẾU / LỖI / DỪNG.
+- Y: **Tiến độ** — ví dụ `18/25 bài • 6 mới • 12 trùng • 2 page • 8.4s`.
+- Z: **Lỗi / Ghi chú**.
+
+### Control Center
+
+Hiển thị bộ đếm:
+- Đã chọn
+- Số bài yêu cầu
+- Đang quét
+- Xong
+- Lỗi
+- Thiếu / Dừng
+
+Nút vận hành chính:
+- **QUÉT ĐÃ CHỌN**
+- **DỪNG**
+- **RETRY LỖI / THIẾU**
+
+### Target-aware pagination
+
+`get_list_fb_group_posts` không có tham số limit, nên runtime dùng cursor để lấy thêm page cho tới target 10/15/20/25. Nếu API hết cursor trước target, trạng thái là **THIẾU** chứ không ghi XONG giả.
+
+Các phần Import JSON, AI và Bridge cấu hình được giữ làm fallback nhưng thu gọn dưới mục **Cấu hình nâng cao**.
