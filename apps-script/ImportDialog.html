@@ -98,7 +98,7 @@
     <div class="row">
       <div>
         <label>Chế độ AI sau khi quét Group</label>
-        <select id="analysisMode">
+        <select id="analysisMode" onchange="saveAiModeQuick()">
           <option value="auto_scan">TỰ ĐỘNG — chỉ Group vừa quét</option>
           <option value="manual">THỦ CÔNG — không tự chạy AI</option>
         </select>
@@ -292,14 +292,14 @@
         providerChanged(cfg.model);
         document.getElementById('maxRows').value = cfg.maxRows || 100;
         document.getElementById('businessContext').value = cfg.businessContext || '';
-        document.getElementById('autoAnalyze').checked = cfg.autoAnalyze !== false;
+        document.getElementById('analysisMode').value = cfg.analysisMode || 'manual';
 
         const bits = [
           'Runtime V' + cfg.version,
-          'OpenAI ' + (cfg.openaiConfigured ? '✅' : '—'),
-          'Gemini ' + (cfg.geminiConfigured ? '✅' : '—'),
-          'Đang chọn: ' + (cfg.provider === 'gemini' ? 'Gemini' : 'OpenAI'),
-          (cfg.provider === 'gemini' && cfg.lastGeminiModel ? 'Model chạy gần nhất: ' + cfg.lastGeminiModel : '')
+          'AI ' + (cfg.provider === 'gemini' ? 'Gemini' : 'OpenAI') + ' ' + (cfg.configured ? '✅' : '⚠️'),
+          'Mode: ' + ((cfg.analysisMode||'manual') === 'auto_scan' ? 'AUTO sau quét' : 'THỦ CÔNG'),
+          cfg.businessContext ? 'Business Context ✅' : '⚠️ CHƯA CÓ Business Context → Lead Gate không PASS',
+          (cfg.provider === 'gemini' && cfg.lastGeminiModel ? 'Model: ' + cfg.lastGeminiModel : '')
         ].filter(Boolean);
         document.getElementById('aiState').textContent = bits.join(' | ');
       });
@@ -810,7 +810,7 @@
         model: document.getElementById('model').value,
         maxRows: Number(document.getElementById('maxRows').value || 100),
         businessContext: document.getElementById('businessContext').value.trim(),
-        autoAnalyze: document.getElementById('autoAnalyze').checked
+        analysisMode: document.getElementById('analysisMode').value
       };
       setStatus('Đang lưu cấu hình AI...');
       command(payload, cfg => {
@@ -818,7 +818,7 @@
         document.getElementById('geminiApiKey').value = '';
         loadAiConfig();
     pollProgressOnce();
-        setStatus('Đã lưu cấu hình AI. Provider: ' + cfg.provider + ' | Model: ' + cfg.model + ' | Auto analyze: ' + (cfg.autoAnalyze ? 'BẬT' : 'TẮT'));
+        setStatus('Đã lưu cấu hình AI. Provider: ' + cfg.provider + ' | Model: ' + cfg.model + ' | Mode: ' + (cfg.analysisMode==='auto_scan' ? 'AUTO sau quét' : 'THỦ CÔNG'));
       });
     }
 
@@ -829,12 +829,38 @@
       });
     }
 
-    function analyzeNew() {
-      setStatus('AI đang phân tích các nguồn Chờ AI...');
+    function saveAiModeQuick() {
+      const payload={
+        __command:'SAVE_AI_CONFIG',
+        provider:document.getElementById('provider').value,
+        model:document.getElementById('model').value,
+        maxRows:Number(document.getElementById('maxRows').value||100),
+        businessContext:document.getElementById('businessContext').value.trim(),
+        analysisMode:document.getElementById('analysisMode').value
+      };
+      command(payload, cfg=>{
+        document.getElementById('aiState').textContent=
+          'Runtime V'+cfg.version+' | Mode: '+(cfg.analysisMode==='auto_scan'?'AUTO sau quét':'THỦ CÔNG')+
+          (cfg.businessContext?' | Business Context ✅':' | ⚠️ Chưa có Business Context');
+      });
+    }
+
+    function analyzeScope() {
+      const scope=document.getElementById('analysisScope').value;
+      setStatus('AI đang phân tích theo phạm vi: '+scope+'...');
       startProgressPolling();
-      command({__command:'ANALYZE_NEW'}, r => {
+      command({__command:'ANALYZE_SCOPE',scope}, r => {
         const err = r.errors && r.errors.length ? '\nLỗi:\n- ' + r.errors.join('\n- ') : '';
-        setStatus('AI XONG - V' + r.version + '\nRun: ' + (r.runId || '-') + '\nProvider: ' + r.provider + '\nModel: ' + r.model + '\nĐã phân tích: ' + r.analyzed + '\nCòn lại: ' + r.remaining + '\nKH tiềm năng: ' + (r.refresh ? r.refresh.leads : '-') + '\nHàng điều phối: ' + (r.refresh ? r.refresh.queue : '-') + err);
+        setStatus(
+          'AI XONG - V' + r.version +
+          '\nRun: ' + (r.runId || '-') +
+          '\nPhạm vi: ' + (r.scope || scope) +
+          '\nĐã phân tích: ' + r.analyzed +
+          '\nCòn lại: ' + r.remaining +
+          '\nKH PASS mới: ' + (r.refresh ? (r.refresh.newLeads||0) : '-') +
+          '\nTổng KH PASS: ' + (r.refresh ? r.refresh.leads : '-') +
+          '\nHàng điều phối: ' + (r.refresh ? r.refresh.queue : '-') + err
+        );
         pollProgressOnce();
         stopProgressPolling();
       }, e => {
@@ -844,9 +870,23 @@
       });
     }
 
+
+    function activateInitialView() {
+      const view=(document.body.dataset.initialView||'scan').toLowerCase();
+      const advanced=document.getElementById('advancedPanel');
+      let target=document.getElementById('scanBox');
+      if(view==='ai') target=document.getElementById('aiRunBox');
+      if(view==='settings') {
+        if(advanced) advanced.open=true;
+        target=document.getElementById('aiSettingsBox')||advanced;
+      }
+      setTimeout(()=>{ if(target&&target.scrollIntoView) target.scrollIntoView({block:'start'}); },150);
+    }
+
     loadAiConfig();
     loadWorkerPool();
     startGroupScanPolling();
+    activateInitialView();
   </script>
 </body>
 </html>
