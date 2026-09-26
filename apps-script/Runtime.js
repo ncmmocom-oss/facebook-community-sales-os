@@ -980,9 +980,41 @@ const RemoteApp = (() => {
   }
 
   function analyzeNewPosts() {
-    return analyzeNewPosts_({ silent: false });
+    return analyzeNewPosts_({ silent: false, scope:'all_waiting' });
   }
 
+  function analyzeByScope_(command) {
+    command=command||{};
+    let scope=String(command.scope||'all_waiting');
+    const options={silent:false,scope};
+
+    if(scope==='selected_groups') {
+      const selected=getCheckedGroupRows_();
+      if(!selected.length) throw new Error('Chưa tick Group nào trong QUÉT NHÓM.');
+      options.scope='groups';
+      options.groupNames=selected.map(x=>String(x.name||'')).filter(Boolean);
+    } else if(scope==='groups') {
+      options.groupNames=(command.groupNames||[]).map(x=>String(x||'')).filter(Boolean);
+      if(!options.groupNames.length) throw new Error('Không có Group nào để AI phân tích.');
+    } else if(scope==='selected_rows') {
+      const ss=SpreadsheetApp.getActiveSpreadsheet();
+      const sh=ss.getActiveSheet();
+      const ar=sh&&sh.getActiveRange();
+      if(!sh || sh.getName()!==CFG.OPPORTUNITY_SHEET || !ar || ar.getRow()<2) {
+        throw new Error('Hãy chọn các dòng cần phân tích trong sheet CƠ HỘI trước.');
+      }
+      const start=Math.max(2,ar.getRow());
+      const end=ar.getLastRow();
+      options.rowNumbers=[];
+      for(let r=start;r<=end;r++) options.rowNumbers.push(r);
+    } else if(scope==='legacy_gate') {
+      options.scope='legacy_gate';
+    } else {
+      options.scope='all_waiting';
+    }
+
+    return analyzeNewPosts_(options);
+  }
   function getAiProgress_() {
     const raw = PropertiesService.getScriptProperties().getProperty('AI_PROGRESS_JSON');
     if (!raw) return { active: false, version: CFG.VERSION };
