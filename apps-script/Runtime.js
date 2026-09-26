@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.6.0',
+    VERSION: '1.7.0',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -10,6 +10,8 @@ const RemoteApp = (() => {
     AI_LOG_SHEET: 'NHẬT KÝ AI',
     COMMENT_SHEET: 'BÌNH LUẬN',
     PERSON_TIMELINE_SHEET: 'LỊCH SỬ KH',
+    IMPORT_LOG_SHEET: 'NHẬT KÝ IMPORT',
+    DAILY_STATS_SHEET: 'THỐNG KÊ NGÀY',
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -50,8 +52,11 @@ const RemoteApp = (() => {
     }
     if (!Array.isArray(files) || files.length === 0) throw new Error('Chưa chọn file JSON.');
 
+    const startedMs = Date.now();
+    const importRunId = Utilities.getUuid().slice(0, 8);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     ensureV16Sheets_();
+
     const rawSheet = mustSheet_(ss, CFG.RAW_SHEET);
     const oppSheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
     const groupSheet = mustSheet_(ss, CFG.GROUP_SCAN_SHEET);
@@ -73,6 +78,11 @@ const RemoteApp = (() => {
     let postImported = 0;
     let commentImported = 0;
 
+    const ctx = {
+      rawRows, commentRows, oppRows, groupStats, groupMap, groupSheet,
+      existingCommentKeys, postLookup
+    };
+
     files.forEach(file => {
       try {
         const parsed = JSON.parse(file.text || '[]');
@@ -81,60 +91,14 @@ const RemoteApp = (() => {
         if (kind === 'comments') {
           const comments = extractCommentRecords_(parsed, file.name || '');
           if (!comments.length) {
-            errors.push(`${file.name}: nhận diện là comment JSON nhưng không bóc được comment.`);
+            errors.push(`${file.name}: nhận diện comment JSON nhưng không bóc được comment record.`);
             return;
           }
-
           comments.forEach(item => {
-            commentScanned += 1;
-            const n = normalizeCommentRecord_(item.record, item.parentId, file.name || '', postLookup);
-            if (!n.message) return;
-
-            let groupKey = n.groupKey;
-            if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
-            const groupInfo = groupMap[groupKey] || { name: n.groupName || `Group ${groupKey || 'không rõ'}`, row: null };
-            const groupName = n.groupName || groupInfo.name;
-
-            if (groupKey) {
-              if (!groupStats[groupKey]) groupStats[groupKey] = { scanned:0, newCount:0, fileName:file.name || '', row:groupInfo.row };
-              groupStats[groupKey].scanned += 1;
-              groupStats[groupKey].fileName = file.name || groupStats[groupKey].fileName;
-            }
-
-            const commentId = n.commentId || stableId_([n.postId,n.authorUrl,n.authorName,n.message,n.createdAt].join('|'));
-            const sourceId = 'C:' + commentId;
-            const keys = makeCommentKeys_(commentId, n.commentUrl);
-            if (keys.some(k => existingCommentKeys.has(k))) {
-              duplicateCount += 1;
-              return;
-            }
-            keys.forEach(k => existingCommentKeys.add(k));
-
-            const postCtx = n.postId && postLookup[n.postId] ? postLookup[n.postId] : null;
-            const postUrl = n.postUrl || (postCtx ? postCtx.url : '');
-            const commentUrl = n.commentUrl || postUrl;
-            let evidence = n.message;
-            if (postCtx && postCtx.content) {
-              evidence += '\n\n[Ngữ cảnh bài gốc]\n' + String(postCtx.content).slice(0, 1400);
-            }
-
-            const now = new Date();
-            const eventDate = n.createdAt || now;
-            const resultText = `${n.reactions} reaction | ${n.replies} reply` + (n.postId ? ` | Post ID ${n.postId}` : '');
-
-            commentRows.push([
-              now,file.name || '',groupName,groupKey,n.postId,postUrl,commentId,commentUrl,n.parentId || '',
-              n.authorName,n.authorUrl,n.message,eventDate,n.reactions,n.replies,
-              '','','','','','','Chờ AI'
-            ]);
-
-            oppRows.push([
-              eventDate,sourceId,commentUrl,'Bình luận',groupName,n.authorName,n.authorUrl,evidence,
-              '','','','','','','Chưa tương tác','', '', 'Chưa có',resultText,'Mới'
-            ]);
-
-            commentImported += 1;
-            if (groupKey && groupStats[groupKey]) groupStats[groupKey].newCount += 1;
+            const x = ingestCommentRecord_(item, file.name || '', ctx);
+            commentScanned += x.scanned;
+            commentImported += x.imported;
+            duplicateCount += x.duplicate;
           });
           return;
         }
@@ -145,72 +109,78 @@ const RemoteApp = (() => {
           return;
         }
 
-        const fileGroupKeys = [...new Set(posts.map(p => extractGroupKey_(p && p.url)).filter(Boolean))];
+        const fileGroupKeys = [...new Set(posts.map(p => extractGroupKey_(p && (p.url || p.permalink_url))).filter(Boolean))];
         const fileGroupKey = fileGroupKeys.length === 1 ? fileGroupKeys[0] : '';
 
         posts.forEach(post => {
           postScanned += 1;
-          const url = String(post.url || '').trim();
-          const postId = normalizePostId_(post.post_id || post.id || '', url);
+          const url = String(post.url || post.permalink_url || post.permalink || '').trim();
+          const postId = normalizePostId_(post.post_id || post.postId || post.id || '', url);
           if (!postId && !url) return;
 
-          const groupKey = extractGroupKey_(url) || fileGroupKey;
+          const groupKey = extractGroupKey_(url) || String(post.group_id || post.groupId || '').trim().toLowerCase() || fileGroupKey;
           if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
-          const groupInfo = groupMap[groupKey] || { name: `Group ${groupKey || 'không rõ'}`, row: null };
+          const groupInfo = groupMap[groupKey] || { name:`Group ${groupKey || 'không rõ'}`, row:null };
+          const stat = touchGroupStat_(groupStats, groupKey, groupInfo, file.name || '');
+          stat.postScanned += 1;
 
-          if (groupKey) {
-            if (!groupStats[groupKey]) groupStats[groupKey] = { scanned:0, newCount:0, fileName:file.name || '', row:groupInfo.row };
-            groupStats[groupKey].scanned += 1;
-            groupStats[groupKey].fileName = file.name || groupStats[groupKey].fileName;
-          }
+          const actor = post.actor || post.author || post.user || {};
+          const authorName = String(actor.name || post.author_name || '');
+          const authorUrl = String(actor.url || actor.profile_url || post.author_url || '');
+          const message = String(post.message || post.title || post.summary || (post.content && post.content.text) || post.text || '');
+          const commentsCount = toNumber_(post.comments && post.comments.total !== undefined ? post.comments.total : (post.comments_count || post.comment_count));
+          const reactions = toNumber_(post.reactions && post.reactions.total !== undefined ? post.reactions.total : (post.reactions_count || post.reaction_count));
+          const shares = toNumber_(post.shares && post.shares.total !== undefined ? post.shares.total : (post.shares_count || post.share_count));
+          const mediaUrls = extractMediaUrls_(post);
+          const postDate = toDate_(post.creation_time || post.created_time || post.createdAt || post.created_at) || new Date();
+          const now = new Date();
+          const resultText = `${commentsCount} bình luận | ${reactions} reaction | ${shares} share`;
+
+          postLookup[postId] = { url, group:groupInfo.name, groupKey, content:message, media:mediaUrls.join('\n') };
 
           const keys = makePostKeys_(postId, url);
-          if (keys.some(k => existingPostKeys.has(k))) {
+          const isDup = keys.some(k => existingPostKeys.has(k));
+          if (isDup) {
             duplicateCount += 1;
-            return;
+            stat.duplicates += 1;
+          } else {
+            keys.forEach(k => existingPostKeys.add(k));
+            rawRows.push([
+              now,file.name || '',groupInfo.name,groupKey,postId,url,authorName,authorUrl,message,
+              commentsCount,reactions,shares,mediaUrls.length,'Chờ AI',mediaUrls.join('\n'),mediaUrls.length
+            ]);
+            oppRows.push([
+              postDate,postId,url,'Bài viết',groupInfo.name,authorName,authorUrl,message,
+              '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n')
+            ]);
+            postImported += 1;
+            stat.postNew += 1;
           }
-          keys.forEach(k => existingPostKeys.add(k));
 
-          const actor = post.actor || {};
-          const authorName = String(actor.name || '');
-          const authorUrl = String(actor.url || '');
-          const message = String(post.message || post.title || post.summary || (post.content && post.content.text) || '');
-          const comments = toNumber_(post.comments && post.comments.total);
-          const reactions = toNumber_(post.reactions && post.reactions.total);
-          const shares = toNumber_(post.shares && post.shares.total);
-          const attachments = post.content && Array.isArray(post.content.attachments) ? post.content.attachments : [];
-          const mediaCount = attachments.length;
-          const postDate = toDate_(post.creation_time) || new Date();
-          const now = new Date();
-          const resultText = `${comments} bình luận | ${reactions} reaction | ${shares} share`;
-
-          rawRows.push([now,file.name || '',groupInfo.name,groupKey,postId,url,authorName,authorUrl,message,comments,reactions,shares,mediaCount,'Chờ AI']);
-          oppRows.push([postDate,postId,url,'Bài viết',groupInfo.name,authorName,authorUrl,message,'','','','','','','Chưa tương tác','', '', 'Chưa có',resultText,'Mới']);
-          postImported += 1;
-          if (groupKey && groupStats[groupKey]) groupStats[groupKey].newCount += 1;
+          // Social AIO can embed actual comments inside a posts JSON. Always inspect
+          // nested comments even when the post itself is already a duplicate.
+          const nested = extractCommentRecords_(post, file.name || '');
+          nested.forEach(item => {
+            const x = ingestCommentRecord_(item, file.name || '', ctx, {
+              postId, postUrl:url, groupKey, groupName:groupInfo.name
+            });
+            commentScanned += x.scanned;
+            commentImported += x.imported;
+            duplicateCount += x.duplicate;
+          });
         });
       } catch (err) {
         errors.push(`${file.name}: ${err.message}`);
       }
     });
 
-    if (rawRows.length) {
-      const start = rawSheet.getLastRow() + 1;
-      rawSheet.getRange(start,5,rawRows.length,1).setNumberFormat('@');
-      rawSheet.getRange(start,1,rawRows.length,14).setValues(rawRows);
-    }
-    if (commentRows.length) {
-      const start = commentSheet.getLastRow() + 1;
-      commentSheet.getRange(start,5,commentRows.length,4).setNumberFormat('@');
-      commentSheet.getRange(start,1,commentRows.length,22).setValues(commentRows);
-    }
-    if (oppRows.length) {
-      const start = oppSheet.getLastRow() + 1;
-      oppSheet.getRange(start,2,oppRows.length,1).setNumberFormat('@');
-      oppSheet.getRange(start,1,oppRows.length,20).setValues(oppRows);
-    }
+    writeRowsNewestFirst_(rawSheet, 5, rawRows, 16, [5]);
+    writeRowsNewestFirst_(commentSheet, 2, commentRows, 23, [5,7]);
+    writeRowsNewestFirst_(oppSheet, 2, oppRows, 21, [2]);
 
+    finalizeGroupStats_(groupStats);
     updateGroupScanStatus_(groupSheet, groupStats);
+    logImportRun_(importRunId, groupStats, files.length, Date.now() - startedMs, errors);
 
     let ai = null;
     const aiCfg = getAiConfig_();
@@ -219,10 +189,12 @@ const RemoteApp = (() => {
       catch (e) { errors.push('AI: ' + e.message); }
     }
 
-    const refresh = ai && ai.refresh ? ai.refresh : refreshCurrentData({ silent:true });
+    const refresh = ai && ai.refresh ? ai.refresh : refreshCurrentData({ silent:true, fast:true });
     SpreadsheetApp.flush();
+
     return {
       version: CFG.VERSION,
+      runId: importRunId,
       files: files.length,
       scanned: postScanned + commentScanned,
       postScanned,
@@ -231,6 +203,7 @@ const RemoteApp = (() => {
       postImported,
       commentImported,
       duplicates: duplicateCount,
+      durationMs: Date.now() - startedMs,
       errors,
       ai,
       refresh
@@ -412,21 +385,64 @@ const RemoteApp = (() => {
 
   function ensureV16Sheets_() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+
     let cs = ss.getSheetByName(CFG.COMMENT_SHEET);
     if (!cs) cs = ss.insertSheet(CFG.COMMENT_SHEET);
-    if (cs.getLastRow() === 0) cs.getRange(1,1,1,22).setValues([[
+    if (cs.getMaxColumns() < 23) cs.insertColumnsAfter(cs.getMaxColumns(), 23 - cs.getMaxColumns());
+    cs.getRange(1,1,1,23).setValues([[
       'Ngày import','File JSON','Nhóm','Group ID','Post ID','URL bài','Comment ID','URL comment','Parent Comment ID',
       'Người comment','Link Facebook','Nội dung comment','Ngày comment','Reaction','Reply','Pain','Intent','Điểm',
-      'Phân loại KH','Reply gợi ý','Hành động tiếp theo','Trạng thái xử lý'
+      'Phân loại KH','Reply gợi ý','Hành động tiếp theo','Trạng thái xử lý','Media URL'
     ]]);
 
     let ts = ss.getSheetByName(CFG.PERSON_TIMELINE_SHEET);
     if (!ts) ts = ss.insertSheet(CFG.PERSON_TIMELINE_SHEET);
-    if (ts.getLastRow() === 0) ts.getRange(1,1,1,18).setValues([[
+    ts.getRange(1,1,1,18).setValues([[
       'Person Key','Tên','URL Facebook','Thời gian','Nhóm','Loại nguồn','Source ID','URL nguồn',
       'Nội dung / bằng chứng','Pain','Intent','Điểm','Phân loại','Hành động tiếp theo','Follow-up',
       'Chuyển đổi','Trạng thái','Ghi chú'
     ]]);
+
+    let il = ss.getSheetByName(CFG.IMPORT_LOG_SHEET);
+    if (!il) il = ss.insertSheet(CFG.IMPORT_LOG_SHEET);
+    if (il.getMaxColumns() < 18) il.insertColumnsAfter(il.getMaxColumns(), 18 - il.getMaxColumns());
+    il.getRange(1,1,1,18).setValues([[
+      'Thời gian','Run ID','Group','Group ID','File','Số file','Bản ghi đọc','Post đọc','Comment đọc',
+      'Post mới','Comment mới','Trùng','Bài/lần','Duration ms','Trạng thái','Version','Lỗi','Ghi chú'
+    ]]);
+
+    let ds = ss.getSheetByName(CFG.DAILY_STATS_SHEET);
+    if (!ds) ds = ss.insertSheet(CFG.DAILY_STATS_SHEET);
+    if (ds.getMaxColumns() < 18) ds.insertColumnsAfter(ds.getMaxColumns(), 18 - ds.getMaxColumns());
+    ds.getRange(1,1,1,18).setValues([[
+      'Ngày','Group','Group ID','Lượt cập nhật','JSON đọc hôm nay','Bài quét hôm nay','Comment quét hôm nay',
+      'Bài mới hôm nay','Comment mới hôm nay','Trùng hôm nay','Max bài/lần','Tổng bài đang lưu',
+      'Tổng comment đang lưu','KH mới hôm nay','KH tiềm năng hiện tại','Lần cập nhật cuối','Trạng thái','Ghi chú'
+    ]]);
+
+    const raw = ss.getSheetByName(CFG.RAW_SHEET);
+    if (raw && raw.getMaxColumns() >= 16) raw.getRange(4,15,1,2).setValues([['Media URL','Media count']]);
+
+    const opp = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
+    if (opp && opp.getMaxColumns() >= 21) {
+      opp.getRange(1,2).setValue('Source ID');
+      opp.getRange(1,21).setValue('Media URL');
+    }
+
+    const lead = ss.getSheetByName(CFG.LEAD_SHEET);
+    if (lead) {
+      if (lead.getMaxColumns() < 17) lead.insertColumnsAfter(lead.getMaxColumns(), 17-lead.getMaxColumns());
+      lead.getRange(1,17).setValue('Ngày thành KH tiềm năng');
+    }
+
+    const scan = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
+    if (scan) {
+      if (scan.getMaxColumns() < 22) scan.insertColumnsAfter(scan.getMaxColumns(),22-scan.getMaxColumns());
+      scan.getRange(1,17,1,6).setValues([[
+        'Lượt cập nhật hôm nay','Bản ghi lần cuối','Bài quét lần cuối',
+        'Bài mới hôm nay','Comment mới hôm nay','KH mới hôm nay'
+      ]]);
+    }
   }
 
   function handleUiCommand_(command) {
@@ -436,6 +452,7 @@ const RemoteApp = (() => {
     if (name === 'ANALYZE_NEW') return analyzeNewPosts_({ silent: false });
     if (name === 'TEST_AI') return testAiConnection_();
     if (name === 'GET_AI_PROGRESS') return getAiProgress_();
+    if (name === 'AUDIT_CONSISTENCY') return auditConsistency_();
     throw new Error('Lệnh giao diện không được hỗ trợ: ' + name);
   }
 
