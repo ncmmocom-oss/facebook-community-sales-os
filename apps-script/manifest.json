@@ -1,15 +1,16 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.0-poc",
+  "version": "1.8.1-poc",
   "channel": "poc",
   "updated_at": "2026-09-26",
   "notes": [
-    "Adds official Social AIO HTTP Relay POC using POST https://api.fbaio.org/call.",
-    "CLIENT_ID is taken from Social AIO > Automation > APIs > Connect and stored only in Apps Script Document Properties.",
-    "Import dialog now includes API Bridge controls: save Client ID, test relay, scan first Group page, and fetch first comment page.",
-    "Group POC uses get_list_fb_group_posts and feeds returned posts directly into the existing V1.7 import/dedupe pipeline.",
-    "Comment POC uses get_list_fb_comment and feeds returned comments directly into BÌNH LUẬN/CƠ HỘI.",
-    "POC intentionally limits scanning to the first page. Pagination and scheduled multi-group scans are gated on successful schema/latency acceptance.",
-    "Existing V1.7 daily metrics, import log, newest-first, media URLs, consistency audit, fast refresh and token saver remain unchanged."
+    "Adds sheet-native Group API controls in QUÉT NHÓM without changing columns A:P business data.",
+    "Columns W:Z are operator controls: Chọn API, API Quét/Dừng, API trạng thái, API chi tiết; derived Q:V counters are preserved and hidden in the operator view.",
+    "Opening Social AIO Control Center automatically prepares the controls and installs an authorized onEdit trigger using the existing importJsonFiles bootstrap wrapper, so Code.gs does not need to be replaced.",
+    "Per-row command supports QUÉT and DỪNG. Stop takes effect after the current Social AIO API call/page returns.",
+    "The modeless Control Center polls selected groups and provides scan-selected / stop-selected / clear-selection actions.",
+    "Batch scanning uses a 230-second execution budget and leaves deferred groups selected for the next run.",
+    "Comment POC now rejects a Group root URL early with a clear message instead of surfacing Cannot get post ID from URL.",
+    "Bridge remains first-page POC; pagination/scheduler stay gated on API schema and latency acceptance."
   ]
 }
