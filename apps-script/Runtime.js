@@ -2046,20 +2046,29 @@ const RemoteApp = (() => {
     if (!outSheet) return { count: 0 };
 
     const last = oppSheet.getLastRow();
-    const rows = last >= 2 ? oppSheet.getRange(2, 1, last - 1, 20).getValues() : [];
+    const rows = last >= 2 ? oppSheet.getRange(2, 1, last - 1, 26).getValues() : [];
     const now = new Date(); now.setHours(23,59,59,999);
     const items = [];
 
     rows.forEach(r => {
       const score = Number(r[10] || 0);
       const cls = String(r[11] || '').trim();
+      const gate = String(r[24] || '').trim();
       const status = String(r[19] || '').trim();
       const follow = r[16] instanceof Date ? r[16] : null;
       const due = follow && follow <= now;
-      if (status === 'Đóng') return;
-      if (!(score >= 60 || cls === 'Rất tiềm năng' || cls === 'Tiềm năng' || due)) return;
-      const boost = due ? 1000 : 0;
-      items.push({ rank: boost + score, row: [0, r[4] || '', r[5] || '', r[2] || '', score, status || 'Mới', r[15] || '', r[16] || ''] });
+      if (status === 'Đóng' && cls !== 'Nguồn hội thoại') return;
+
+      const actionable =
+        gate === 'PASS' ||
+        (gate === 'WATCH' && score >= 60) ||
+        cls === 'Nguồn hội thoại' ||
+        due;
+      if (!actionable) return;
+
+      const boost = (due ? 1000 : 0) + (gate === 'PASS' ? 500 : (gate === 'WATCH' ? 100 : 0));
+      const stage = gate === 'PASS' ? 'LEAD PASS' : (cls === 'Nguồn hội thoại' ? 'HỘI THOẠI' : (status || 'Theo dõi'));
+      items.push({ rank: boost + score, row: [0, r[4] || '', r[5] || '', r[2] || '', score, stage, r[15] || '', r[16] || ''] });
     });
 
     items.sort((a,b) => b.rank - a.rank);
