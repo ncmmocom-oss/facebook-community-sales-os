@@ -182,14 +182,11 @@ const RemoteApp = (() => {
     updateGroupScanStatus_(groupSheet, groupStats);
     logImportRun_(importRunId, groupStats, files.length, Date.now() - startedMs, errors);
 
-    let ai = null;
+    // Keep import latency low: commit data first, then let the dialog start AI
+    // in a second asynchronous Apps Script call when autoAnalyze is enabled.
     const aiCfg = getAiConfig_();
-    if (aiCfg.autoAnalyze && aiCfg.configured && oppRows.length) {
-      try { ai = analyzeNewPosts_({ silent:true }); }
-      catch (e) { errors.push('AI: ' + e.message); }
-    }
-
-    const refresh = ai && ai.refresh ? ai.refresh : refreshCurrentData({ silent:true, fast:true });
+    const autoAnalyzeRequested = !!(aiCfg.autoAnalyze && aiCfg.configured && oppRows.length);
+    const refresh = refreshCurrentData({ silent:true, fast:true });
     SpreadsheetApp.flush();
 
     return {
@@ -205,7 +202,7 @@ const RemoteApp = (() => {
       duplicates: duplicateCount,
       durationMs: Date.now() - startedMs,
       errors,
-      ai,
+      autoAnalyzeRequested,
       refresh
     };
   }
