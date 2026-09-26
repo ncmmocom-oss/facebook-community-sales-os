@@ -608,7 +608,7 @@ const RemoteApp = (() => {
     const out = {};
     const last = oppSheet.getLastRow();
     if (last < 2) return out;
-    oppSheet.getRange(2,1,last-1,20).getValues().forEach(r => {
+    oppSheet.getRange(2,1,last-1,21).getValues().forEach(r => {
       if (String(r[3] || '') !== 'Bài viết') return;
       const id = String(r[1] || '').trim();
       if (!id) return;
@@ -1379,7 +1379,7 @@ const RemoteApp = (() => {
   function normalizeAndDedupeCommentSheet_(sheet) {
     const last = sheet.getLastRow();
     if (last < 2) return { removed:0, rows:0 };
-    const rows = sheet.getRange(2,1,last-1,22).getValues();
+    const rows = sheet.getRange(2,1,last-1,23).getValues();
     const groups = [];
     const keyMap = new Map();
 
@@ -1397,10 +1397,10 @@ const RemoteApp = (() => {
     });
 
     const removed = rows.length-groups.length;
-    sheet.getRange(2,1,rows.length,22).clearContent();
+    sheet.getRange(2,1,rows.length,23).clearContent();
     if (groups.length) {
       sheet.getRange(2,5,groups.length,4).setNumberFormat('@');
-      sheet.getRange(2,1,groups.length,22).setValues(groups);
+      sheet.getRange(2,1,groups.length,23).setValues(groups);
     }
     return { removed, rows:groups.length };
   }
@@ -1408,7 +1408,7 @@ const RemoteApp = (() => {
   function normalizeAndDedupeOpportunitySheet_(sheet) {
     const last = sheet.getLastRow();
     if (last < 2) return { removed:0, repairedIds:0, rows:0 };
-    const rows = sheet.getRange(2,1,last-1,20).getValues();
+    const rows = sheet.getRange(2,1,last-1,21).getValues();
     const groups = [];
     const keyMap = new Map();
     let repairedIds = 0;
@@ -1439,10 +1439,10 @@ const RemoteApp = (() => {
     });
 
     const removed=rows.length-groups.length;
-    sheet.getRange(2,1,rows.length,20).clearContent();
+    sheet.getRange(2,1,rows.length,21).clearContent();
     if (groups.length) {
       sheet.getRange(2,2,groups.length,1).setNumberFormat('@');
-      sheet.getRange(2,1,groups.length,20).setValues(groups);
+      sheet.getRange(2,1,groups.length,21).setValues(groups);
     }
     return { removed, repairedIds, rows:groups.length };
   }
@@ -1450,7 +1450,7 @@ const RemoteApp = (() => {
   function auditCommentDuplicates_(sheet) {
     const last=sheet.getLastRow();
     if (last<2) return {rows:0,duplicateRows:0};
-    const rows=sheet.getRange(2,1,last-1,22).getValues();
+    const rows=sheet.getRange(2,1,last-1,23).getValues();
     const seen=new Set(); let dup=0;
     rows.forEach(r=>{
       const keys=makeCommentKeys_(r[6],r[7]);
@@ -1462,7 +1462,7 @@ const RemoteApp = (() => {
   function auditOpportunityDuplicates_(sheet) {
     const last=sheet.getLastRow();
     if(last<2) return {rows:0,duplicateRows:0};
-    const rows=sheet.getRange(2,1,last-1,20).getValues();
+    const rows=sheet.getRange(2,1,last-1,21).getValues();
     const seen=new Set(); let dup=0;
     rows.forEach(r=>{
       const type=String(r[3]||'');
@@ -1516,7 +1516,7 @@ const RemoteApp = (() => {
     const os=mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
     const ts=mustSheet_(ss,CFG.PERSON_TIMELINE_SHEET);
     const last=os.getLastRow();
-    const rows=last>=2?os.getRange(2,1,last-1,20).getValues():[];
+    const rows=last>=2?os.getRange(2,1,last-1,21).getValues():[];
     const out=[];
 
     rows.forEach(r=>{
@@ -1547,45 +1547,51 @@ const RemoteApp = (() => {
   }
 
   function refreshCurrentData(options) {
-    const silent = options && options.silent;
+    options = options || {};
+    const silent = !!options.silent;
+    const fast = !!options.fast;
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     ensureV16Sheets_();
     const rawSheet = mustSheet_(ss, CFG.RAW_SHEET);
     const oppSheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
     const commentSheet = mustSheet_(ss, CFG.COMMENT_SHEET);
 
-    const registryStats = repairScanRegistry_();
-    const remapStats = remapGroupNames_();
-    const rawFix = normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:14, preferComplete:false });
-    const commentFix = normalizeAndDedupeCommentSheet_(commentSheet);
-    const oppFix = normalizeAndDedupeOpportunitySheet_(oppSheet);
+    const registryStats = fast ? {rows:0} : repairScanRegistry_();
+    const remapStats = fast ? {changed:0} : remapGroupNames_();
+    const rawFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:16, preferComplete:false });
+    const commentFix = fast ? {removed:0} : normalizeAndDedupeCommentSheet_(commentSheet);
+    const oppFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeOpportunitySheet_(oppSheet);
+
     const rawStatusStats = syncRawProcessingStatus_();
     const commentStats = syncCommentAnalysis_();
     const timelineStats = refreshPersonTimeline_();
     const leadStats = syncPotentialCustomers({ silent:true });
     const groupStats = refreshGroupSummary_();
     const queueStats = refreshCoordination_();
+    const dailyStats = refreshDailyStats_();
     SpreadsheetApp.flush();
 
     const result = {
       version: CFG.VERSION,
-      rawRemoved: rawFix.removed,
-      commentRemoved: commentFix.removed,
-      oppRemoved: oppFix.removed,
-      repairedIds: rawFix.repairedIds + oppFix.repairedIds,
-      registryRows: registryStats.rows,
-      remappedGroups: remapStats.changed,
+      fast,
+      rawRemoved: rawFix.removed || 0,
+      commentRemoved: commentFix.removed || 0,
+      oppRemoved: oppFix.removed || 0,
+      repairedIds: (rawFix.repairedIds || 0) + (oppFix.repairedIds || 0),
+      registryRows: registryStats.rows || 0,
+      remappedGroups: remapStats.changed || 0,
       rawStatuses: rawStatusStats.rows,
       comments: commentStats.rows,
       timeline: timelineStats.rows,
       leads: leadStats.count,
       groups: groupStats.groups,
       queue: queueStats.count,
+      dailyStats: dailyStats.rows
     };
 
     if (!silent) {
       SpreadsheetApp.getActive().toast(
-        `V${CFG.VERSION} | Trùng xóa: ${result.rawRemoved + result.commentRemoved + result.oppRemoved} | Comment: ${result.comments} | Timeline: ${result.timeline} | KH: ${result.leads}`,
+        `V${CFG.VERSION} | ${fast?'FAST':'FULL'} | Trùng xóa: ${result.rawRemoved + result.commentRemoved + result.oppRemoved} | Comment: ${result.comments} | KH: ${result.leads}`,
         'CẬP NHẬT DỮ LIỆU',
         8
       );
@@ -1615,7 +1621,7 @@ const RemoteApp = (() => {
     const leadSheet = mustSheet_(ss, CFG.LEAD_SHEET);
 
     const oppLast = oppSheet.getLastRow();
-    const opp = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 20).getValues() : [];
+    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,21).getValues() : [];
     const existing = loadExistingLeadState_(leadSheet);
     const grouped = {};
 
@@ -1629,7 +1635,7 @@ const RemoteApp = (() => {
       if (!key || key === 'ANON|') return;
       const score = Number(r[10] || 0);
 
-      if (!grouped[key]) grouped[key] = { count: 0, best: r, bestScore: score };
+      if (!grouped[key]) grouped[key] = { count:0, best:r, bestScore:score };
       grouped[key].count += 1;
       if (score > grouped[key].bestScore) {
         grouped[key].best = r;
@@ -1637,6 +1643,7 @@ const RemoteApp = (() => {
       }
     });
 
+    const now = new Date();
     const output = Object.keys(grouped).map(key => {
       const g = grouped[key];
       const r = g.best;
@@ -1645,17 +1652,21 @@ const RemoteApp = (() => {
         r[5] || '', r[6] || '', r[4] || '', r[3] || '', r[2] || '', r[7] || '', r[8] || '', r[9] || '',
         Number(r[10] || 0), r[11] || '', g.count,
         old.lastAction || r[14] || '', old.nextAction || r[15] || '', old.followUp || r[16] || '',
-        old.conversion || r[17] || 'Chưa có', old.note || ''
+        old.conversion || r[17] || 'Chưa có', old.note || '', old.firstLeadAt || now
       ];
-    }).sort((a, b) => Number(b[8] || 0) - Number(a[8] || 0));
+    }).sort((a,b)=>Number(b[8]||0)-Number(a[8]||0));
 
     const oldLast = leadSheet.getLastRow();
-    if (oldLast >= 2) leadSheet.getRange(2, 1, oldLast - 1, 16).clearContent();
-    if (output.length) leadSheet.getRange(2, 1, output.length, 16).setValues(output);
+    if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,17).clearContent();
+    if (output.length) {
+      leadSheet.getRange(2,1,output.length,17).setValues(output);
+      leadSheet.setRowHeights(2,output.length,42);
+      leadSheet.getRange(2,1,output.length,17).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    }
     SpreadsheetApp.flush();
 
     if (!silent) SpreadsheetApp.getUi().alert(`Đã đồng bộ ${output.length} khách hàng tiềm năng.`);
-    return { count: output.length };
+    return { count:output.length };
   }
 
   function refreshGroupSummary_() {
@@ -1963,13 +1974,16 @@ const RemoteApp = (() => {
     const state = {};
     const last = leadSheet.getLastRow();
     if (last < 2) return state;
-    const rows = leadSheet.getRange(2, 1, last - 1, 16).getValues();
+    const rows = leadSheet.getRange(2,1,last-1,17).getValues();
     rows.forEach(r => {
       const sourceUrl = normalizeUrl_(r[4] || '');
       const fbUrl = normalizeFacebookProfileUrl_(r[1] || '');
       const key = fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
       if (!key || key === 'ANON|') return;
-      state[key] = { lastAction: r[11] || '', nextAction: r[12] || '', followUp: r[13] || '', conversion: r[14] || '', note: r[15] || '' };
+      state[key] = {
+        lastAction:r[11] || '', nextAction:r[12] || '', followUp:r[13] || '',
+        conversion:r[14] || '', note:r[15] || '', firstLeadAt:r[16] || ''
+      };
     });
     return state;
   }
