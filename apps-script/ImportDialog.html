@@ -203,6 +203,8 @@
 
     <button class="secondary" onclick="saveWorkerPool()">LƯU WORKER</button>
     <button class="dark" onclick="testWorkerPool()">TEST WORKER</button>
+    <button class="retry" onclick="runApiDiagnostic()">🔎 CHẨN ĐOÁN API DÒNG ĐANG CHỌN</button>
+    <div class="muted">Diagnostic chỉ đọc API, không import bài, không chạy AI. Kết quả lưu vào sheet <b>NHẬT KÝ API</b>.</div>
     <div id="workerPoolState" class="muted">Đang đọc cấu hình Worker Pool...</div>
 
     <div class="muted" style="margin-top:8px;">
@@ -517,6 +519,40 @@
     }
 
 
+
+    function runApiDiagnostic() {
+      setStatus('Đang chẩn đoán raw response Social AIO... Không import dữ liệu.');
+      command({__command:'RUN_API_DIAGNOSTIC'}, r => {
+        const lines=(r.results||[]).map(x =>
+          x.name+
+          ': HTTP '+x.httpCode+
+          ' | preferred='+x.rawPreferred+
+          ' | best='+x.rawBestCount+
+          (x.rawBestPath?(' @ '+x.rawBestPath):'')+
+          ' | cursor='+(x.cursorPresent?'CÓ':'KHÔNG')+
+          ' | unwrap posts='+x.unPreferred+
+          ' | '+Math.round((x.durationMs||0)/100)/10+'s'
+        );
+        const p2=r.page2
+          ? ('\nPAGE2 probe: '+r.page2.rawBestCount+' bài | HTTP '+r.page2.httpCode+
+             ' | '+Math.round((r.page2.durationMs||0)/100)/10+'s')
+          : '\nPAGE2 probe: không chạy vì không tìm thấy cursor.';
+        setStatus(
+          '🔎 API DIAGNOSTIC - V'+r.version+
+          '\nDiag: '+r.diagId+
+          '\nGroup: '+r.groupName+
+          '\nWorker: '+r.workerSlot+
+          '\n\n'+lines.join('\n')+
+          p2+
+          '\n\nKẾT LUẬN ['+r.conclusion.code+']'+
+          '\n'+r.conclusion.title+
+          '\n→ '+r.conclusion.action+
+          '\n\nĐã ghi chi tiết vào NHẬT KÝ API.'
+        );
+      }, e => {
+        setStatus('Lỗi API diagnostic: '+(e.message||e));
+      });
+    }
 
     let scanStateTimer = null;
 
