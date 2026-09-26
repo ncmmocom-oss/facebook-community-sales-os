@@ -16,32 +16,34 @@ function onOpen() {
 }
 
 function buildLocalMenu_() {
-  SpreadsheetApp.getUi()
-    .createMenu('SOCIAL AIO')
-    .addItem('Import JSON / Cấu hình AI', 'showImportDialog')
-    .addItem('AI PHÂN TÍCH BÀI CHỜ', 'analyzePendingPosts')
-    .addItem('CẬP NHẬT DỮ LIỆU', 'refreshCurrentData')
-    .addSeparator()
-    .addItem('Đồng bộ KH tiềm năng', 'syncPotentialCustomers')
-    .addItem('Kiểm tra bài trùng', 'auditDuplicates')
+  const ui=SpreadsheetApp.getUi();
+  ui.createMenu('SOCIAL AIO')
+    .addItem('1. ⚙ CÀI ĐẶT', 'showSettingsDialog')
+    .addItem('2. 🔎 QUÉT GROUP', 'showScanDialog')
+    .addItem('3. 🤖 AI PHÂN TÍCH', 'showAiDialog')
+    .addItem('4. 🔄 CẬP NHẬT DỮ LIỆU', 'refreshCurrentData')
     .addSeparator()
     .addSubMenu(
-      SpreadsheetApp.getUi().createMenu('API BRIDGE POC')
-        .addItem('1. Cấu hình CLIENT_ID', 'apiBridgeConfigure')
-        .addItem('2. TEST KẾT NỐI', 'apiBridgeTest')
-        .addItem('3. Quét Group đang chọn', 'apiBridgeScanSelectedGroup')
-        .addItem('4. Lấy comment Post đang chọn', 'apiBridgeFetchCommentsSelectedPost')
-        .addSeparator()
-        .addItem('Trạng thái Bridge', 'apiBridgeStatus')
-        .addItem('Xoá CLIENT_ID', 'apiBridgeClearConfig')
+      ui.createMenu('CÔNG CỤ')
+        .addItem('Import JSON thủ công', 'showSettingsDialog')
+        .addItem('Đồng bộ KH PASS', 'syncPotentialCustomers')
+        .addItem('Kiểm tra bài trùng', 'auditDuplicates')
     )
-    .addSeparator()
-    .addItem('Cập nhật runtime từ GitHub', 'githubForceUpdate')
-    .addItem('Thông tin phiên bản', 'showRuntimeInfo')
+    .addSubMenu(
+      ui.createMenu('HỆ THỐNG')
+        .addItem('Cập nhật runtime từ GitHub', 'githubForceUpdate')
+        .addItem('Thông tin phiên bản', 'showRuntimeInfo')
+        .addSeparator()
+        .addItem('Bridge: TEST kết nối', 'apiBridgeTest')
+        .addItem('Bridge: Trạng thái', 'apiBridgeStatus')
+    )
     .addToUi();
 }
 
-function showImportDialog() { return callRemote_('showImportDialog', []); }
+function showSettingsDialog() { return callRemote_('showControlCenter', ['settings']); }
+function showScanDialog() { return callRemote_('showControlCenter', ['scan']); }
+function showAiDialog() { return callRemote_('showControlCenter', ['ai']); }
+function showImportDialog() { return showSettingsDialog(); }
 function analyzePendingPosts() { return callRemote_('analyzeNewPosts', []); }
 function importJsonFiles(files) { return callRemote_('importJsonFiles', [files]); }
 function syncPotentialCustomers() { return callRemote_('syncPotentialCustomers', []); }
