@@ -758,7 +758,10 @@ const RemoteApp = (() => {
     return isNaN(d.getTime()) ? null : d;
   }
 
-  function ensureV16Sheets_() {
+  function ensureV16Sheets_(force) {
+    const props = PropertiesService.getDocumentProperties();
+    const schemaKey = 'SOCIAL_AIO_SCHEMA_VERSION';
+    if (!force && props.getProperty(schemaKey) === CFG.VERSION) return;
     const ss = SpreadsheetApp.getActiveSpreadsheet();
 
     let cs = ss.getSheetByName(CFG.COMMENT_SHEET);
@@ -818,6 +821,7 @@ const RemoteApp = (() => {
         'Bài mới hôm nay','Comment mới hôm nay','KH mới hôm nay'
       ]]);
     }
+    props.setProperty(schemaKey, CFG.VERSION);
   }
 
   function handleUiCommand_(command) {
