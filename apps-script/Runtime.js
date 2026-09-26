@@ -542,9 +542,11 @@ const RemoteApp = (() => {
         const meta=rowMap[id]; if(!meta||!meta.rawRow)return;
         const u=uniq[id], r=vals[meta.rawRow-min];
         r[0]=u.commentsCount||0; r[1]=u.reactions||0; r[2]=u.shares||0;
-        r[3]=(u.mediaUrls||[]).length;
-        r[5]=(u.mediaUrls||[]).join('\n');
-        r[6]=(u.mediaUrls||[]).length;
+        if ((u.mediaUrls||[]).length) {
+          r[3]=u.mediaUrls.length;
+          r[5]=u.mediaUrls.join('\n');
+          r[6]=u.mediaUrls.length;
+        }
       });
       rawSheet.getRange(min,10,vals.length,7).setValues(vals);
     }
@@ -557,7 +559,7 @@ const RemoteApp = (() => {
         const meta=rowMap[id]; if(!meta||!meta.oppRow)return;
         const u=uniq[id], r=vals[meta.oppRow-min];
         r[0]=u.resultText||r[0];
-        r[2]=(u.mediaUrls||[]).join('\n');
+        if ((u.mediaUrls||[]).length) r[2]=u.mediaUrls.join('\n');
       });
       oppSheet.getRange(min,19,vals.length,3).setValues(vals);
     }
