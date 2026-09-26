@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.7.0',
+    VERSION: '1.8.0-poc',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -12,6 +12,8 @@ const RemoteApp = (() => {
     PERSON_TIMELINE_SHEET: 'LỊCH SỬ KH',
     IMPORT_LOG_SHEET: 'NHẬT KÝ IMPORT',
     DAILY_STATS_SHEET: 'THỐNG KÊ NGÀY',
+    BRIDGE_SERVER: 'https://api.fbaio.org',
+    BRIDGE_CLIENT_ID_KEY: 'SOCIAL_AIO_BRIDGE_CLIENT_ID',
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -35,7 +37,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -126,7 +128,7 @@ const RemoteApp = (() => {
           const stat = touchGroupStat_(groupStats, groupKey, groupInfo, file.name || '');
           stat.postScanned += 1;
 
-          const actor = post.actor || post.author || post.user || {};
+          const actor = post.actor || post.author || post.user || (Array.isArray(post.actors) ? post.actors[0] : {}) || {};
           const authorName = String(actor.name || post.author_name || '');
           const authorUrl = String(actor.url || actor.profile_url || post.author_url || '');
           const message = String(post.message || post.title || post.summary || (post.content && post.content.text) || post.text || '');
@@ -2212,6 +2214,437 @@ const RemoteApp = (() => {
     return s;
   }
 
+
+  // ============================================================
+  // V1.8.0 POC - Official Social AIO HTTP Relay Bridge
+  // Official contract:
+  // POST https://api.fbaio.org/call
+  // { id: CLIENT_ID, apiname: API_ID, apiparams: {...} }
+  // CLIENT_ID is obtained from Social AIO > Automation > APIs > Connect.
+  // Never store Facebook cookies/access tokens in Sheet/GitHub.
+  // ============================================================
+
+  function apiBridgeConfigure() {
+    const ui = SpreadsheetApp.getUi();
+    const props = PropertiesService.getDocumentProperties();
+    const current = props.getProperty(CFG.BRIDGE_CLIENT_ID_KEY) || '';
+    const res = ui.prompt(
+      'SOCIAL AIO API BRIDGE - POC',
+      '1) Mở Social AIO > Automation > APIs\n' +
+      '2) Bấm Connect và giữ tab APIs đang kết nối\n' +
+      '3) Copy CLIENT_ID rồi dán vào đây.\n\n' +
+      (current ? 'Đã có Client ID lưu trước đó. Dán ID mới để thay thế.' : 'Chưa có Client ID.'),
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (res.getSelectedButton() !== ui.Button.OK) return { saved:false };
+    const id = String(res.getResponseText() || '').trim();
+    if (!id) throw new Error('CLIENT_ID đang trống.');
+    if (id.length < 6 || id.length > 200) throw new Error('CLIENT_ID không hợp lệ.');
+    props.setProperty(CFG.BRIDGE_CLIENT_ID_KEY, id);
+    ui.alert(
+      'Đã lưu CLIENT_ID trong Document Properties.\n' +
+      'Không ghi CLIENT_ID vào ô Sheet hoặc GitHub.\n\n' +
+      'Bước tiếp theo: SOCIAL AIO > API BRIDGE POC > TEST KẾT NỐI.'
+    );
+    return { saved:true, masked:maskBridgeClientId_(id) };
+  }
+
+  function apiBridgeClearConfig() {
+    PropertiesService.getDocumentProperties().deleteProperty(CFG.BRIDGE_CLIENT_ID_KEY);
+    SpreadsheetApp.getUi().alert('Đã xoá CLIENT_ID của API Bridge khỏi Document Properties.');
+    return { cleared:true };
+  }
+
+  function apiBridgeTest() {
+    const started = Date.now();
+    const versionResult = callSocialAioApi_('get_ext_version', {});
+    let profileResult = null;
+    try { profileResult = callSocialAioApi_('get_my_profile_lite', {}); } catch (_) {}
+
+    const version = pickBridgeValue_(versionResult, ['version']) || compactBridgePreview_(versionResult, 120);
+    const profile = pickBridgeValue_(profileResult, ['name','profile.name']) || '';
+    const id = getBridgeClientId_();
+
+    SpreadsheetApp.getUi().alert(
+      '✅ API BRIDGE KẾT NỐI THÀNH CÔNG\n\n' +
+      'Relay: ' + CFG.BRIDGE_SERVER + '\n' +
+      'Client ID: ' + maskBridgeClientId_(id) + '\n' +
+      'Social AIO version: ' + (version || 'OK') + '\n' +
+      (profile ? ('Facebook profile: ' + profile + '\n') : '') +
+      'Round-trip: ' + (Date.now() - started) + ' ms'
+    );
+    return {
+      ok:true,
+      relay:CFG.BRIDGE_SERVER,
+      clientId:maskBridgeClientId_(id),
+      version,
+      profile,
+      durationMs:Date.now()-started
+    };
+  }
+
+  function apiBridgeScanSelectedGroup() {
+    const groupUrl = resolveBridgeGroupUrl_();
+    const started = Date.now();
+
+    const apiResult = callSocialAioApi_('get_list_fb_group_posts', {
+      url: groupUrl,
+      sorting: 'Newest Posts',
+      cursor: ''
+    });
+
+    const posts = findBridgeArray_(apiResult, ['posts']);
+    if (!posts.length) {
+      throw new Error(
+        'API trả về nhưng không tìm thấy mảng posts. Response: ' +
+        compactBridgePreview_(apiResult, 700)
+      );
+    }
+
+    const fileName = 'api_posts_' + (extractGroupKey_(groupUrl) || 'group') + '_' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') + '.json';
+
+    const imported = importJsonFiles([{ name:fileName, text:JSON.stringify(posts) }]);
+    const cursor = findBridgeCursor_(apiResult);
+
+    SpreadsheetApp.getUi().alert(
+      '✅ POC GROUP SCAN PASS\n\n' +
+      'Group: ' + groupUrl + '\n' +
+      'API đọc: ' + posts.length + ' post\n' +
+      'Post mới: ' + (imported.postImported || 0) + '\n' +
+      'Trùng: ' + (imported.duplicates || 0) + '\n' +
+      'Cursor tiếp: ' + (cursor ? 'CÓ' : 'KHÔNG') + '\n' +
+      'Thời gian: ' + (Date.now() - started) + ' ms\n\n' +
+      'Dữ liệu đã đẩy thẳng vào NHẬP JSON / CƠ HỘI, không tạo file thủ công.'
+    );
+
+    return {
+      ok:true,
+      groupUrl,
+      postsRead:posts.length,
+      nextCursor:cursor || '',
+      imported,
+      durationMs:Date.now()-started
+    };
+  }
+
+  function apiBridgeFetchCommentsSelectedPost() {
+    const postUrl = resolveBridgePostUrl_();
+    const started = Date.now();
+
+    const apiResult = callSocialAioApi_('get_list_fb_comment', {
+      url: postUrl,
+      type: 'Newest',
+      cursor: ''
+    });
+    const comments = findBridgeArray_(apiResult, ['comments']);
+    if (!comments.length) {
+      SpreadsheetApp.getUi().alert(
+        'API chạy thành công nhưng page đầu không có comment record.\n\n' +
+        'Post: ' + postUrl + '\n' +
+        'Response: ' + compactBridgePreview_(apiResult, 600)
+      );
+      return { ok:true, postUrl, commentsRead:0, imported:null, durationMs:Date.now()-started };
+    }
+
+    const postId = normalizePostId_('', postUrl) || 'post';
+    const fileName = 'api_comments_' + postId + '_' +
+      Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') + '.json';
+    const imported = importJsonFiles([{ name:fileName, text:JSON.stringify(comments) }]);
+    const cursor = findBridgeCursor_(apiResult);
+
+    SpreadsheetApp.getUi().alert(
+      '✅ POC COMMENT SCAN PASS\n\n' +
+      'Post: ' + postUrl + '\n' +
+      'API đọc: ' + comments.length + ' comment\n' +
+      'Comment mới: ' + (imported.commentImported || 0) + '\n' +
+      'Trùng: ' + (imported.duplicates || 0) + '\n' +
+      'Cursor tiếp: ' + (cursor ? 'CÓ' : 'KHÔNG') + '\n' +
+      'Thời gian: ' + (Date.now() - started) + ' ms'
+    );
+
+    return {
+      ok:true,
+      postUrl,
+      commentsRead:comments.length,
+      nextCursor:cursor || '',
+      imported,
+      durationMs:Date.now()-started
+    };
+  }
+
+  function apiBridgeStatus() {
+    const id = PropertiesService.getDocumentProperties().getProperty(CFG.BRIDGE_CLIENT_ID_KEY) || '';
+    const msg =
+      'SOCIAL AIO API BRIDGE - POC\n\n' +
+      'Runtime: V' + CFG.VERSION + '\n' +
+      'Relay: ' + CFG.BRIDGE_SERVER + '\n' +
+      'CLIENT_ID: ' + (id ? maskBridgeClientId_(id) : 'CHƯA CẤU HÌNH') + '\n\n' +
+      'POC Gate:\n' +
+      '1. TEST KẾT NỐI\n' +
+      '2. Quét Group đang chọn\n' +
+      '3. Lấy comment Post đang chọn\n\n' +
+      'Lưu ý: tab Social AIO > APIs phải đang Connect để relay chuyển request vào browser.';
+    SpreadsheetApp.getUi().alert(msg);
+    return { version:CFG.VERSION, relay:CFG.BRIDGE_SERVER, configured:!!id, clientId:id?maskBridgeClientId_(id):'' };
+  }
+
+  function callSocialAioApi_(apiName, apiParams) {
+    const id = getBridgeClientId_();
+    const url = CFG.BRIDGE_SERVER.replace(/\/$/,'') + '/call';
+    const payload = {
+      id,
+      apiname:String(apiName || '').trim(),
+      apiparams:apiParams || {}
+    };
+    if (!payload.apiname) throw new Error('Thiếu Social AIO API name.');
+
+    const res = UrlFetchApp.fetch(url, {
+      method:'post',
+      contentType:'application/json',
+      payload:JSON.stringify(payload),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+
+    const code = res.getResponseCode();
+    const text = res.getContentText('UTF-8');
+    if (code < 200 || code >= 300) {
+      throw new Error('Social AIO relay HTTP ' + code + ': ' + text.slice(0,700));
+    }
+
+    let parsed = text;
+    try { parsed = JSON.parse(text); } catch (_) {}
+
+    const err = findBridgeError_(parsed);
+    if (err) {
+      if (/not\s+connected/i.test(err)) {
+        throw new Error(
+          'Social AIO báo Client not connected. Mở Social AIO > Automation > APIs, bấm Connect và giữ tab đó hoạt động. Chi tiết: ' + err
+        );
+      }
+      throw new Error('Social AIO API lỗi: ' + err);
+    }
+    return unwrapBridgeResult_(parsed);
+  }
+
+  function getBridgeClientId_() {
+    const id = String(
+      PropertiesService.getDocumentProperties().getProperty(CFG.BRIDGE_CLIENT_ID_KEY) || ''
+    ).trim();
+    if (!id) {
+      throw new Error(
+        'Chưa có CLIENT_ID. Vào SOCIAL AIO > API BRIDGE POC > 1. Cấu hình CLIENT_ID.'
+      );
+    }
+    return id;
+  }
+
+  function maskBridgeClientId_(id) {
+    const s = String(id || '');
+    if (s.length <= 8) return s.slice(0,2) + '***' + s.slice(-2);
+    return s.slice(0,5) + '…' + s.slice(-4);
+  }
+
+  function unwrapBridgeResult_(value) {
+    let v = value;
+    for (let i=0;i<5;i++) {
+      if (typeof v === 'string') {
+        const s = v.trim();
+        if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))) {
+          try { v = JSON.parse(s); continue; } catch (_) {}
+        }
+        return v;
+      }
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        const keys = Object.keys(v);
+        if (keys.length <= 4 && Object.prototype.hasOwnProperty.call(v,'result') && v.result !== undefined) {
+          v = v.result;
+          continue;
+        }
+      }
+      break;
+    }
+    return v;
+  }
+
+  function findBridgeError_(value) {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string') {
+      const s = value.trim();
+      if (/^\{.*\}$/.test(s)) {
+        try { return findBridgeError_(JSON.parse(s)); } catch (_) {}
+      }
+      return /^error\s*:/i.test(s) || /not\s+connected/i.test(s) ? s : '';
+    }
+    if (typeof value !== 'object') return '';
+    if (value.error) {
+      if (typeof value.error === 'string') return value.error;
+      try { return JSON.stringify(value.error); } catch (_) { return String(value.error); }
+    }
+    if (value.success === false && value.message) return String(value.message);
+    return '';
+  }
+
+  function findBridgeArray_(value, preferredKeys) {
+    const preferred = new Set((preferredKeys || []).map(x=>String(x).toLowerCase()));
+    const seen = [];
+    let fallback = null;
+
+    const walk = (v, depth) => {
+      if (depth > 7 || v === null || v === undefined) return null;
+      if (Array.isArray(v)) {
+        if (!fallback && v.length) fallback = v;
+        for (let i=0;i<v.length;i++) {
+          const nested = walk(v[i], depth+1);
+          if (nested && nested.__preferred) return nested;
+        }
+        return null;
+      }
+      if (typeof v === 'string') {
+        const s=v.trim();
+        if ((s.startsWith('{') && s.endsWith('}')) || (s.startsWith('[') && s.endsWith(']'))) {
+          try { return walk(JSON.parse(s), depth+1); } catch (_) {}
+        }
+        return null;
+      }
+      if (typeof v !== 'object') return null;
+      if (seen.indexOf(v) >= 0) return null;
+      seen.push(v);
+
+      const keys=Object.keys(v);
+      for (const k of keys) {
+        if (preferred.has(String(k).toLowerCase()) && Array.isArray(v[k])) {
+          const arr=v[k];
+          arr.__preferred=true;
+          return arr;
+        }
+      }
+      for (const k of keys) {
+        const x=walk(v[k],depth+1);
+        if (x && x.__preferred) return x;
+      }
+      return null;
+    };
+
+    const exact=walk(value,0);
+    if (exact && exact.__preferred) {
+      try { delete exact.__preferred; } catch (_) {}
+      return exact;
+    }
+    return fallback || [];
+  }
+
+  function findBridgeCursor_(value) {
+    const preferred = ['next_cursor','end_cursor','nextcursor','endcursor'];
+    const generic = ['cursor'];
+    const seen = [];
+
+    const walk = (v, depth, allowGeneric) => {
+      if (depth > 7 || v === null || v === undefined || typeof v !== 'object') return '';
+      if (seen.indexOf(v) >= 0) return '';
+      seen.push(v);
+      if (Array.isArray(v)) {
+        for (const x of v) {
+          const found=walk(x,depth+1,false);
+          if (found) return found;
+        }
+        return '';
+      }
+      const keys=Object.keys(v);
+      for (const wanted of preferred) {
+        const k=keys.find(x=>String(x).toLowerCase()===wanted);
+        if (k && typeof v[k] === 'string' && v[k]) return v[k];
+      }
+      if (v.page_info && typeof v.page_info === 'object') {
+        const p=v.page_info;
+        if (typeof p.end_cursor === 'string' && p.end_cursor) return p.end_cursor;
+      }
+      if (allowGeneric) {
+        for (const wanted of generic) {
+          const k=keys.find(x=>String(x).toLowerCase()===wanted);
+          if (k && typeof v[k] === 'string' && v[k]) return v[k];
+        }
+      }
+      for (const k of keys) {
+        const found=walk(v[k],depth+1,false);
+        if (found) return found;
+      }
+      return '';
+    };
+    return walk(value,0,true);
+  }
+
+  function pickBridgeValue_(obj, paths) {
+    for (const path of paths || []) {
+      let v=obj;
+      for (const part of String(path).split('.')) {
+        if (v === null || v === undefined || typeof v !== 'object') { v=undefined; break; }
+        v=v[part];
+      }
+      if (v !== undefined && v !== null && v !== '') return String(v);
+    }
+    if (obj && typeof obj === 'object') {
+      for (const k of Object.keys(obj)) {
+        if (String(k).toLowerCase()==='version' && obj[k] !== undefined) return String(obj[k]);
+      }
+    }
+    return '';
+  }
+
+  function compactBridgePreview_(value, maxLen) {
+    let s='';
+    try { s=typeof value==='string' ? value : JSON.stringify(value); }
+    catch (_) { s=String(value); }
+    s=s.replace(/\s+/g,' ').trim();
+    return s.slice(0, maxLen || 500);
+  }
+
+  function resolveBridgeGroupUrl_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet();
+    const row=sh.getActiveRange() ? sh.getActiveRange().getRow() : 0;
+    if (sh.getName()===CFG.GROUP_SCAN_SHEET && row>=2) {
+      const url=String(sh.getRange(row,4).getDisplayValue() || '').trim();
+      if (url) return url;
+    }
+    const ui=SpreadsheetApp.getUi();
+    const res=ui.prompt(
+      'POC - Quét 1 Group',
+      'Chọn một dòng trong sheet QUÉT NHÓM rồi chạy lại, hoặc dán URL Group Facebook vào đây:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if(res.getSelectedButton()!==ui.Button.OK) throw new Error('Đã huỷ.');
+    const url=String(res.getResponseText()||'').trim();
+    if(!/facebook\.com\/groups\//i.test(url)) throw new Error('URL Group Facebook không hợp lệ.');
+    return url;
+  }
+
+  function resolveBridgePostUrl_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet();
+    const row=sh.getActiveRange() ? sh.getActiveRange().getRow() : 0;
+    if (sh.getName()===CFG.OPPORTUNITY_SHEET && row>=2) {
+      const type=String(sh.getRange(row,4).getDisplayValue()||'');
+      const url=String(sh.getRange(row,3).getDisplayValue()||'').trim();
+      if(type!=='Bình luận' && url) return url;
+    }
+    if (sh.getName()===CFG.RAW_SHEET && row>=5) {
+      const url=String(sh.getRange(row,6).getDisplayValue()||'').trim();
+      if(url) return url;
+    }
+    const ui=SpreadsheetApp.getUi();
+    const res=ui.prompt(
+      'POC - Lấy comment 1 Post',
+      'Chọn một bài trong CƠ HỘI / NHẬP JSON rồi chạy lại, hoặc dán URL bài Facebook vào đây:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if(res.getSelectedButton()!==ui.Button.OK) throw new Error('Đã huỷ.');
+    const url=String(res.getResponseText()||'').trim();
+    if(!url) throw new Error('URL Post đang trống.');
+    return url;
+  }
+
   return {
     getVersion,
     onOpen,
@@ -2222,5 +2655,11 @@ const RemoteApp = (() => {
     syncPotentialCustomers,
     auditDuplicates,
     analyzeNewPosts,
+    apiBridgeConfigure,
+    apiBridgeClearConfig,
+    apiBridgeTest,
+    apiBridgeScanSelectedGroup,
+    apiBridgeFetchCommentsSelectedPost,
+    apiBridgeStatus,
   };
 })();
