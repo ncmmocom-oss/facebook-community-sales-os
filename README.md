@@ -368,3 +368,30 @@ Nút vận hành chính:
 `get_list_fb_group_posts` không có tham số limit, nên runtime dùng cursor để lấy thêm page cho tới target 10/15/20/25. Nếu API hết cursor trước target, trạng thái là **THIẾU** chứ không ghi XONG giả.
 
 Các phần Import JSON, AI và Bridge cấu hình được giữ làm fallback nhưng thu gọn dưới mục **Cấu hình nâng cao**.
+
+## V1.8.4-POC — 3 Social AIO Workers
+
+Ba tài khoản Social AIO/API có thể được cấu hình thành W1/W2/W3. Không cần mở thêm TCP port: cả ba dùng relay hiện tại, mỗi phiên được định tuyến bằng CLIENT_ID riêng.
+
+### Setup một lần
+
+1. Mở 3 browser/profile tương ứng với 3 account Facebook/Social AIO.
+2. Ở từng profile: **Social AIO → Automation → APIs → Connect**.
+3. Copy CLIENT_ID của profile đó vào W1/W2/W3 trong **Cấu hình nâng cao → Social AIO Worker Pool**.
+4. Bấm **LƯU 3 WORKER** rồi **TEST 3 WORKER**.
+
+Client ID cũ đang hoạt động được migrate tự động vào W1.
+
+### Điều phối
+
+- Blank/AUTO ở cột Profile → Smart dispatcher.
+- W1, W2, W3 → pin vào worker cụ thể.
+- Có thể dùng label worker hoặc tên profile Facebook mà TEST trả về.
+- Nếu có worker TEST ONLINE, dispatcher chỉ dùng các worker online.
+- Job được cân bằng theo số bài đã gán và latency gần nhất.
+
+### Parallel execution
+
+Control Center tạo tối đa 3 queue chạy song song qua các google.script.run độc lập. Mỗi worker xử lý tuần tự các Group được gán cho mình. Network/API fetch có thể chạy đồng thời; bước ghi/dedupe Google Sheet được khóa tuần tự để tránh race condition.
+
+Sau khi toàn bộ worker hoàn tất, hệ thống refresh dữ liệu một lần và mới chạy AI một lần cho batch nếu Auto Analyze đang bật.
