@@ -653,33 +653,38 @@
         command({__command:'FINALIZE_WORKER_BATCH'}, fin=>{
           const s=summarizePoolResults(ctx);
           const elapsed=Date.now()-ctx.started;
-          setStatus(
-            (retryMode?'RETRY':'QUÉT')+' XONG - V'+fin.version+
-            '\n3-worker pool xử lý: '+s.processed+
+          const newPosts=ctx.results.reduce((sum,r)=>
+            sum + Number(r&&r.imported&&r.imported.postImported||0),0);
+          const baseStatus=
+            ((s.failed===s.processed && s.processed>0)?'❌ QUÉT THẤT BẠI':((retryMode?'RETRY':'QUÉT')+' XONG'))+
+            ' - V'+fin.version+
+            '\nGroup xử lý: '+s.processed+
             '\nXong đủ: '+s.passed+
             '\nThiếu: '+s.incomplete+
             '\nLỗi: '+s.failed+
             '\nDừng: '+s.stopped+
+            '\nPost mới: '+newPosts+
             '\nTổng thời gian: '+Math.round(elapsed/100)/10+'s'+
-            '\nĐồng bộ KH: '+((fin.refresh&&fin.refresh.leads)||0)
-          );
+            '\nĐồng bộ KH: '+((fin.refresh&&fin.refresh.leads)||0);
+
+          setStatus(baseStatus);
           pollGroupScanState();
           loadWorkerPool();
 
-          if(fin.autoAnalyzeRequested){
-            setStatus(document.getElementById('status').textContent+'\nAI: đang phân tích dữ liệu mới...');
+          if(fin.autoAnalyzeRequested && newPosts>0){
+            setStatus(baseStatus+'\nAI: đang phân tích dữ liệu mới...');
             startProgressPolling();
             command({__command:'ANALYZE_NEW'}, r=>{
               setStatus(
-                (retryMode?'RETRY':'QUÉT')+' + AI XONG'+
-                '\nGroup xử lý: '+s.processed+
+                baseStatus+
                 '\nAI đã phân tích: '+r.analyzed+
-                '\nCòn lại: '+r.remaining+
+                '\nAI còn lại: '+r.remaining+
                 '\nKH tiềm năng: '+(r.refresh?r.refresh.leads:'-')
               );
               stopProgressPolling();
               pollGroupScanState();
-            }, ()=>{
+            }, e=>{
+              setStatus(baseStatus+'\nLỗi AI: '+(e.message||e));
               stopProgressPolling();
             });
           }
