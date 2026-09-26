@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.3-poc',
+    VERSION: '1.8.4-poc',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -14,6 +14,7 @@ const RemoteApp = (() => {
     DAILY_STATS_SHEET: 'THỐNG KÊ NGÀY',
     BRIDGE_SERVER: 'https://api.fbaio.org',
     BRIDGE_CLIENT_ID_KEY: 'SOCIAL_AIO_BRIDGE_CLIENT_ID',
+    WORKER_POOL_KEY: 'SOCIAL_AIO_WORKER_POOL_V1',
     BRIDGE_STOP_ALL_KEY: 'SOCIAL_AIO_BRIDGE_STOP_ALL',
     BRIDGE_STOP_PREFIX: 'SOCIAL_AIO_BRIDGE_STOP_',
     GROUP_CONTROL_START_COL: 23,
@@ -40,7 +41,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -59,6 +60,7 @@ const RemoteApp = (() => {
     if (!Array.isArray(files) || files.length === 0) throw new Error('Chưa chọn file JSON.');
 
     const startedMs = Date.now();
+    const workerFast = files.some(f => f && f.__workerFast === true);
     const importRunId = Utilities.getUuid().slice(0, 8);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     ensureV16Sheets_();
@@ -195,8 +197,8 @@ const RemoteApp = (() => {
     // Keep import latency low: commit data first, then let the dialog start AI
     // in a second asynchronous Apps Script call when autoAnalyze is enabled.
     const aiCfg = getAiConfig_();
-    const autoAnalyzeRequested = !!(aiCfg.autoAnalyze && aiCfg.configured && oppRows.length);
-    const refresh = refreshCurrentData({ silent:true, fast:true });
+    const autoAnalyzeRequested = !workerFast && !!(aiCfg.autoAnalyze && aiCfg.configured && oppRows.length);
+    const refresh = workerFast ? null : refreshCurrentData({ silent:true, fast:true });
     SpreadsheetApp.flush();
 
     return {
@@ -211,6 +213,7 @@ const RemoteApp = (() => {
       commentImported,
       duplicates: duplicateCount,
       durationMs: Date.now() - startedMs,
+      workerFast,
       errors,
       autoAnalyzeRequested,
       refresh
@@ -842,6 +845,13 @@ const RemoteApp = (() => {
     if (name === 'GET_BRIDGE_CONFIG') return getApiBridgeConfig_();
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
     if (name === 'TEST_BRIDGE') return testApiBridge_();
+    if (name === 'GET_WORKER_POOL') return getWorkerPoolPublic_();
+    if (name === 'SAVE_WORKER_POOL') return saveWorkerPool_(command.workers || []);
+    if (name === 'TEST_WORKER_POOL') return testWorkerPool_();
+    if (name === 'PREPARE_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, false);
+    if (name === 'PREPARE_RETRY_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, true);
+    if (name === 'RUN_WORKER_JOB') return runWorkerJob_(command);
+    if (name === 'FINALIZE_WORKER_BATCH') return finalizeWorkerBatch_();
     if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl, command.targetCount || 25);
     if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
     if (name === 'GET_GROUP_SCAN_CONTROL') return getGroupScanControlState_();
@@ -2628,6 +2638,7 @@ const RemoteApp = (() => {
         out.push({
           row,
           name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
+          profile:String(r[1]||'').trim() || 'AUTO',
           url,
           groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
           targetCount:normalizeGroupTarget_(r[8]||25),
