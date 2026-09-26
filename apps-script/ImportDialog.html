@@ -52,7 +52,7 @@
 <body>
   <h2>Social AIO → Community Sales OS</h2>
 
-  <div class="box opbar">
+  <div class="box opbar" id="scanBox">
     <h3>QUÉT NHÓM</h3>
     <div class="muted"><b>2 thao tác nếu dùng mặc định:</b> tick Group trong sheet → bấm QUÉT.</div>
 
@@ -92,11 +92,39 @@
   </div>
 
 
-  <details class="advanced">
-    <summary>⚙️ Cấu hình nâng cao / Import JSON thủ công</summary>
+  <div class="box ai" id="aiRunBox">
+    <h3>AI PHÂN TÍCH → LEAD QUALIFICATION</h3>
+    <div class="muted">Hard Gate: chỉ tạo KH tiềm năng khi <b>Buyer Role = Có</b> + <b>Product Fit = Có</b> + <b>Score ≥ 65</b>.</div>
+    <div class="row">
+      <div>
+        <label>Chế độ AI sau khi quét Group</label>
+        <select id="analysisMode">
+          <option value="auto_scan">TỰ ĐỘNG — chỉ Group vừa quét</option>
+          <option value="manual">THỦ CÔNG — không tự chạy AI</option>
+        </select>
+      </div>
+      <div>
+        <label>Phân tích thủ công từ đâu?</label>
+        <select id="analysisScope">
+          <option value="selected_groups">Group đang tick ở QUÉT NHÓM</option>
+          <option value="selected_rows">Dòng đang chọn ở CƠ HỘI</option>
+          <option value="all_waiting">Tất cả nguồn Chờ AI mới</option>
+          <option value="legacy_gate">Đánh giá lại dữ liệu cũ chưa có Lead Gate</option>
+        </select>
+      </div>
+    </div>
+    <button class="primary" onclick="analyzeScope()">▶ PHÂN TÍCH THEO PHẠM VI</button>
+    <button class="secondary" onclick="refreshData()">↻ CẬP NHẬT DỮ LIỆU</button>
+    <div id="aiState" class="muted">Đang đọc cấu hình...</div>
+    <div class="progress"><div id="progressBar"></div></div>
+    <div id="progressText">Chưa có tiến trình AI.</div>
+  </div>
+
+  <details class="advanced" id="advancedPanel">
+    <summary>⚙️ CÀI ĐẶT / CÔNG CỤ NÂNG CAO</summary>
     <div>
   <div class="box">
-    <h3>1. Import JSON</h3>
+    <h3>Import JSON thủ công (fallback)</h3>
     <p>Chọn file <b>posts*.json</b>, <b>comments*.json</b> hoặc posts JSON có comment lồng bên trong. Hệ thống tự đếm bản ghi quét, lọc trùng, lấy Media CDN và đưa dữ liệu mới lên đầu bảng.</p>
     <input id="files" type="file" accept=".json,application/json" multiple onchange="filesChanged()">
     <br>
@@ -106,9 +134,8 @@
     <div class="muted">Nếu đã chọn file JSON, phải bấm <b>IMPORT JSON</b>. Nút Đồng bộ Sheet không đọc file đã chọn.</div>
   </div>
 
-  <div class="box ai">
-    <h3>2. AI phân tích cơ hội</h3>
-
+  <div class="box" id="aiSettingsBox">
+    <h3>Cài đặt AI & tiêu chí bán hàng</h3>
     <div class="row">
       <div>
         <label>Nhà cung cấp AI</label>
@@ -122,37 +149,22 @@
         <input id="maxRows" type="number" min="1" max="200" value="100">
       </div>
     </div>
-
     <div id="openaiBox">
       <label>OpenAI API key</label>
       <input id="openaiApiKey" type="password" placeholder="sk-... | để trống nếu đã lưu trước đó">
     </div>
-
     <div id="geminiBox" class="hidden">
       <label>Gemini API key (Google AI)</label>
       <input id="geminiApiKey" type="password" placeholder="Dán Gemini API key | để trống nếu đã lưu trước đó">
-      <div class="muted">Google Sheets không cần API key riêng: Apps Script đang dùng OAuth của chính file Sheet. Key này chỉ dùng nếu chọn Gemini để phân tích.</div>
     </div>
-
     <label>Model</label>
     <select id="model"></select>
-
-    <label style="display:block;margin-top:8px;">Business context / mình đang bán gì?</label>
-    <textarea id="businessContext" placeholder="Ví dụ: Bán lốp, phụ kiện và dịch vụ bảo dưỡng VinFast Lux tại Hà Nội. Ưu tiên khách có nhu cầu thực, cần gấp hoặc đang tìm giải pháp."></textarea>
-
-    <label style="display:flex;gap:8px;align-items:center;font-weight:400;margin-top:6px;">
-      <input id="autoAnalyze" type="checkbox" checked>
-      Tự AI phân tích bài/comment mới ngay sau Import JSON
-    </label>
-
+    <label style="display:block;margin-top:8px;">Business Context — mình thực sự đang bán gì?</label>
+    <textarea id="businessContext" placeholder="Ghi cụ thể sản phẩm/dịch vụ, khu vực, nhóm khách phù hợp và trường hợp KHÔNG phù hợp. Nếu để trống, Hard Gate không cho Product Fit = Có."></textarea>
+    <div class="muted">Business Context là điều kiện bắt buộc để Lead Gate PASS. Nếu bán nhiều offer khác nhau, nên tách context theo chiến dịch ở phase sau.</div>
     <button class="secondary" onclick="saveAiConfig()">LƯU CẤU HÌNH AI</button>
     <button class="dark" onclick="testAi()">TEST AI</button>
-    <button onclick="analyzeNew()">AI PHÂN TÍCH BÀI CHỜ</button>
-    <div id="aiState" class="muted">Đang đọc cấu hình...</div>
-    <div class="progress"><div id="progressBar"></div></div>
-    <div id="progressText">Chưa có tiến trình AI.</div>
   </div>
-
 
   <div class="box bridge">
     <h3>3. Social AIO Worker — Pilot 1 tài khoản</h3>
