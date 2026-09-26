@@ -1481,10 +1481,18 @@ const RemoteApp = (() => {
     return JSON.parse(text);
   }
 
+  function clampScore_(v,min,max) {
+    const n=Math.round(Number(v||0));
+    return Math.max(min,Math.min(max,isFinite(n)?n:0));
+  }
+
   function applyAiAnalysis_(sheet, analyses) {
     const allowedIntent = new Set(['Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối','Muốn đổi','Muốn mua','Cần mua gấp','Chia sẻ','Thảo luận','Không ưu tiên']);
     const allowedClass = new Set(['Rất tiềm năng','Tiềm năng','Theo dõi','Nguồn hội thoại','Không phải KH']);
     const allowedAction = new Set(['Bỏ qua','Theo dõi','Comment giá trị','Hỏi chẩn đoán','Tạo nhu cầu','Nối tiếp hội thoại','Xử lý phản đối','Gợi ý giải pháp','Mời inbox','Kết bạn','CTA']);
+    const allowedBinary = new Set(['Có','Không','Chưa rõ']);
+    const cfg=getAiConfig_();
+    const hasBusinessContext=!!String(cfg.businessContext||'').trim();
     const now = new Date();
 
     const valid=(analyses||[])
@@ -1494,22 +1502,58 @@ const RemoteApp = (() => {
 
     const minRow=Math.min(...valid.map(x=>x.row));
     const maxRow=Math.max(...valid.map(x=>x.row));
-    const values=sheet.getRange(minRow,1,maxRow-minRow+1,21).getValues();
+    const values=sheet.getRange(minRow,1,maxRow-minRow+1,26).getValues();
 
     valid.forEach(x=>{
       const a=x.a;
       const idx=x.row-minRow;
       const r=values[idx];
       const intent=allowedIntent.has(String(a.intent))?String(a.intent):'Thảo luận';
-      const classification=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
+      const suggestedClass=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
       const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
-      const score=Math.max(0,Math.min(100,Math.round(Number(a.score||0))));
+      const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
+      let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
+      if(!hasBusinessContext) productFit='Chưa rõ';
+
+      const needScore=clampScore_(a.need_score,0,25);
+      const fitScore=clampScore_(a.fit_score,0,25);
+      const actionScore=clampScore_(a.action_score,0,20);
+      const urgencyScore=clampScore_(a.urgency_score,0,15);
+      const reachScore=clampScore_(a.reachability_score,0,10);
+      const freshScore=clampScore_(a.freshness_score,0,5);
+      const componentsPresent=['need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score']
+        .some(k=>a[k]!==undefined&&a[k]!==null&&a[k]!=='');
+      const score=componentsPresent
+        ? needScore+fitScore+actionScore+urgencyScore+reachScore+freshScore
+        : clampScore_(a.score,0,100);
+
+      let gate='WATCH';
+      if(buyerRole==='Không' || productFit==='Không') gate='FAIL';
+      else if(buyerRole==='Có' && productFit==='Có' && score>=65) gate='PASS';
+
+      let classification=suggestedClass;
+      if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
+      else if(gate==='FAIL') classification=suggestedClass==='Nguồn hội thoại'?'Nguồn hội thoại':'Không phải KH';
+      else if(!['Nguồn hội thoại','Không phải KH'].includes(suggestedClass)) classification='Theo dõi';
+
       const days=Math.max(0,Math.min(30,Math.round(Number(a.follow_up_days||0))));
       const follow=days>0?new Date(now.getTime()+days*86400000):'';
-
       let status='Theo dõi';
-      if(classification==='Rất tiềm năng'||classification==='Tiềm năng') status='Đang xử lý';
-      if(classification==='Không phải KH'&&action==='Bỏ qua') status='Đóng';
+      if(gate==='PASS') status='Đang xử lý';
+      if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
+
+      const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
+      const gateReason=[
+        'Buyer='+buyerRole,
+        'Fit='+productFit,
+        'Need '+needScore+'/25',
+        'Fit '+fitScore+'/25',
+        'Action '+actionScore+'/20',
+        'Urgency '+urgencyScore+'/15',
+        'Reach '+reachScore+'/10',
+        'Fresh '+freshScore+'/5',
+        'Total='+score
+      ].join(' | ');
 
       r[8]=String(a.pain||'');
       r[9]=intent;
@@ -1520,9 +1564,14 @@ const RemoteApp = (() => {
       r[15]=action;
       r[16]=follow;
       r[19]=status;
+      r[21]=buyerRole;
+      r[22]=productFit;
+      r[23]=evidence;
+      r[24]=gate;
+      r[25]=gateReason;
     });
 
-    sheet.getRange(minRow,1,values.length,21).setValues(values);
+    sheet.getRange(minRow,1,values.length,26).setValues(values);
   }
 
   function normalizeAndDedupeCommentSheet_(sheet) {
