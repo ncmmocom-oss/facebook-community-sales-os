@@ -79,6 +79,8 @@
       <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR</button>
       <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG AUTO</button>
       <button class="retry" onclick="pollMonitoring()">↻ LÀM MỚI</button>
+      <button class="secondary" onclick="openSignalFeed()">📡 TÍN HIỆU</button>
+      <button class="dark" onclick="openLeadInbox()">🎯 LEAD INBOX</button>
     </div>
     <div id="monitorState" class="muted">Đang đọc Monitoring Overview...</div>
     <div id="duePreview" class="duepreview">Chưa có Due Queue.</div>
@@ -537,6 +539,21 @@
       command({__command:'GET_MONITORING_OVERVIEW'},renderMonitoring,e=>{
         document.getElementById('monitorState').textContent='Monitoring lỗi: '+(e.message||e);
       });
+    }
+
+    function openSignalFeed() {
+      setStatus('Đang rebuild TÍN HIỆU 7 ngày...');
+      command({__command:'REFRESH_SIGNAL_FEED'},r=>{
+        command({__command:'OPEN_SIGNAL_FEED'},()=>{
+          setStatus('✅ TÍN HIỆU: '+Number(r.groups||0)+' Group/ngày • '+Number(r.signals||0)+' candidate. Dùng dấu +/− bên trái để bung/thu Group.');
+        });
+      },e=>setStatus('Lỗi TÍN HIỆU: '+(e.message||e)));
+    }
+
+    function openLeadInbox() {
+      command({__command:'OPEN_LEAD_INBOX'},()=>{
+        setStatus('✅ Đã mở KHÁCH HÀNG TIỀM NĂNG — Lead Inbox.');
+      },e=>setStatus('Không mở được Lead Inbox: '+(e.message||e)));
     }
 
     function startMonitoringPolling() {
