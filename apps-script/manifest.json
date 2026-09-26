@@ -1,9 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.7-identity-fix.1",
+  "version": "1.8.7-identity-fix.2",
   "channel": "pilot",
   "updated_at": "2026-09-26",
   "notes": [
+    "P0 identity normalization fix.2: every API-driven Group scan with sourceRow now normalizes the exact QUET NHOM source row even when Facebook keeps the same numeric Group key.",
+    "resolvedScanGroupKey uses canonical fileGroupKey when available and falls back to the original sourceGroupKey; numeric-to-slug and numeric-to-numeric scans share the same source-row path.",
+    "The hotfix preserves target count, pagination/cursor logic, exact-batch AUTO AI attribution, Lead Qualification Hard Gate, and manual JSON fallback behavior.",
     "P0 identity/upsert hotfix: API Group scans now bind canonical vanity slug identity back to the exact QUET NHOM source row instead of appending a duplicate row when the input URL uses a numeric Group ID.",
     "Scan source metadata (source row, source URL, source key) is carried into import for API-driven scans; manual JSON import keeps the legacy fallback registration behavior.",
     "Source-row binding is fail-closed and preserves operator-selected target count, existing non-placeholder group name, formulas, pagination behavior, and Lead Qualification Hard Gate.",
