@@ -2931,7 +2931,8 @@ const RemoteApp = (() => {
     return {
       version:CFG.VERSION,
       refresh,
-      autoAnalyzeRequested:!!(aiCfg.autoAnalyze&&aiCfg.configured),
+      analysisMode:aiCfg.analysisMode||'manual',
+      autoAnalyzeRequested:!!(aiCfg.configured&&aiCfg.analysisMode==='auto_scan'),
       durationMs:Date.now()-started
     };
   }
