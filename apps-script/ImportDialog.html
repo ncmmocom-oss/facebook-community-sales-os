@@ -34,7 +34,7 @@
   <div class="box">
     <h3>1. Import JSON</h3>
     <p>Chọn file <b>posts*.json</b>, <b>comments*.json</b> hoặc posts JSON có comment lồng bên trong. Hệ thống tự đếm bản ghi quét, lọc trùng, lấy Media CDN và đưa dữ liệu mới lên đầu bảng.</p>
-    <input id="files" type="file" accept=".json,application/json" multiple>
+    <input id="files" type="file" accept=".json,application/json" multiple onchange="filesChanged()">
     <br>
     <button id="run" onclick="runImport()">IMPORT JSON</button>
     <button id="refresh" class="secondary" onclick="refreshData()">ĐỒNG BỘ SHEET (không import file)</button>
@@ -109,6 +109,15 @@
     };
 
     function setStatus(text) { document.getElementById('status').textContent = text; }
+
+    function filesChanged() {
+      const input = document.getElementById('files');
+      const n = input && input.files ? input.files.length : 0;
+      const btn = document.getElementById('run');
+      if (btn) btn.textContent = n ? ('IMPORT ' + n + ' FILE') : 'IMPORT JSON';
+      if (n) setStatus('Đã chọn ' + n + ' file. Bấm IMPORT ' + n + ' FILE để nạp dữ liệu.');
+    }
+
 
     function command(payload, ok, fail) {
       google.script.run
