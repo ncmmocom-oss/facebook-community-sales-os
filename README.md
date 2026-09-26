@@ -193,3 +193,36 @@ Nếu `sourceType = Bình luận`, AI:
 
 ### Acceptance
 Vì cấu trúc JSON comment của Social AIO có thể thay đổi theo exporter, cần test bằng **1 file comment JSON thực tế**. Parser V1.6.0 hỗ trợ các field phổ biến: `comment_id/id`, `post_id`, `author/actor/user/commenter`, `message/text/body`, `comment_url/permalink_url`, `replies/children`.
+
+
+## V1.7.0 - Daily Ops + Performance Hardening
+
+### Import telemetry
+Hai sheet mới:
+- `NHẬT KÝ IMPORT`: mỗi run/group ghi số record đọc, post/comment đọc, post/comment mới, duplicate, duration và lỗi.
+- `THỐNG KÊ NGÀY`: mỗi ngày/group ghi lượt cập nhật, tổng JSON đọc, post/comment quét, dữ liệu mới, max bài/lần, tổng dữ liệu đang lưu, KH mới và lần cập nhật cuối.
+
+`QUÉT NHÓM` có thêm Q:V: lượt cập nhật hôm nay, bản ghi lần cuối, bài quét lần cuối, bài/comment mới hôm nay và KH mới hôm nay.
+
+### Newest-first
+Dữ liệu mới được insert lên đầu:
+- NHẬP JSON: từ row 5
+- BÌNH LUẬN: từ row 2
+- CƠ HỘI: từ row 2
+
+### Comment intake
+Posts JSON được scan cả nested comments/replies. Parent post có thể trùng nhưng comment mới vẫn được import. Parser hỗ trợ các container key có tên chứa comment/reply/children và các wrapper `data` / `items`.
+
+### Media
+Runtime thu Media CDN URL từ attachment/image/video/thumbnail/playable URL. Chỉ lưu URL; không dùng `IMAGE()` hàng loạt để tránh làm chậm Sheet.
+
+### Consistency audit
+Trong Import Dialog có nút `KIỂM TRA ĐỒNG NHẤT` kiểm tra:
+raw post ↔ opportunity, comment ↔ opportunity, group registry và lead evidence.
+
+### Token saver + speed
+- AI evidence: post tối đa khoảng 2600 ký tự; comment khoảng 1800 ký tự.
+- AI batch: 25 record/batch.
+- AI write: một batch Sheet write thay vì nhiều setValue theo từng dòng.
+- Normal import/AI dùng FAST refresh; full dedupe/remap chỉ chạy khi người dùng bấm Đồng bộ Sheet.
+- Row height cố định + CLIP để content dài không phá layout.
