@@ -924,6 +924,18 @@ const RemoteApp = (() => {
     } catch (_) {}
   }
 
+  function compressEvidenceForAi_(content, sourceType) {
+    let s = String(content || '').replace(/\r/g,'').replace(/\n{3,}/g,'\n\n').trim();
+    const type = String(sourceType || '');
+    const max = type === 'Bình luận' ? 1800 : 2600;
+    if (s.length <= max) return s;
+
+    // Preserve the beginning and the closing part where CTA/contact/requirements often live.
+    const head = Math.floor(max * 0.75);
+    const tail = max - head - 24;
+    return s.slice(0,head) + '\n...[rút gọn]...\n' + s.slice(-tail);
+  }
+
   function analyzeNewPosts_(options) {
     const silent = options && options.silent;
     const cfg = getAiConfig_();
@@ -952,12 +964,13 @@ const RemoteApp = (() => {
         const already = [r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
         const status = String(r[19] || '').trim();
         if (!content || already || status === 'Đóng') return;
+        const sourceType = String(r[3] || 'Bài viết');
         candidates.push({
           rowNumber: i + 2,
           group: String(r[4] || ''),
           author: String(r[5] || ''),
-          content: content.slice(0, 5000),
-          sourceType: String(r[3] || 'Bài viết'),
+          content: compressEvidenceForAi_(content, sourceType),
+          sourceType,
           sourceUrl: String(r[2] || ''),
           engagement: String(r[18] || ''),
           postDate: r[0] instanceof Date
@@ -968,7 +981,7 @@ const RemoteApp = (() => {
 
       const selected = candidates.slice(0, cfg.maxRows);
       const total = selected.length;
-      const batchSize = 20;
+      const batchSize = 25;
       const totalBatches = Math.ceil(total / batchSize);
 
       if (!selected.length) {
@@ -1045,7 +1058,7 @@ const RemoteApp = (() => {
         }
       }
 
-      const refresh = refreshCurrentData({ silent: true });
+      const refresh = refreshCurrentData({ silent:true, fast:true });
       const remaining = Math.max(0, candidates.length - analyzed);
       const actualModel = cfg.provider === 'gemini'
         ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
@@ -1347,33 +1360,42 @@ const RemoteApp = (() => {
     const allowedAction = new Set(['Bỏ qua','Theo dõi','Comment giá trị','Hỏi chẩn đoán','Tạo nhu cầu','Nối tiếp hội thoại','Xử lý phản đối','Gợi ý giải pháp','Mời inbox','Kết bạn','CTA']);
     const now = new Date();
 
-    analyses.forEach(a => {
-      const row = Number(a.row_number || 0);
-      if (row < 2 || row > sheet.getLastRow()) return;
+    const valid=(analyses||[])
+      .map(a=>({a,row:Number(a.row_number||0)}))
+      .filter(x=>x.row>=2&&x.row<=sheet.getLastRow());
+    if(!valid.length) return;
 
-      const intent = allowedIntent.has(String(a.intent)) ? String(a.intent) : 'Thảo luận';
-      const classification = allowedClass.has(String(a.classification)) ? String(a.classification) : 'Theo dõi';
-      const action = allowedAction.has(String(a.next_action)) ? String(a.next_action) : 'Theo dõi';
-      const score = Math.max(0, Math.min(100, Math.round(Number(a.score || 0))));
-      const days = Math.max(0, Math.min(30, Math.round(Number(a.follow_up_days || 0))));
-      const follow = days > 0 ? new Date(now.getTime() + days * 86400000) : '';
+    const minRow=Math.min(...valid.map(x=>x.row));
+    const maxRow=Math.max(...valid.map(x=>x.row));
+    const values=sheet.getRange(minRow,1,maxRow-minRow+1,21).getValues();
 
-      let status = 'Theo dõi';
-      if (classification === 'Rất tiềm năng' || classification === 'Tiềm năng') status = 'Đang xử lý';
-      if (classification === 'Không phải KH' && action === 'Bỏ qua') status = 'Đóng';
+    valid.forEach(x=>{
+      const a=x.a;
+      const idx=x.row-minRow;
+      const r=values[idx];
+      const intent=allowedIntent.has(String(a.intent))?String(a.intent):'Thảo luận';
+      const classification=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
+      const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
+      const score=Math.max(0,Math.min(100,Math.round(Number(a.score||0))));
+      const days=Math.max(0,Math.min(30,Math.round(Number(a.follow_up_days||0))));
+      const follow=days>0?new Date(now.getTime()+days*86400000):'';
 
-      sheet.getRange(row, 9, 1, 6).setValues([[
-        String(a.pain || ''),
-        intent,
-        score,
-        classification,
-        String(a.value_solution || ''),
-        String(a.suggested_comment || '')
-      ]]);
-      sheet.getRange(row, 16).setValue(action);
-      sheet.getRange(row, 17).setValue(follow);
-      sheet.getRange(row, 20).setValue(status);
+      let status='Theo dõi';
+      if(classification==='Rất tiềm năng'||classification==='Tiềm năng') status='Đang xử lý';
+      if(classification==='Không phải KH'&&action==='Bỏ qua') status='Đóng';
+
+      r[8]=String(a.pain||'');
+      r[9]=intent;
+      r[10]=score;
+      r[11]=classification;
+      r[12]=String(a.value_solution||'');
+      r[13]=String(a.suggested_comment||'');
+      r[15]=action;
+      r[16]=follow;
+      r[19]=status;
     });
+
+    sheet.getRange(minRow,1,values.length,21).setValues(values);
   }
 
   function normalizeAndDedupeCommentSheet_(sheet) {
