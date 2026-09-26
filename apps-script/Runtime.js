@@ -3140,6 +3140,11 @@ const RemoteApp = (() => {
     const defaults=defaultWorkerPool_();
     const bySlot={};
     (Array.isArray(pool)?pool:[]).forEach(w=>{if(w&&w.slot)bySlot[String(w.slot).toUpperCase()]=w;});
+    // Seamless migration: the already-working single CLIENT_ID becomes W1 automatically.
+    if(!raw){
+      const legacy=String(props.getProperty(CFG.BRIDGE_CLIENT_ID_KEY)||'').trim();
+      if(legacy) bySlot.W1={slot:'W1',label:'FB-01',enabled:true,clientId:legacy};
+    }
     return defaults.map(d=>{
       const x=bySlot[d.slot]||{};
       return Object.assign({},d,x,{
