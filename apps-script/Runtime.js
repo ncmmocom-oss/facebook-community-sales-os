@@ -2957,8 +2957,11 @@ const RemoteApp = (() => {
     SpreadsheetApp.flush();
 
     const started=Date.now();
+    let healthWorkerSlot='';
     try {
-      const result=scanGroupApiBridge_(groupUrl,target,groupKey,'',false,row);
+      const relayClient=getBridgeClientId_();
+      healthWorkerSlot=findWorkerSlotByClientId_(relayClient);
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey,relayClient,false,row);
       const imported=result.imported||{};
       const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
 
@@ -2986,19 +2989,24 @@ const RemoteApp = (() => {
 
       setGroupRowStatus_(sheet,row,status,progress,note);
       clearGroupStop_(groupKey);
+      const health=healthWorkerSlot?recordWorkerJobHealth_(healthWorkerSlot,true,Date.now()-started,''):null;
       SpreadsheetApp.flush();
-      return Object.assign({},result,{row,name,groupKey,status,targetCount:target,stopped,incomplete:status==='THIẾU',progress,note});
+      return Object.assign({},result,{
+        row,name,groupKey,status,targetCount:target,stopped,incomplete:status==='THIẾU',progress,note,
+        workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:''
+      });
     } catch(err) {
       const msg=String(err.message||err);
+      const health=healthWorkerSlot?recordWorkerJobHealth_(healthWorkerSlot,false,Date.now()-started,msg):null;
       setGroupRowStatus_(sheet,row,'LỖI','0/'+target+' bài',msg);
       SpreadsheetApp.flush();
       return {
         ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
+        workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:'',
         error:msg,durationMs:Date.now()-started
       };
     }
   }
-
   function getCheckedGroupRows_() {
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const last=sheet.getLastRow();
@@ -3055,13 +3063,19 @@ const RemoteApp = (() => {
     };
   }
 
+  function findWorkerSlotByClientId_(clientId) {
+    const id=String(clientId||'').trim();
+    if(!id) return '';
+    const w=getWorkerPoolRaw_().find(x=>x.enabled&&x.clientId===id);
+    return w ? w.slot : '';
+  }
+
   function getWorkerBySlot_(slot) {
     const s=String(slot||'').trim().toUpperCase();
     const w=getWorkerPoolRaw_().find(x=>x.slot===s);
     if(!w || !w.enabled || !w.clientId) throw new Error('Worker '+s+' chưa được cấu hình/enable.');
     return w;
   }
-
   function runWorkerJob_(command) {
     ensureV16Sheets_(false);
     const row=Number(command.row||0);
