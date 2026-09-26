@@ -1,13 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.4-pilot",
+  "version": "1.8.4-pilot.1",
   "channel": "poc",
   "updated_at": "2026-09-26",
   "notes": [
-    "Pilot mode uses only W1 by default. W2/W3 remain implemented but disabled/collapsed until W1 production behavior is accepted.",
-    "Existing working CLIENT_ID migrates automatically into W1.",
-    "Operator workflow remains: select Groups -> choose 10/15/20/25 -> QUÉT.",
-    "W1 still uses target-aware cursor pagination, dedupe, status/progress, stop and retry.",
-    "When later enabling W2/W3, no Sheet schema or operator workflow change is required."
+    "Hotfix: clears legacy V1.8.1 data validation from QUÉT NHÓM X:Z before writing runtime status.",
+    "Hotfix: a fully failed scan no longer proceeds to AI or reports QUÉT + AI XONG.",
+    "Live Sheet operational status was reset to CHỜ while preserving the two selected Groups for retry.",
+    "Pilot remains W1-only; W2/W3 stay disabled for later scale-out."
   ]
 }
