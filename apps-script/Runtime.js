@@ -438,8 +438,9 @@ const RemoteApp = (() => {
 
     const leadNow={};
     const leadNew={};
-    const leadRows=leadSheet.getLastRow()>=2 ? leadSheet.getRange(2,1,leadSheet.getLastRow()-1,17).getValues() : [];
+    const leadRows=leadSheet.getLastRow()>=2 ? leadSheet.getRange(2,1,leadSheet.getLastRow()-1,21).getValues() : [];
     leadRows.forEach(r=>{
+      if(String(r[19]||'').trim()!=='PASS') return;
       const name=String(r[2]||'').trim();
       if(!name) return;
       leadNow[name]=(leadNow[name]||0)+1;
