@@ -1823,13 +1823,17 @@ const RemoteApp = (() => {
     const leadSheet = mustSheet_(ss, CFG.LEAD_SHEET);
 
     const oppLast = oppSheet.getLastRow();
-    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,21).getValues() : [];
+    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,26).getValues() : [];
     const existing = loadExistingLeadState_(leadSheet);
     const grouped = {};
 
     opp.forEach(r => {
+      const gate=String(r[24]||'').trim();
+      if(gate!=='PASS') return;
+
       const classification = String(r[11] || '').trim();
       if (classification !== 'Rất tiềm năng' && classification !== 'Tiềm năng') return;
+      if(String(r[21]||'')!=='Có' || String(r[22]||'')!=='Có') return;
 
       const sourceUrl = normalizeUrl_(r[2] || '');
       const fbUrl = normalizeFacebookProfileUrl_(r[6] || '');
@@ -1845,8 +1849,10 @@ const RemoteApp = (() => {
       }
     });
 
+    const keys=Object.keys(grouped);
+    const newCount=keys.filter(key=>!existing[key]).length;
     const now = new Date();
-    const output = Object.keys(grouped).map(key => {
+    const output = keys.map(key => {
       const g = grouped[key];
       const r = g.best;
       const old = existing[key] || {};
@@ -1854,21 +1860,22 @@ const RemoteApp = (() => {
         r[5] || '', r[6] || '', r[4] || '', r[3] || '', r[2] || '', r[7] || '', r[8] || '', r[9] || '',
         Number(r[10] || 0), r[11] || '', g.count,
         old.lastAction || r[14] || '', old.nextAction || r[15] || '', old.followUp || r[16] || '',
-        old.conversion || r[17] || 'Chưa có', old.note || '', old.firstLeadAt || now
+        old.conversion || r[17] || 'Chưa có', old.note || '', old.firstLeadAt || now,
+        r[21] || '', r[22] || '', r[24] || '', r[23] || ''
       ];
     }).sort((a,b)=>Number(b[8]||0)-Number(a[8]||0));
 
     const oldLast = leadSheet.getLastRow();
-    if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,17).clearContent();
+    if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,21).clearContent();
     if (output.length) {
-      leadSheet.getRange(2,1,output.length,17).setValues(output);
+      leadSheet.getRange(2,1,output.length,21).setValues(output);
       leadSheet.setRowHeights(2,output.length,42);
-      leadSheet.getRange(2,1,output.length,17).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+      leadSheet.getRange(2,1,output.length,21).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     }
     SpreadsheetApp.flush();
 
-    if (!silent) SpreadsheetApp.getUi().alert(`Đã đồng bộ ${output.length} khách hàng tiềm năng.`);
-    return { count:output.length };
+    if (!silent) SpreadsheetApp.getUi().alert(`Đã đồng bộ ${output.length} KH PASS Hard Gate | Mới ${newCount}.`);
+    return { count:output.length, newCount };
   }
 
   function refreshGroupSummary_() {
@@ -1892,7 +1899,7 @@ const RemoteApp = (() => {
     const scanLast = scanSheet.getLastRow();
     const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getValues() : [];
     const oppLast = oppSheet.getLastRow();
-    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 20).getValues() : [];
+    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 26).getValues() : [];
     const byGroup = {};
     oppRows.forEach(r => {
       const g = String(r[4] || '').trim();
@@ -1909,7 +1916,7 @@ const RemoteApp = (() => {
       const prev = old['NAME|' + name] || old['URL|' + normalizeUrl_(url)] || [];
       const list = byGroup[name] || [];
       const leads = list
-        .filter(r => ['Rất tiềm năng','Tiềm năng'].includes(String(r[11] || '').trim()))
+        .filter(r => String(r[24] || '').trim()==='PASS')
         .sort((a,b) => Number(b[10] || 0) - Number(a[10] || 0));
       const top = leads.slice(0, 5).map(r => `${r[5] || '(ẩn danh)'} (${Number(r[10] || 0)})`).join('\n');
       const sold = list.filter(r => String(r[17] || '').trim() === 'Đã bán').length;
