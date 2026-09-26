@@ -1,17 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.4-poc",
+  "version": "1.8.4-pilot",
   "channel": "poc",
   "updated_at": "2026-09-26",
   "notes": [
-    "Adds a 3-slot Social AIO Worker Pool (W1/W2/W3), each with its own Client ID, label, enabled state, profile identity, health and latency.",
-    "The existing working single Client ID migrates automatically into W1; W2/W3 can be added without re-entering W1.",
-    "Worker settings are stored only in Apps Script Document Properties. Client IDs are masked in the UI and never written to Sheet/GitHub.",
-    "TEST 3 WORKER verifies Social AIO version/profile and records latency for smart dispatch.",
-    "Selected Groups are planned across tested-online workers with load balancing. Column Profile can optionally pin a Group to W1/W2/W3, worker label, or returned Facebook profile; blank/AUTO remains automatic.",
-    "The Control Center launches up to three independent google.script.run worker queues concurrently. Each Worker processes its own queue sequentially.",
-    "API fetches run concurrently; Sheet dedupe/write is serialized with DocumentLock to avoid duplicate/race corruption.",
-    "Worker imports skip repeated full refresh; one FINALIZE pass refreshes leads/group/timeline after all workers finish, then AI can run once for the batch.",
-    "Operator UX remains tick Group -> choose 10/15/20/25 -> QUÉT. Worker implementation stays hidden under Advanced Settings."
+    "Pilot mode uses only W1 by default. W2/W3 remain implemented but disabled/collapsed until W1 production behavior is accepted.",
+    "Existing working CLIENT_ID migrates automatically into W1.",
+    "Operator workflow remains: select Groups -> choose 10/15/20/25 -> QUÉT.",
+    "W1 still uses target-aware cursor pagination, dedupe, status/progress, stop and retry.",
+    "When later enabling W2/W3, no Sheet schema or operator workflow change is required."
   ]
 }
