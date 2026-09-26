@@ -1,13 +1,16 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.6-pagination-fix",
+  "version": "1.8.7-lead-gate",
   "channel": "pilot",
   "updated_at": "2026-09-26",
   "notes": [
-    "Root cause confirmed from NHẬT KÝ API: get_list_fb_group_posts returns a top-level result array whose post item carries a cursor.",
-    "The previous cursor walker disabled generic cursor lookup inside arrays, so scan stopped after page 1.",
-    "Pagination now scans result arrays from the last item backward and allows the item's cursor to drive the next request.",
-    "Diagnostic evidence: page 1 returned 1 post + cursor; PAGE2 probe returned 3 posts, proving the API can paginate.",
-    "Full Group URL remains the supported input for vanity-slug groups; passing only hxx.gang was rejected by Social AIO in the live test."
+    "Lead Qualification Hard Gate separates need detection from actual sales qualification.",
+    "PASS requires Buyer Role=Co, Product Fit=Co and deterministic score >=65; FAIL/WATCH never enter KH PASS counters.",
+    "Score components: Need 25 + Product Fit 25 + Action 20 + Urgency 15 + Reachability 10 + Freshness 5.",
+    "Per-Group AI Context / Offer in QUET NHOM is the primary Product Fit context; global Business Context is fallback. With no context, Product Fit is forced to Chua ro.",
+    "AI mode is explicit: AUTO analyzes only pending sources from Groups just scanned; MANUAL lets the operator choose checked Groups, selected CO HOI rows, all waiting sources, or legacy requalification.",
+    "Manual JSON import is fallback ingestion and does not auto-run AI.",
+    "KHACH HANG TIEM NANG preserves old rows as LEGACY until they are explicitly requalified; PASS metrics exclude LEGACY.",
+    "Operator menu bootstrap is simplified to 1 Settings, 2 Scan Group, 3 AI Analysis, 4 Refresh Data; diagnostics/import/dedupe/version are moved under tools/system."
   ]
 }
