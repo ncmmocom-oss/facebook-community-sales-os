@@ -221,6 +221,7 @@ const RemoteApp = (() => {
       imported: postImported + commentImported,
       postImported,
       commentImported,
+      newSourceIds: oppRows.map(r=>String(r[1]||'').trim()).filter(Boolean),
       duplicates: duplicateCount,
       durationMs: Date.now() - startedMs,
       workerFast,
@@ -1017,6 +1018,9 @@ const RemoteApp = (() => {
       const end=ar.getLastRow();
       options.rowNumbers=[];
       for(let r=start;r<=end;r++) options.rowNumbers.push(r);
+    } else if(scope==='source_ids') {
+      options.sourceIds=(command.sourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean);
+      if(!options.sourceIds.length) throw new Error('Không có Source ID mới để AI phân tích.');
     } else if(scope==='legacy_gate') {
       options.scope='legacy_gate';
     } else {
@@ -1142,6 +1146,7 @@ const RemoteApp = (() => {
       const scope=String((options&&options.scope)||'all_waiting');
       const groupSet=new Set(((options&&options.groupNames)||[]).map(x=>String(x||'').trim()).filter(Boolean));
       const rowSet=new Set(((options&&options.rowNumbers)||[]).map(x=>Number(x||0)).filter(x=>x>=2));
+      const sourceSet=new Set(((options&&options.sourceIds)||[]).map(x=>String(x||'').trim()).filter(Boolean));
       const rows = sheet.getRange(2, 1, last - 1, 26).getValues();
       const contextMap=loadGroupAiContextMap_();
       const candidates = [];
@@ -1157,6 +1162,7 @@ const RemoteApp = (() => {
         if(!content || status==='Đóng') return;
         if(scope==='groups' && !groupSet.has(group)) return;
         if(scope==='selected_rows' && !rowSet.has(rowNumber)) return;
+        if(scope==='source_ids' && !sourceSet.has(String(r[1]||'').trim())) return;
         if(scope==='legacy_gate') {
           if(!priorAnalyzed || gate) return;
         } else if(scope==='selected_rows') {
