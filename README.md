@@ -298,3 +298,31 @@ V1.8.1-POC tái sử dụng global wrapper `importJsonFiles` hiện có để l�
 ### Comment URL guard
 
 `get_list_fb_comment` yêu cầu URL post/permalink cụ thể. Nếu nhập URL root của Group, runtime chặn trước và báo rõ thay vì để Social AIO trả `Cannot get post ID from URL`.
+
+
+## V1.8.2-POC — Triggerless Google Sheets Control Center
+
+V1.8.1 attempted to create an installable onEdit trigger at runtime. With the production manifest using explicit narrow scopes, `ScriptApp.getProjectTriggers()` requires the additional `script.scriptapp` OAuth scope and therefore failed before the trigger could be created.
+
+V1.8.2 removes that dependency entirely.
+
+### Operator flow
+
+- Open the modeless Social AIO Control Center.
+- Single Group: click any cell on the Group row in **QUÉT NHÓM** → click **QUÉT DÒNG ĐANG CHỌN**.
+- Multi Group: tick **Chọn API** for multiple rows → click **QUÉT CÁC GROUP ĐÃ CHỌN**.
+- Stop requests are issued from the Control Center and take effect after the current relay/API call returns.
+
+### Sheet controls
+
+W:Z:
+- **W Chọn API**
+- **X API trạng thái**
+- **Y API chi tiết**
+- **Z API Run**
+
+No onEdit trigger, no `ScriptApp`, no extra Apps Script OAuth scope.
+
+### Why
+
+Long-running network work should not be tied directly to a cell edit. The modeless sidebar/dialog gives explicit operator intent, visible progress and better error handling while keeping the narrow existing scopes: current spreadsheet, container UI and external requests.
