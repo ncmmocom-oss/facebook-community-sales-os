@@ -33,11 +33,13 @@
 
   <div class="box">
     <h3>1. Import JSON</h3>
-    <p>Chọn một hoặc nhiều file <b>posts*.json</b> hoặc <b>comments*.json</b>. Hệ thống tự nhận diện loại dữ liệu, lọc trùng, map Group và đưa cả bài viết lẫn bình luận vào CƠ HỘI.</p>
+    <p>Chọn file <b>posts*.json</b>, <b>comments*.json</b> hoặc posts JSON có comment lồng bên trong. Hệ thống tự đếm bản ghi quét, lọc trùng, lấy Media CDN và đưa dữ liệu mới lên đầu bảng.</p>
     <input id="files" type="file" accept=".json,application/json" multiple>
     <br>
     <button id="run" onclick="runImport()">IMPORT JSON</button>
-    <button id="refresh" class="secondary" onclick="refreshData()">CẬP NHẬT DỮ LIỆU</button>
+    <button id="refresh" class="secondary" onclick="refreshData()">ĐỒNG BỘ SHEET (không import file)</button>
+    <button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button>
+    <div class="muted">Nếu đã chọn file JSON, phải bấm <b>IMPORT JSON</b>. Nút Đồng bộ Sheet không đọc file đã chọn.</div>
   </div>
 
   <div class="box ai">
@@ -202,8 +204,19 @@
           .withSuccessHandler(result => {
             const err = result.errors && result.errors.length ? '\nLỗi:\n- ' + result.errors.join('\n- ') : '';
             const ai = result.ai ? '\nAI tự phân tích: ' + result.ai.analyzed + ' nguồn | còn ' + result.ai.remaining : '';
-            const auto = result.refresh ? '\nĐã tự cập nhật dữ liệu: Có\nRemap group: ' + (result.refresh.remappedGroups || 0) + '\nComment: ' + (result.refresh.comments || 0) + '\nTimeline: ' + (result.refresh.timeline || 0) + '\nKH tiềm năng: ' + (result.refresh.leads || 0) + '\nHàng điều phối: ' + (result.refresh.queue || 0) : '';
-            setStatus('XONG - V' + result.version + '\nFile: ' + result.files + '\nĐã đọc: ' + result.scanned + ' nguồn' + '\nPost mới: ' + (result.postImported || 0) + '\nComment mới: ' + (result.commentImported || 0) + '\nTổng mới: ' + result.imported + '\nTrùng bỏ qua: ' + result.duplicates + ai + auto + err);
+            const auto = result.refresh ? '\nĐã tự cập nhật dữ liệu: Có\nComment đồng bộ: ' + (result.refresh.comments || 0) + '\nTimeline: ' + (result.refresh.timeline || 0) + '\nKH tiềm năng: ' + (result.refresh.leads || 0) + '\nHàng điều phối: ' + (result.refresh.queue || 0) + '\nDòng thống kê ngày: ' + (result.refresh.dailyStats || 0) : '';
+            setStatus(
+              'XONG - V' + result.version +
+              '\nRun: ' + (result.runId || '-') +
+              '\nFile: ' + result.files +
+              '\nPost đọc: ' + (result.postScanned || 0) +
+              '\nComment đọc: ' + (result.commentScanned || 0) +
+              '\nPost mới: ' + (result.postImported || 0) +
+              '\nComment mới: ' + (result.commentImported || 0) +
+              '\nTrùng bỏ qua: ' + result.duplicates +
+              '\nThời gian import: ' + Math.round((result.durationMs || 0)/100)/10 + 's' +
+              ai + auto + err
+            );
             btn.disabled = false;
             pollProgressOnce();
             stopProgressPolling();
@@ -217,16 +230,49 @@
     }
 
     function refreshData() {
+      const input = document.getElementById('files');
+      if (input && input.files && input.files.length) {
+        setStatus('⚠️ Bạn đang chọn ' + input.files.length + ' file JSON. Nút ĐỒNG BỘ SHEET không import file. Hãy bấm IMPORT JSON.');
+        return;
+      }
       const btn = document.getElementById('refresh');
       btn.disabled = true;
-      setStatus('Đang cập nhật toàn bộ dữ liệu hiện tại...');
+      setStatus('Đang đồng bộ và kiểm tra lại các Sheet...');
       google.script.run
         .withSuccessHandler(r => {
-          setStatus('ĐÃ CẬP NHẬT - V' + r.version + '\nPost ID sửa: ' + r.repairedIds + '\nDòng trùng xóa: ' + ((r.rawRemoved||0) + (r.commentRemoved||0) + (r.oppRemoved||0)) + '\nRemap group: ' + r.remappedGroups + '\nComment đồng bộ: ' + (r.comments||0) + '\nTimeline: ' + (r.timeline||0) + '\nKH tiềm năng: ' + r.leads + '\nGroup cập nhật: ' + r.groups + '\nHàng điều phối: ' + r.queue);
+          setStatus(
+            'ĐÃ ĐỒNG BỘ - V' + r.version +
+            '\nChế độ: ' + (r.fast ? 'FAST' : 'FULL') +
+            '\nDòng trùng xóa: ' + ((r.rawRemoved||0) + (r.commentRemoved||0) + (r.oppRemoved||0)) +
+            '\nComment: ' + (r.comments||0) +
+            '\nTimeline: ' + (r.timeline||0) +
+            '\nKH tiềm năng: ' + (r.leads||0) +
+            '\nGroup: ' + (r.groups||0) +
+            '\nĐiều phối: ' + (r.queue||0) +
+            '\nThống kê ngày: ' + (r.dailyStats||0)
+          );
           btn.disabled = false;
         })
         .withFailureHandler(e => { setStatus('Lỗi cập nhật: ' + (e.message || e)); btn.disabled = false; })
         .refreshCurrentData();
+    }
+
+    function auditConsistency() {
+      setStatus('Đang kiểm tra tính đồng nhất giữa các Sheet...');
+      command({__command:'AUDIT_CONSISTENCY'}, r => {
+        const state = r.ok ? '✅ ĐỒNG NHẤT' : '⚠️ CÓ CHÊNH LỆCH';
+        setStatus(
+          state + ' - V' + r.version +
+          '\nPost raw/CƠ HỘI: ' + r.rawPosts + '/' + r.opportunityPosts +
+          '\nComment raw/CƠ HỘI: ' + r.commentRows + '/' + r.opportunityComments +
+          '\nRaw thiếu opportunity: ' + r.rawWithoutOpportunity +
+          '\nOpportunity post thiếu raw: ' + r.opportunityPostWithoutRaw +
+          '\nComment thiếu opportunity: ' + r.commentsWithoutOpportunity +
+          '\nOpportunity comment thiếu raw: ' + r.opportunityCommentsWithoutRaw +
+          '\nGroup lệch registry: ' + r.unknownGroups +
+          '\nKH thiếu evidence: ' + r.leadsWithoutEvidence
+        );
+      });
     }
 
     function saveAiConfig() {
@@ -258,7 +304,7 @@
     }
 
     function analyzeNew() {
-      setStatus('AI đang phân tích các bài Chờ AI...');
+      setStatus('AI đang phân tích các nguồn Chờ AI...');
       startProgressPolling();
       command({__command:'ANALYZE_NEW'}, r => {
         const err = r.errors && r.errors.length ? '\nLỗi:\n- ' + r.errors.join('\n- ') : '';
