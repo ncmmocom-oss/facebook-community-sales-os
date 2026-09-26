@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.7-identity-fix.1',
+    VERSION: '1.8.7-identity-fix.2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -43,7 +43,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -138,20 +138,23 @@ const RemoteApp = (() => {
         const fileGroupKeys = [...new Set(posts.map(p => extractGroupKey_(p && (p.url || p.permalink_url))).filter(Boolean))];
         const fileGroupKey = fileGroupKeys.length === 1 ? fileGroupKeys[0] : '';
 
-        // API scans know the exact QUÉT NHÓM source row. If Facebook resolves a
-        // numeric Group URL to a canonical vanity slug, bind that canonical
-        // identity back to the same source row instead of appending a new row.
+        // API scans know the exact QUÉT NHÓM source row. Always normalize that
+        // row before importing posts, even when Facebook keeps the same numeric
+        // Group key. If Facebook resolves numeric -> vanity slug, the same bind
+        // also canonicalizes the identity without appending a duplicate row.
         // Manual JSON import has no source-row metadata and keeps the legacy
         // ensureGroupRegistered_ fallback below.
-        if (fileGroupKey && !groupMap[fileGroupKey] && sourceGroupRow) {
+        const resolvedScanGroupKey = fileGroupKey || sourceGroupKey;
+        if (sourceGroupRow && resolvedScanGroupKey) {
           const bound = bindCanonicalGroupToSourceRow_(groupSheet, {
             row: sourceGroupRow,
             sourceUrl: sourceGroupUrl,
             sourceKey: sourceGroupKey,
-            canonicalKey: fileGroupKey
+            canonicalKey: resolvedScanGroupKey
           });
           if (bound) {
-            groupMap[fileGroupKey] = bound;
+            groupMap[resolvedScanGroupKey] = bound;
+            if (fileGroupKey) groupMap[fileGroupKey] = bound;
             if (sourceGroupKey) groupMap[sourceGroupKey] = bound;
             const sourceUrlKey = extractGroupKey_(sourceGroupUrl);
             if (sourceUrlKey) groupMap[sourceUrlKey] = bound;
