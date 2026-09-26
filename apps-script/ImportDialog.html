@@ -741,12 +741,13 @@
           }
 
           if(fin.autoAnalyzeRequested && newPosts>0){
-            const autoGroups=[...new Set(ctx.results
-              .filter(r=>r&&r.ok&&r.name)
-              .map(r=>String(r.name)))];
-            setStatus(baseStatus+'\nAI AUTO: chỉ phân tích dữ liệu mới của '+autoGroups.length+' Group vừa quét...');
+            const autoSourceIds=[...new Set(ctx.results
+              .flatMap(r=>(r&&r.imported&&r.imported.newSourceIds)||[])
+              .map(x=>String(x||'').trim())
+              .filter(Boolean))];
+            setStatus(baseStatus+'\nAI AUTO: chỉ phân tích '+autoSourceIds.length+' nguồn MỚI của chính lần quét này...');
             startProgressPolling();
-            command({__command:'ANALYZE_SCOPE',scope:'groups',groupNames:autoGroups}, r=>{
+            command({__command:'ANALYZE_SCOPE',scope:'source_ids',sourceIds:autoSourceIds}, r=>{
               setStatus(
                 baseStatus+
                 '\nAI đã phân tích: '+r.analyzed+
