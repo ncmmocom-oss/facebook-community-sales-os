@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.0-poc',
+    VERSION: '1.8.1-poc',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -14,6 +14,9 @@ const RemoteApp = (() => {
     DAILY_STATS_SHEET: 'THỐNG KÊ NGÀY',
     BRIDGE_SERVER: 'https://api.fbaio.org',
     BRIDGE_CLIENT_ID_KEY: 'SOCIAL_AIO_BRIDGE_CLIENT_ID',
+    BRIDGE_STOP_ALL_KEY: 'SOCIAL_AIO_BRIDGE_STOP_ALL',
+    BRIDGE_STOP_PREFIX: 'SOCIAL_AIO_BRIDGE_STOP_',
+    GROUP_CONTROL_START_COL: 23,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -37,18 +40,25 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
   function showImportDialog() {
+    ensureV16Sheets_(true);
+    ensureBridgeEditTrigger_();
     const html = HtmlService.createHtmlOutput(getRemoteHtml_())
       .setWidth(680)
-      .setHeight(720);
-    SpreadsheetApp.getUi().showModalDialog(html, 'Import JSON từ Social AIO');
+      .setHeight(760);
+    SpreadsheetApp.getUi().showModelessDialog(html, 'Social AIO Control Center');
   }
 
   function importJsonFiles(files) {
+    // Installable onEdit trigger reuses the existing global importJsonFiles wrapper.
+    // Edit events are handled here before normal JSON-import logic.
+    if (files && !Array.isArray(files) && files.range && files.source) {
+      return handleBridgeSheetEdit_(files);
+    }
     if (Array.isArray(files) && files.length === 1 && files[0] && files[0].__command) {
       return handleUiCommand_(files[0]);
     }
@@ -817,11 +827,12 @@ const RemoteApp = (() => {
 
     const scan = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
     if (scan) {
-      if (scan.getMaxColumns() < 22) scan.insertColumnsAfter(scan.getMaxColumns(),22-scan.getMaxColumns());
+      if (scan.getMaxColumns() < 26) scan.insertColumnsAfter(scan.getMaxColumns(),26-scan.getMaxColumns());
       scan.getRange(1,17,1,6).setValues([[
         'Lượt cập nhật hôm nay','Bản ghi lần cuối','Bài quét lần cuối',
         'Bài mới hôm nay','Comment mới hôm nay','KH mới hôm nay'
       ]]);
+      setupBridgeControlColumns_(scan);
     }
     props.setProperty(schemaKey, CFG.VERSION);
   }
@@ -839,6 +850,11 @@ const RemoteApp = (() => {
     if (name === 'TEST_BRIDGE') return testApiBridge_();
     if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl);
     if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
+    if (name === 'GET_GROUP_SCAN_CONTROL') return getGroupScanControlState_();
+    if (name === 'RUN_CHECKED_GROUPS') return scanCheckedGroupsApiBridge_();
+    if (name === 'STOP_CHECKED_GROUPS') return stopCheckedGroupsApiBridge_();
+    if (name === 'CLEAR_CHECKED_GROUPS') return clearCheckedGroups_();
+    if (name === 'SETUP_GROUP_CONTROLS') return setupGroupScanControls_();
     throw new Error('Lệnh giao diện không được hỗ trợ: ' + name);
   }
 
@@ -2300,6 +2316,9 @@ const RemoteApp = (() => {
   function fetchCommentsApiBridge_(postUrl) {
     postUrl=String(postUrl || '').trim();
     if(!postUrl) throw new Error('Hãy nhập URL bài Facebook.');
+    if (/facebook\.com\/groups\/[^\/?#]+\/?(?:[?#].*)?$/i.test(postUrl)) {
+      throw new Error('URL đang nhập là URL NHÓM, không phải URL BÀI VIẾT. Muốn lấy comment hãy dùng URL post/permalink cụ thể.');
+    }
     const started=Date.now();
     const apiResult=callSocialAioApi_('get_list_fb_comment',{
       url:postUrl,
@@ -2332,6 +2351,338 @@ const RemoteApp = (() => {
       imported,
       durationMs:Date.now()-started
     };
+  }
+
+
+  // ============================================================
+  // V1.8.1 POC - QUÉT NHÓM operator controls inside sheet
+  // W: checkbox selection
+  // X: per-row command (▶ QUÉT / ■ DỪNG)
+  // Y: API status
+  // Z: API detail
+  // Q:V daily counters are preserved but hidden to keep controls adjacent to Ghi chú.
+  // ============================================================
+
+  function setupBridgeControlColumns_(sheet) {
+    if (!sheet) return { rows:0 };
+    if (sheet.getMaxColumns() < 26) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), 26 - sheet.getMaxColumns());
+    }
+
+    sheet.getRange(1,23,1,4).setValues([[
+      'Chọn API','API Quét / Dừng','API trạng thái','API chi tiết'
+    ]]);
+    sheet.getRange(1,23,1,4)
+      .setFontWeight('bold')
+      .setHorizontalAlignment('center');
+
+    const last=Math.max(2,sheet.getLastRow());
+    const n=Math.max(1,last-1);
+    const selectRange=sheet.getRange(2,23,n,1);
+    selectRange.insertCheckboxes();
+
+    const commandRule=SpreadsheetApp.newDataValidation()
+      .requireValueInList(['▶ QUÉT','■ DỪNG'], true)
+      .setAllowInvalid(false)
+      .build();
+    const commandRange=sheet.getRange(2,24,n,1);
+    commandRange.setDataValidation(commandRule);
+
+    const commandValues=commandRange.getDisplayValues();
+    let commandDirty=false;
+    commandValues.forEach(r=>{
+      if(!String(r[0]||'').trim()){r[0]='▶ QUÉT';commandDirty=true;}
+    });
+    if(commandDirty) commandRange.setValues(commandValues);
+
+    const statusRange=sheet.getRange(2,25,n,1);
+    const statusValues=statusRange.getDisplayValues();
+    let statusDirty=false;
+    statusValues.forEach(r=>{
+      if(!String(r[0]||'').trim()){r[0]='SẴN SÀNG';statusDirty=true;}
+    });
+    if(statusDirty) statusRange.setValues(statusValues);
+
+    sheet.setColumnWidth(23,70);
+    sheet.setColumnWidth(24,110);
+    sheet.setColumnWidth(25,120);
+    sheet.setColumnWidth(26,300);
+    sheet.getRange(2,23,n,4).setVerticalAlignment('middle');
+    sheet.getRange(2,26,n,1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+
+    // These six counters remain in the sheet and in THỐNG KÊ NGÀY.
+    // Hide them only in the operator registry so the action controls sit next to Ghi chú.
+    try { sheet.hideColumns(17,6); } catch (_) {}
+
+    return { rows:n };
+  }
+
+  function ensureBridgeEditTrigger_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const triggers=ScriptApp.getProjectTriggers();
+    const exists=triggers.some(t=>
+      t.getHandlerFunction && t.getHandlerFunction()==='importJsonFiles' &&
+      t.getEventType && t.getEventType()===ScriptApp.EventType.ON_EDIT
+    );
+    if(!exists) {
+      ScriptApp.newTrigger('importJsonFiles').forSpreadsheet(ss).onEdit().create();
+    }
+    return { installed:!exists, exists:true };
+  }
+
+  function setupGroupScanControls_() {
+    ensureV16Sheets_(true);
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sheet=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const schema=setupBridgeControlColumns_(sheet);
+    const trigger=ensureBridgeEditTrigger_();
+    SpreadsheetApp.flush();
+    return { version:CFG.VERSION, rows:schema.rows, trigger };
+  }
+
+  function handleBridgeSheetEdit_(e) {
+    try {
+      const range=e && e.range;
+      if(!range) return { ignored:true };
+      const sheet=range.getSheet();
+      if(!sheet || sheet.getName()!==CFG.GROUP_SCAN_SHEET) return { ignored:true };
+      const row=range.getRow();
+      const col=range.getColumn();
+      if(row<2 || col!==24) return { ignored:true };
+
+      const value=String(e.value || range.getDisplayValue() || '').trim();
+      if(value==='▶ QUÉT') {
+        return scanGroupRowApiBridge_(row,{source:'ROW_COMMAND'});
+      }
+      if(value==='■ DỪNG') {
+        return requestStopGroupRow_(row);
+      }
+      return { ignored:true };
+    } catch(err) {
+      try {
+        const r=e && e.range;
+        if(r && r.getSheet().getName()===CFG.GROUP_SCAN_SHEET && r.getRow()>=2) {
+          const sh=r.getSheet();
+          sh.getRange(r.getRow(),24).setValue('▶ QUÉT');
+          setGroupRowStatus_(sh,r.getRow(),'LỖI',String(err.message||err));
+        }
+      } catch (_) {}
+      throw err;
+    }
+  }
+
+  function groupStopKey_(groupKey) {
+    return CFG.BRIDGE_STOP_PREFIX + String(groupKey || '').toLowerCase();
+  }
+
+  function clearGroupStop_(groupKey) {
+    if(groupKey) PropertiesService.getDocumentProperties().deleteProperty(groupStopKey_(groupKey));
+  }
+
+  function isGroupStopRequested_(groupKey) {
+    const p=PropertiesService.getDocumentProperties();
+    return p.getProperty(CFG.BRIDGE_STOP_ALL_KEY)==='1' ||
+      (groupKey && p.getProperty(groupStopKey_(groupKey))==='1');
+  }
+
+  function setGroupRowStatus_(sheet,row,status,detail) {
+    sheet.getRange(row,25).setValue(status || '');
+    if(detail!==undefined) sheet.getRange(row,26).setValue(String(detail || '').slice(0,1500));
+
+    const cell=sheet.getRange(row,25);
+    if(status==='ĐANG QUÉT') cell.setBackground('#fff2cc');
+    else if(status==='XONG') cell.setBackground('#d9ead3');
+    else if(status==='LỖI') cell.setBackground('#f4cccc');
+    else if(/^DỪNG/.test(status||'')) cell.setBackground('#fce5cd');
+    else cell.setBackground(null);
+  }
+
+  function requestStopGroupRow_(row) {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
+    const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+    if(groupKey) PropertiesService.getDocumentProperties().setProperty(groupStopKey_(groupKey),'1');
+    setGroupRowStatus_(sheet,row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
+    sheet.getRange(row,24).setValue('▶ QUÉT');
+    SpreadsheetApp.flush();
+    return { ok:true, row, groupKey, stopRequested:true };
+  }
+
+  function scanGroupRowApiBridge_(row,options) {
+    options=options||{};
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sheet=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    if(row<2 || row>sheet.getLastRow()) throw new Error('Dòng nhóm không hợp lệ: '+row);
+
+    const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group dòng '+row);
+    const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
+    const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+
+    if(!/facebook\.com\/groups\//i.test(groupUrl)) {
+      throw new Error('Dòng '+row+' không có URL Group Facebook hợp lệ.');
+    }
+
+    const currentStatus=String(sheet.getRange(row,25).getDisplayValue()||'');
+    if(currentStatus==='ĐANG QUÉT' && options.source!=='BATCH') {
+      return { ok:false, alreadyRunning:true, row, name, groupUrl };
+    }
+
+    clearGroupStop_(groupKey);
+    sheet.getRange(row,24).setValue('■ DỪNG');
+    setGroupRowStatus_(sheet,row,'ĐANG QUÉT','Đang gọi Social AIO API…');
+    SpreadsheetApp.flush();
+
+    const started=Date.now();
+    try {
+      const result=scanGroupApiBridge_(groupUrl);
+      const imported=result.imported||{};
+      const stopped=isGroupStopRequested_(groupKey);
+
+      // Preserve the existing operational columns.
+      sheet.getRange(row,10).setValue(new Date()); // Lần quét gần nhất
+      sheet.getRange(row,14).setValue(Number(imported.postImported||0)); // Bài mới lần cuối
+
+      const detail=[
+        (result.postsRead||0)+' post',
+        (imported.postImported||0)+' mới',
+        (imported.duplicates||0)+' trùng',
+        result.nextCursor ? 'cursor:CÓ' : 'cursor:KHÔNG',
+        (Math.round((Date.now()-started)/100)/10)+'s'
+      ].join(' | ');
+
+      if(stopped) setGroupRowStatus_(sheet,row,'DỪNG',detail);
+      else setGroupRowStatus_(sheet,row,'XONG',detail);
+
+      sheet.getRange(row,24).setValue('▶ QUÉT');
+      clearGroupStop_(groupKey);
+      SpreadsheetApp.flush();
+      return Object.assign({},result,{row,name,groupKey,stopped,detail});
+    } catch(err) {
+      sheet.getRange(row,24).setValue('▶ QUÉT');
+      setGroupRowStatus_(sheet,row,'LỖI',String(err.message||err));
+      SpreadsheetApp.flush();
+      return {
+        ok:false,row,name,groupKey,groupUrl,
+        error:String(err.message||err),
+        durationMs:Date.now()-started
+      };
+    }
+  }
+
+  function getCheckedGroupRows_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return [];
+    const values=sheet.getRange(2,1,last-1,26).getValues();
+    const out=[];
+    values.forEach((r,i)=>{
+      if(r[22]===true) {
+        const row=i+2;
+        const url=String(r[3]||'').trim();
+        if(!url) return;
+        out.push({
+          row,
+          name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
+          url,
+          groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
+          status:String(r[24]||'')
+        });
+      }
+    });
+    return out;
+  }
+
+  function getGroupScanControlState_() {
+    setupGroupScanControls_();
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const selected=getCheckedGroupRows_();
+    const last=sheet.getLastRow();
+    let running=0, errors=0;
+    if(last>=2) {
+      sheet.getRange(2,25,last-1,1).getDisplayValues().forEach(r=>{
+        if(r[0]==='ĐANG QUÉT') running++;
+        if(r[0]==='LỖI') errors++;
+      });
+    }
+    return {
+      version:CFG.VERSION,
+      selectedCount:selected.length,
+      runningCount:running,
+      errorCount:errors,
+      selected:selected.slice(0,30)
+    };
+  }
+
+  function scanCheckedGroupsApiBridge_() {
+    setupGroupScanControls_();
+    const props=PropertiesService.getDocumentProperties();
+    props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
+
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const selected=getCheckedGroupRows_();
+    if(!selected.length) throw new Error('Chưa chọn Group nào ở cột Chọn API.');
+
+    const started=Date.now();
+    const budgetMs=230000; // keep safely below Apps Script execution ceiling
+    const results=[];
+    let deferred=0;
+
+    for(let i=0;i<selected.length;i++) {
+      if(props.getProperty(CFG.BRIDGE_STOP_ALL_KEY)==='1') break;
+      if(Date.now()-started>budgetMs) {
+        deferred=selected.length-i;
+        break;
+      }
+
+      const item=selected[i];
+      if(isGroupStopRequested_(item.groupKey)) {
+        setGroupRowStatus_(sheet,item.row,'DỪNG','Bỏ qua theo yêu cầu dừng.');
+        sheet.getRange(item.row,24).setValue('▶ QUÉT');
+        results.push({ok:false,stopped:true,row:item.row,name:item.name});
+        continue;
+      }
+
+      const r=scanGroupRowApiBridge_(item.row,{source:'BATCH'});
+      results.push(r);
+      if(r && r.ok && !r.stopped) sheet.getRange(item.row,23).setValue(false);
+    }
+
+    props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
+    SpreadsheetApp.flush();
+
+    const passed=results.filter(r=>r&&r.ok&&!r.stopped).length;
+    const stopped=results.filter(r=>r&&r.stopped).length;
+    const failed=results.filter(r=>r&&!r.ok&&!r.stopped).length;
+    return {
+      version:CFG.VERSION,
+      selected:selected.length,
+      processed:results.length,
+      passed,failed,stopped,deferred,
+      remainingChecked:getCheckedGroupRows_().length,
+      durationMs:Date.now()-started,
+      results
+    };
+  }
+
+  function stopCheckedGroupsApiBridge_() {
+    const props=PropertiesService.getDocumentProperties();
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const selected=getCheckedGroupRows_();
+    selected.forEach(item=>{
+      if(item.groupKey) props.setProperty(groupStopKey_(item.groupKey),'1');
+      setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
+      sheet.getRange(item.row,24).setValue('▶ QUÉT');
+    });
+    props.setProperty(CFG.BRIDGE_STOP_ALL_KEY,'1');
+    SpreadsheetApp.flush();
+    return { ok:true, requested:selected.length };
+  }
+
+  function clearCheckedGroups_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last>=2) sheet.getRange(2,23,last-1,1).setValue(false);
+    return { ok:true };
   }
 
   function apiBridgeConfigure() {
@@ -2771,5 +3122,10 @@ const RemoteApp = (() => {
     apiBridgeScanSelectedGroup,
     apiBridgeFetchCommentsSelectedPost,
     apiBridgeStatus,
+    setupGroupScanControls_,
+    getGroupScanControlState_,
+    scanCheckedGroupsApiBridge_,
+    stopCheckedGroupsApiBridge_,
+    clearCheckedGroups_,
   };
 })();
