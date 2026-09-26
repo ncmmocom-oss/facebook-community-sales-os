@@ -2298,7 +2298,7 @@ const RemoteApp = (() => {
     return 25;
   }
 
-  function scanGroupApiBridge_(groupUrl,targetCount,groupKey) {
+  function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast) {
     groupUrl=String(groupUrl || '').trim();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
       throw new Error('Hãy nhập URL Group Facebook hợp lệ.');
@@ -2315,6 +2315,7 @@ const RemoteApp = (() => {
     let pages=0;
     let exhausted=false;
     let stopped=false;
+    const relayClient=String(clientId||'').trim() || getBridgeClientId_();
 
     while(posts.length<target && pages<30 && (Date.now()-started)<pageBudgetMs) {
       if(groupKey && isGroupStopRequested_(groupKey)) {
@@ -2322,7 +2323,7 @@ const RemoteApp = (() => {
         break;
       }
 
-      const apiResult=callSocialAioApi_('get_list_fb_group_posts',{
+      const apiResult=callSocialAioApiWithClient_(relayClient,'get_list_fb_group_posts',{
         url:groupUrl,
         sorting:'Newest Posts',
         cursor:cursor || ''
@@ -2362,7 +2363,20 @@ const RemoteApp = (() => {
     const selectedPosts=posts.slice(0,target);
     const fileName='api_posts_'+(extractGroupKey_(groupUrl)||'group')+'_'+
       Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-    const imported=importJsonFiles([{name:fileName,text:JSON.stringify(selectedPosts)}]);
+
+    // Three workers may fetch concurrently, but Sheet dedupe/write must be serialized.
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(120000)) throw new Error('Sheet đang bận ghi dữ liệu từ Worker khác. Hãy RETRY.');
+    let imported;
+    try{
+      imported=importJsonFiles([{
+        name:fileName,
+        text:JSON.stringify(selectedPosts),
+        __workerFast:!!workerFast
+      }]);
+    }finally{
+      lock.releaseLock();
+    }
 
     return {
       ok:true,
@@ -2677,6 +2691,94 @@ const RemoteApp = (() => {
       incompleteCount:counts.incomplete,
       waitingCount:counts.waiting,
       selected:selected.slice(0,30)
+    };
+  }
+
+  function getWorkerBySlot_(slot) {
+    const s=String(slot||'').trim().toUpperCase();
+    const w=getWorkerPoolRaw_().find(x=>x.slot===s);
+    if(!w || !w.enabled || !w.clientId) throw new Error('Worker '+s+' chưa được cấu hình/enable.');
+    return w;
+  }
+
+  function runWorkerJob_(command) {
+    ensureV16Sheets_(false);
+    const row=Number(command.row||0);
+    const target=normalizeGroupTarget_(command.targetCount||25);
+    const worker=getWorkerBySlot_(command.workerSlot);
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sheet=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    if(row<2 || row>sheet.getLastRow()) throw new Error('Dòng Group không hợp lệ.');
+
+    const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group '+row);
+    const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
+    const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+    if(!/facebook\.com\/groups\//i.test(groupUrl)) throw new Error('Dòng '+row+' không có URL Group hợp lệ.');
+
+    sheet.getRange(row,9).setValue(target);
+    clearGroupStop_(groupKey);
+    const workerTag=worker.slot + (worker.profile?(' · '+worker.profile):(' · '+worker.label));
+    setGroupRowStatus_(sheet,row,'ĐANG QUÉT',workerTag+' • 0/'+target+' bài','');
+    SpreadsheetApp.flush();
+
+    const started=Date.now();
+    try{
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey,worker.clientId,true);
+      const imported=result.imported||{};
+      const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
+
+      sheet.getRange(row,10).setValue(new Date());
+      sheet.getRange(row,14).setValue(Number(imported.postImported||0));
+
+      const progress=[
+        worker.slot,
+        (result.postsRead||0)+'/'+target+' bài',
+        (imported.postImported||0)+' mới',
+        (imported.duplicates||0)+' trùng',
+        (result.pages||1)+' page',
+        (Math.round((Date.now()-started)/100)/10)+'s'
+      ].join(' • ');
+
+      let status='XONG', note='';
+      if(stopped){status='DỪNG';note='Đã dừng theo yêu cầu.';}
+      else if((result.postsRead||0)<target){
+        status='THIẾU';
+        note='API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
+          (result.nextCursor?' trước time budget.':' vì không còn cursor.');
+      }
+
+      setGroupRowStatus_(sheet,row,status,progress,note);
+      if(status==='XONG') sheet.getRange(row,23).setValue(false);
+      clearGroupStop_(groupKey);
+      SpreadsheetApp.flush();
+
+      return Object.assign({},result,{
+        row,name,groupKey,status,targetCount:target,
+        workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
+        stopped,incomplete:status==='THIẾU',progress,note
+      });
+    }catch(err){
+      const msg=String(err.message||err);
+      setGroupRowStatus_(sheet,row,'LỖI',worker.slot+' • 0/'+target+' bài',msg);
+      SpreadsheetApp.flush();
+      return {
+        ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
+        workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
+        error:msg,durationMs:Date.now()-started
+      };
+    }
+  }
+
+  function finalizeWorkerBatch_() {
+    const started=Date.now();
+    const refresh=refreshCurrentData({silent:true,fast:true});
+    const aiCfg=getAiConfig_();
+    SpreadsheetApp.flush();
+    return {
+      version:CFG.VERSION,
+      refresh,
+      autoAnalyzeRequested:!!(aiCfg.autoAnalyze&&aiCfg.configured),
+      durationMs:Date.now()-started
     };
   }
 
