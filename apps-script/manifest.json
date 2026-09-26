@@ -1,16 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.1-poc",
+  "version": "1.8.2-poc",
   "channel": "poc",
   "updated_at": "2026-09-26",
   "notes": [
-    "Adds sheet-native Group API controls in QUÉT NHÓM without changing columns A:P business data.",
-    "Columns W:Z are operator controls: Chọn API, API Quét/Dừng, API trạng thái, API chi tiết; derived Q:V counters are preserved and hidden in the operator view.",
-    "Opening Social AIO Control Center automatically prepares the controls and installs an authorized onEdit trigger using the existing importJsonFiles bootstrap wrapper, so Code.gs does not need to be replaced.",
-    "Per-row command supports QUÉT and DỪNG. Stop takes effect after the current Social AIO API call/page returns.",
-    "The modeless Control Center polls selected groups and provides scan-selected / stop-selected / clear-selection actions.",
-    "Batch scanning uses a 230-second execution budget and leaves deferred groups selected for the next run.",
-    "Comment POC now rejects a Group root URL early with a clear message instead of surfacing Cannot get post ID from URL.",
-    "Bridge remains first-page POC; pagination/scheduler stay gated on API schema and latency acceptance."
+    "Removes all ScriptApp trigger management from runtime; no script.scriptapp OAuth scope is required.",
+    "Control Center stays modeless and uses explicit google.script.run actions, which match Google Sheets authorization behavior better than long-running onEdit scans.",
+    "Single Group: select any cell on the Group row and click QUÉT DÒNG ĐANG CHỌN.",
+    "Multi Group: tick Chọn API, then QUÉT CÁC GROUP ĐÃ CHỌN / DỪNG / BỎ CHỌN from Control Center.",
+    "QUÉT NHÓM W:Z are now Chọn API, API trạng thái, API chi tiết, API Run; the previous per-cell command dropdown is repaired automatically.",
+    "Comment POC still rejects Group root URLs and requires a concrete post/permalink URL.",
+    "First-page POC remains in place while Group API response size/cursor behavior is being diagnosed."
   ]
 }
