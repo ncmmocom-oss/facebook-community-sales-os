@@ -1238,6 +1238,15 @@ const RemoteApp = (() => {
               row_number: { type: 'integer' },
               pain: { type: 'string' },
               intent: { type: 'string' },
+              buyer_role: { type: 'string' },
+              product_fit: { type: 'string' },
+              need_evidence: { type: 'string' },
+              need_score: { type: 'integer' },
+              fit_score: { type: 'integer' },
+              action_score: { type: 'integer' },
+              urgency_score: { type: 'integer' },
+              reachability_score: { type: 'integer' },
+              freshness_score: { type: 'integer' },
               score: { type: 'integer' },
               classification: { type: 'string' },
               value_solution: { type: 'string' },
@@ -1245,7 +1254,11 @@ const RemoteApp = (() => {
               next_action: { type: 'string' },
               follow_up_days: { type: 'integer' }
             },
-            required: ['row_number','pain','intent','score','classification','value_solution','suggested_comment','next_action','follow_up_days'],
+            required: [
+              'row_number','pain','intent','buyer_role','product_fit','need_evidence',
+              'need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score',
+              'score','classification','value_solution','suggested_comment','next_action','follow_up_days'
+            ],
             additionalProperties: false
           }
         }
