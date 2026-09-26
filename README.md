@@ -395,3 +395,49 @@ Client ID cũ đang hoạt động được migrate tự động vào W1.
 Control Center tạo tối đa 3 queue chạy song song qua các google.script.run độc lập. Mỗi worker xử lý tuần tự các Group được gán cho mình. Network/API fetch có thể chạy đồng thời; bước ghi/dedupe Google Sheet được khóa tuần tự để tránh race condition.
 
 Sau khi toàn bộ worker hoàn tất, hệ thống refresh dữ liệu một lần và mới chạy AI một lần cho batch nếu Auto Analyze đang bật.
+
+
+## V1.8.5-DIAGNOSTIC — API RESPONSE DIAGNOSTIC
+
+Mục tiêu: xác định vì sao `get_list_fb_group_posts` hiện chỉ đưa về 1/25 bài trong khi Bulk Downloader có thể lấy nhiều bài hơn.
+
+### Cách chạy
+
+1. Mở sheet **QUÉT NHÓM**.
+2. Click một ô bất kỳ trên dòng Group cần kiểm tra.
+3. Mở **SOCIAL AIO → Control Center → Cấu hình nâng cao** và bấm **CHẨN ĐOÁN API DÒNG ĐANG CHỌN**.
+
+Diagnostic không import bài và không chạy AI.
+
+### Ba request được so sánh
+
+- `URL+sorting`: URL Group + `Newest Posts`.
+- `UID+sorting`: Group ID/UID + `Newest Posts`.
+- `URL-default`: URL Group, không truyền sorting.
+
+Nếu tìm thấy cursor, runtime tự gọi thêm một `PAGE2-probe` để xác nhận pagination.
+
+### Dữ liệu ghi vào NHẬT KÝ API
+
+- HTTP / latency / response bytes.
+- Raw root type và top-level keys.
+- Số phần tử ở array `posts` mà parser hiện tại nhìn thấy.
+- Candidate array path có khả năng chứa posts và độ dài của nó.
+- Cursor path / pagination metadata.
+- Số posts trước và sau `unwrapBridgeResult_`.
+- Page 2 probe nếu có cursor.
+- Kết luận tự động và mã nguyên nhân.
+
+Runtime không lưu full post text hoặc full cursor token vào Sheet.
+
+### Mã kết luận
+
+- `B_UNWRAP_CURSOR`: unwrap làm mất cursor.
+- `B_CURSOR_CONFIRMED`: cursor hoạt động, pagination adapter hiện dùng sai metadata.
+- `A_ARRAY_PARSER`: parser chọn nhầm/mất array posts.
+- `D_UID_MODE`: Group UID trả dữ liệu tốt hơn URL.
+- `E_SORTING_PARAM`: bỏ sorting label cho response tốt hơn.
+- `C_UPSTREAM_1_NO_CURSOR`: raw API thực sự chỉ trả 1 post và không có cursor.
+- `Z_UNKNOWN`: chưa đủ bằng chứng.
+
+Trong phase này không sửa business logic quét production cho đến khi có bằng chứng từ raw response.
