@@ -701,6 +701,7 @@
         if (!r || !r.ok) {
           setStatus('Quét chưa hoàn tất: ' + ((r && r.error) || 'Không có kết quả.'));
           pollGroupScanState();
+          loadWorkerPool();
           return;
         }
         setStatus(
@@ -708,15 +709,17 @@
           '\nGroup: ' + (r.name || r.groupUrl || '') +
           '\nTiến độ: ' + (r.postsRead || 0) + '/' + (r.targetCount || target) + ' bài' +
           '\nTrạng thái: ' + (r.status || '') +
+          (r.workerHealth ? '\nWorker: ' + (r.workerSlot || 'W1') + ' • ' + r.workerHealth : '') +
           '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
         );
         pollGroupScanState();
+        loadWorkerPool();
       }, e => {
         setStatus('Lỗi quét dòng hiện tại: ' + (e.message || e));
         pollGroupScanState();
+        loadWorkerPool();
       });
     }
-
     function summarizePoolResults(ctx) {
       return {
         processed:ctx.results.length,
