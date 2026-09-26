@@ -1786,6 +1786,7 @@ const RemoteApp = (() => {
       comments: commentStats.rows,
       timeline: timelineStats.rows,
       leads: leadStats.count,
+      newLeads: leadStats.newCount || 0,
       groups: groupStats.groups,
       queue: queueStats.count,
       dailyStats: dailyStats.rows
@@ -1793,7 +1794,7 @@ const RemoteApp = (() => {
 
     if (!silent) {
       SpreadsheetApp.getActive().toast(
-        `V${CFG.VERSION} | ${fast?'FAST':'FULL'} | Trùng xóa: ${result.rawRemoved + result.commentRemoved + result.oppRemoved} | Comment: ${result.comments} | KH: ${result.leads}`,
+        `V${CFG.VERSION} | ${fast?'FAST':'FULL'} | Trùng xóa: ${result.rawRemoved + result.commentRemoved + result.oppRemoved} | Comment: ${result.comments} | KH PASS: ${result.leads} | KH mới: ${result.newLeads}`,
         'CẬP NHẬT DỮ LIỆU',
         8
       );
