@@ -1,9 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.0-200g-pilot",
+  "version": "1.9.1-signal-feed",
   "channel": "pilot",
   "updated_at": "2026-09-26",
   "notes": [
+    "V1.9.1 Signal Feed: adds a dedicated TIN HIEU operational view for the latest 7 days while preserving CO HOI as the source-of-truth.",
+    "Signal Feed groups data by Day -> Group summary -> candidate rows and uses native Google Sheets row outlines; day groups stay expanded while PASS/WATCH/REVIEW children are collapsed by default.",
+    "FAIL rows remain in backend but are excluded from the Signal Feed to reduce operator noise.",
+    "Group/day summary shows total sources, candidate count, PASS, WATCH, top gate and max score; child rows keep person, source type, pain, gate, score, evidence, next action and source URL.",
+    "Control Center adds direct navigation to TIN HIEU and Lead Inbox.",
+    "Signal Feed is rebuilt after AI/full refresh so it remains a presentation layer only and cannot alter AI, dedupe, identity, pagination or Lead Gate semantics.",
     "V1.9.0 200G Pilot: adds Monitoring Overview and a priority-aware Due Queue for up to 200 active Facebook Groups using the existing QUET NHOM cadence/next-scan fields.",
     "Control Center adds an operational dashboard with active/due/running/exception/new-post/AI-backlog/PASS/Worker KPIs and AUTO MONITOR orchestration while the Control Center remains open.",
     "Due Queue excludes confirmed ERROR/INCOMPLETE/STOPPED Groups from unattended loops, prioritizes Uu tien > Giu > Thu nghiem > Giam uu tien, and processes up to 30 Groups per cycle.",
