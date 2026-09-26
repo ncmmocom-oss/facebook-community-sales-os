@@ -44,6 +44,7 @@
     .hidden { display:none; }
     .ok { color:#047857; font-weight:700; }
     .warn { color:#b45309; font-weight:700; }
+    .bad { color:#b91c1c; font-weight:700; }
     .progress { margin-top:10px; background:#dbeafe; border-radius:999px; height:14px; overflow:hidden; }
     .progress > div { height:100%; width:0%; background:#2563eb; transition:width .25s ease; }
     #progressText { margin-top:6px; font-size:12px; font-weight:700; color:#1e3a8a; }
@@ -177,6 +178,9 @@
     <div class="muted">
       Pilot: giữ tab APIs của W1 ở trạng thái Connected. CLIENT_ID cũ đang hoạt động được tự kế thừa vào W1.
       CLIENT_ID chỉ lưu trong Document Properties, không ghi vào Sheet/GitHub.
+      Health dùng bằng chứng thực tế: <b>ONLINE</b> = TEST hoặc scan thành công gần đây;
+      <b>CHƯA KIỂM TRA</b> = chưa có evidence; <b>STALE</b> = evidence đã quá TTL;
+      <b>OFFLINE</b> = lần kiểm tra/kết nối mới nhất thất bại.
     </div>
 
     <div class="workergrid">
@@ -463,9 +467,39 @@
     }
 
 
+    function workerHealthLabel(health) {
+      const h=String(health||'UNKNOWN').toUpperCase();
+      if(h==='ONLINE') return '● ONLINE';
+      if(h==='STALE') return '◐ STALE';
+      if(h==='OFFLINE') return '● OFFLINE';
+      if(h==='UNCONFIGURED') return '○ CHƯA CẤU HÌNH';
+      return '● CHƯA KIỂM TRA';
+    }
+
+    function workerHealthClass(health) {
+      const h=String(health||'UNKNOWN').toUpperCase();
+      if(h==='ONLINE') return 'ok';
+      if(h==='OFFLINE') return 'bad';
+      if(h==='STALE' || h==='UNKNOWN') return 'warn';
+      return '';
+    }
+
+    function workerTimeAgo(value) {
+      const t=Date.parse(String(value||''));
+      if(!Number.isFinite(t)) return '';
+      const sec=Math.max(0,Math.round((Date.now()-t)/1000));
+      if(sec<10) return 'vừa xong';
+      if(sec<60) return sec+'s trước';
+      const min=Math.round(sec/60);
+      if(min<60) return min+'p trước';
+      const hr=Math.round(min/60);
+      if(hr<48) return hr+'h trước';
+      return Math.round(hr/24)+'d trước';
+    }
+
     function renderWorkerPool(cfg) {
       const workers=(cfg && cfg.workers) || [];
-      let online=0, configured=0;
+      let online=0, configured=0, stale=0, offline=0, unknown=0;
       workers.forEach(w=>{
         const n=Number(String(w.slot||'').replace('W','')) || 0;
         if(!n) return;
@@ -474,25 +508,50 @@
         const state=document.getElementById('w'+n+'State');
         if(enabled) enabled.checked=w.enabled!==false;
         if(label) label.value=w.label || ('FB-0'+n);
-        if(w.configured) configured++;
-        if(w.testOk) online++;
+
+        const health=String(w.health || (w.testOk?'ONLINE':(w.configured?'UNKNOWN':'UNCONFIGURED'))).toUpperCase();
+        if(w.enabled!==false && w.configured){
+          configured++;
+          if(health==='ONLINE') online++;
+          else if(health==='STALE') stale++;
+          else if(health==='OFFLINE') offline++;
+          else unknown++;
+        }
+
         if(state){
+          const lastOk=workerTimeAgo(w.lastSuccessAt);
+          const lastFail=workerTimeAgo(w.lastFailureAt);
+          const lastJob=workerTimeAgo(w.lastJobAt);
           const bits=[
-            w.testOk?'● ONLINE':(w.configured?'● CHƯA TEST / OFFLINE':'○ CHƯA CẤU HÌNH'),
+            workerHealthLabel(health),
             w.profile || '',
             w.socialAioVersion?('AIO '+w.socialAioVersion):'',
-            w.latencyMs?(w.latencyMs+'ms'):'',
+            lastOk?('OK '+lastOk):'',
+            (health==='OFFLINE'&&lastFail)?('FAIL '+lastFail):'',
+            lastJob?('job '+lastJob):'',
+            w.lastJobLatencyMs?('job '+Math.round(Number(w.lastJobLatencyMs)/100)/10+'s'):'',
+            w.latencyMs?('test '+w.latencyMs+'ms'):'',
             w.clientIdMasked || ''
           ].filter(Boolean);
           state.textContent=bits.join(' • ');
-          state.className='workerstate '+(w.testOk?'ok':(w.configured?'warn':''));
+          state.className='workerstate '+workerHealthClass(health);
+          if(health==='OFFLINE' && w.lastError) state.title=w.lastError;
+          else state.removeAttribute('title');
         }
       });
-      const txt='Worker Pool: '+online+'/'+workers.filter(w=>w.enabled!==false).length+' online • '+configured+' configured';
+
+      const enabledCount=workers.filter(w=>w.enabled!==false&&w.configured).length;
+      const detail=[
+        online+'/'+enabledCount+' online',
+        configured+' configured',
+        stale?stale+' stale':'',
+        unknown?unknown+' chưa kiểm tra':'',
+        offline?offline+' offline':''
+      ].filter(Boolean).join(' • ');
+      const txt='Worker Pool: '+detail;
       document.getElementById('workerPoolState').textContent=txt;
       document.getElementById('workerTopState').textContent=txt;
     }
-
     function loadWorkerPool() {
       command({__command:'GET_WORKER_POOL'}, renderWorkerPool, e=>{
         document.getElementById('workerPoolState').textContent='Không đọc được Worker Pool: '+(e.message||e);
@@ -509,33 +568,41 @@
     }
 
     function saveWorkerPool() {
-      setStatus('Đang lưu 3 Worker...');
+      setStatus('Đang lưu Worker...');
       command({__command:'SAVE_WORKER_POOL',workers:collectWorkerInputs()}, cfg=>{
         [1,2,3].forEach(n=>document.getElementById('w'+n+'ClientId').value='');
         renderWorkerPool(cfg);
-        setStatus('✅ Đã lưu Worker Pool. Bấm TEST 3 WORKER để xác nhận các tab Social AIO đang Connected.');
+        setStatus('✅ Đã lưu Worker Pool. Có thể bấm TEST WORKER để kiểm tra ngay; một scan thành công cũng tự xác nhận Worker = ONLINE.');
       });
     }
-
     function testWorkerPool() {
-      setStatus('Đang test 3 Social AIO Worker...');
+      setStatus('Đang test Social AIO Worker...');
       command({__command:'SAVE_WORKER_POOL',workers:collectWorkerInputs()}, ()=>{
         [1,2,3].forEach(n=>document.getElementById('w'+n+'ClientId').value='');
         command({__command:'TEST_WORKER_POOL'}, cfg=>{
           renderWorkerPool(cfg);
-          const lines=(cfg.workers||[]).map(w=>
-            w.slot+' '+(w.testOk?'✅ ONLINE':'❌ OFFLINE')+
-            (w.profile?(' • '+w.profile):'')+
-            (w.latencyMs?(' • '+w.latencyMs+'ms'):'')+
-            (w.error?(' • '+w.error):'')
+          const lines=(cfg.workers||[])
+            .filter(w=>w.enabled!==false || w.configured)
+            .map(w=>{
+              const h=String(w.health||'UNKNOWN').toUpperCase();
+              const icon=h==='ONLINE'?'✅':(h==='OFFLINE'?'❌':(h==='UNCONFIGURED'?'○':'⚠️'));
+              const cleanLabel=workerHealthLabel(h).replace('● ','').replace('◐ ','').replace('○ ','');
+              return w.slot+' '+icon+' '+cleanLabel+
+                (w.profile?(' • '+w.profile):'')+
+                (w.latencyMs?(' • '+w.latencyMs+'ms'):'')+
+                (w.error?(' • '+w.error):'');
+            });
+          setStatus(
+            'WORKER TEST - V'+cfg.version+
+            '\nOnline: '+Number(cfg.onlineCount||0)+'/'+Number(cfg.configuredCount||0)+
+            (cfg.staleCount?' • Stale: '+cfg.staleCount:'')+
+            (cfg.unknownCount?' • Chưa kiểm tra: '+cfg.unknownCount:'')+
+            (cfg.offlineCount?' • Offline: '+cfg.offlineCount:'')+
+            '\n'+lines.join('\n')
           );
-          setStatus('WORKER TEST - V'+cfg.version+'\nOnline: '+cfg.onlineCount+'/'+(cfg.workers||[]).filter(w=>w.enabled!==false).length+'\n'+lines.join('\n'));
         });
       });
     }
-
-
-
     function formatApiDiagnostic(r, prefix) {
       const lines=(r.results||[]).map(x =>
         x.name+
