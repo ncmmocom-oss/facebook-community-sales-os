@@ -154,15 +154,14 @@
 
 
   <div class="box bridge">
-    <h3>3. Social AIO Worker Pool — 3 tài khoản</h3>
+    <h3>3. Social AIO Worker — Pilot 1 tài khoản</h3>
     <p>
-      Mỗi Worker = <b>1 tài khoản/browser profile Social AIO</b> đang mở
-      <b>Automation → APIs → Connect</b>. Copy CLIENT_ID của từng tài khoản và dán vào đúng Worker.
-      Hệ thống tự chia Group cho tối đa 3 Worker chạy song song.
+      Giai đoạn test chỉ dùng <b>W1</b>: 1 tài khoản/browser profile Social AIO đang mở
+      <b>Automation → APIs → Connect</b>. Khi W1 ổn định mới bật W2/W3; không cần thay đổi workflow quét.
     </p>
 
     <div class="muted">
-      Setup một lần: mở 3 browser/profile → Connect APIs → copy 3 CLIENT_ID → dán W1/W2/W3 → LƯU & TEST 3 WORKER.
+      Pilot: giữ tab APIs của W1 ở trạng thái Connected. CLIENT_ID cũ đang hoạt động được tự kế thừa vào W1.
       CLIENT_ID chỉ lưu trong Document Properties, không ghi vào Sheet/GitHub.
     </div>
 
@@ -177,8 +176,11 @@
         <div id="w1State" class="workerstate">Chưa kiểm tra.</div>
       </div>
 
+      <details class="advanced">
+        <summary>＋ Mở rộng W2 / W3 sau khi W1 PASS</summary>
+        <div class="workergrid">
       <div class="workercard">
-        <input id="w2Enabled" type="checkbox" checked>
+        <input id="w2Enabled" type="checkbox">
         <div class="workerbadge">W2</div>
         <input id="w2Label" value="FB-02" placeholder="Tên worker">
         <div></div>
@@ -188,18 +190,19 @@
       </div>
 
       <div class="workercard">
-        <input id="w3Enabled" type="checkbox" checked>
+        <input id="w3Enabled" type="checkbox">
         <div class="workerbadge">W3</div>
         <input id="w3Label" value="FB-03" placeholder="Tên worker">
         <div></div>
         <div></div>
         <input id="w3ClientId" type="password" placeholder="CLIENT_ID Worker 3 — để trống nếu đã lưu">
         <div id="w3State" class="workerstate">Chưa kiểm tra.</div>
-      </div>
+      </div>        </div>
+      </details>
     </div>
 
-    <button class="secondary" onclick="saveWorkerPool()">LƯU 3 WORKER</button>
-    <button class="dark" onclick="testWorkerPool()">TEST 3 WORKER</button>
+    <button class="secondary" onclick="saveWorkerPool()">LƯU WORKER</button>
+    <button class="dark" onclick="testWorkerPool()">TEST WORKER</button>
     <div id="workerPoolState" class="muted">Đang đọc cấu hình Worker Pool...</div>
 
     <div class="muted" style="margin-top:8px;">
@@ -508,7 +511,7 @@
             (w.latencyMs?(' • '+w.latencyMs+'ms'):'')+
             (w.error?(' • '+w.error):'')
           );
-          setStatus('WORKER TEST - V'+cfg.version+'\nOnline: '+cfg.onlineCount+'/3\n'+lines.join('\n'));
+          setStatus('WORKER TEST - V'+cfg.version+'\nOnline: '+cfg.onlineCount+'/'+(cfg.workers||[]).filter(w=>w.enabled!==false).length+'\n'+lines.join('\n'));
         });
       });
     }
