@@ -199,14 +199,20 @@
         const files = [];
         for (const f of input.files) files.push({ name: f.name, text: await f.text() });
         setStatus('Đang import ' + files.length + ' file...');
-        startProgressPolling();
         google.script.run
           .withSuccessHandler(result => {
             const err = result.errors && result.errors.length ? '\nLỗi:\n- ' + result.errors.join('\n- ') : '';
-            const ai = result.ai ? '\nAI tự phân tích: ' + result.ai.analyzed + ' nguồn | còn ' + result.ai.remaining : '';
-            const auto = result.refresh ? '\nĐã tự cập nhật dữ liệu: Có\nComment đồng bộ: ' + (result.refresh.comments || 0) + '\nTimeline: ' + (result.refresh.timeline || 0) + '\nKH tiềm năng: ' + (result.refresh.leads || 0) + '\nHàng điều phối: ' + (result.refresh.queue || 0) + '\nDòng thống kê ngày: ' + (result.refresh.dailyStats || 0) : '';
-            setStatus(
-              'XONG - V' + result.version +
+            const auto = result.refresh
+              ? '\nĐã tự cập nhật dữ liệu: Có' +
+                '\nComment đồng bộ: ' + (result.refresh.comments || 0) +
+                '\nTimeline: ' + (result.refresh.timeline || 0) +
+                '\nKH tiềm năng: ' + (result.refresh.leads || 0) +
+                '\nHàng điều phối: ' + (result.refresh.queue || 0) +
+                '\nDòng thống kê ngày: ' + (result.refresh.dailyStats || 0)
+              : '';
+
+            const base =
+              'IMPORT XONG - V' + result.version +
               '\nRun: ' + (result.runId || '-') +
               '\nFile: ' + result.files +
               '\nPost đọc: ' + (result.postScanned || 0) +
@@ -215,13 +221,41 @@
               '\nComment mới: ' + (result.commentImported || 0) +
               '\nTrùng bỏ qua: ' + result.duplicates +
               '\nThời gian import: ' + Math.round((result.durationMs || 0)/100)/10 + 's' +
-              ai + auto + err
-            );
+              auto + err;
+
             btn.disabled = false;
-            pollProgressOnce();
+            stopProgressPolling();
+
+            if (result.autoAnalyzeRequested) {
+              setStatus(base + '\n\nAI: dữ liệu đã hiển thị; đang phân tích nền...');
+              startProgressPolling();
+              command({__command:'ANALYZE_NEW'}, r => {
+                const aiErr = r.errors && r.errors.length ? '\nLỗi AI:\n- ' + r.errors.join('\n- ') : '';
+                setStatus(
+                  base +
+                  '\n\nAI XONG - Run ' + (r.runId || '-') +
+                  '\nModel: ' + r.model +
+                  '\nĐã phân tích: ' + r.analyzed +
+                  '\nCòn lại: ' + r.remaining +
+                  aiErr
+                );
+                pollProgressOnce();
+                stopProgressPolling();
+              }, e => {
+                setStatus(base + '\n\nLỗi AI nền: ' + (e.message || e));
+                pollProgressOnce();
+                stopProgressPolling();
+              });
+            } else {
+              setStatus(base);
+              pollProgressOnce();
+            }
+          })
+          .withFailureHandler(e => {
+            setStatus('Lỗi import: ' + (e.message || e));
+            btn.disabled = false;
             stopProgressPolling();
           })
-          .withFailureHandler(e => { setStatus('Lỗi: ' + (e.message || e)); btn.disabled = false; pollProgressOnce(); stopProgressPolling(); })
           .importJsonFiles(files);
       } catch (e) {
         setStatus('Lỗi đọc file: ' + e.message);
