@@ -263,3 +263,38 @@ CLIENT_ID lấy tại **Social AIO → Automation → APIs → Connect**. Tab AP
 ### Bảo mật
 
 Không lưu Facebook cookie, access token hoặc CLIENT_ID trong GitHub hay ô Sheet. CLIENT_ID được giữ trong Apps Script Document Properties. Raw Facebook access token không được dùng trong POC.
+
+## V1.8.1-POC — QUÉT NHÓM điều khiển trực tiếp trong Sheet
+
+Sau khi mở **SOCIAL AIO → Import JSON / Cấu hình AI**, Control Center chuyển sang modeless để có thể thao tác Sheet đồng thời.
+
+Trong sheet **QUÉT NHÓM**, runtime tự thêm control ở W:Z:
+
+- **W — Chọn API**: checkbox chọn nhiều Group.
+- **X — API Quét / Dừng**: dropdown `SẴN SÀNG / ▶ QUÉT / ĐANG QUÉT… / ■ DỪNG`.
+- **Y — API trạng thái**: SẴN SÀNG / ĐANG QUÉT / XONG / DỪNG / LỖI.
+- **Z — API chi tiết**: số post, số mới, số trùng, cursor, thời gian hoặc lỗi.
+
+Các cột thống kê Q:V không bị xóa; chỉ ẩn khỏi operator view để W:Z nằm sát phần registry hiện tại. Dữ liệu tương đương vẫn có tại **THỐNG KÊ NGÀY**.
+
+### Single Group
+
+Chọn `▶ QUÉT` tại cột X của đúng dòng Group. Runtime dùng URL ở cột D và Social AIO HTTP Relay đã cấu hình. Trong lúc chạy X đổi thành `ĐANG QUÉT…`; có thể chọn `■ DỪNG`. Lệnh dừng được kiểm tra sau API call/page hiện tại.
+
+### Multi Group
+
+Tick W cho các Group cần chạy. Control Center hiển thị số Group đã chọn và cung cấp:
+
+- `▶ QUÉT CÁC GROUP ĐÃ CHỌN`
+- `■ DỪNG CÁC GROUP ĐÃ CHỌN`
+- `BỎ CHỌN`
+
+Batch có execution budget 230 giây; nếu chưa xử lý hết, các dòng còn lại giữ checkbox để bấm tiếp, tránh Apps Script hard-timeout.
+
+### Không cần thay bootstrap Code.gs
+
+V1.8.1-POC tái sử dụng global wrapper `importJsonFiles` hiện có để làm installable onEdit handler. Control Center tự cài trigger khi được mở, vì vậy không cần paste lại bootstrap Code.gs.
+
+### Comment URL guard
+
+`get_list_fb_comment` yêu cầu URL post/permalink cụ thể. Nếu nhập URL root của Group, runtime chặn trước và báo rõ thay vì để Social AIO trả `Cannot get post ID from URL`.
