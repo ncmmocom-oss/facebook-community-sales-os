@@ -356,7 +356,8 @@
               ? '\nĐã tự cập nhật dữ liệu: Có' +
                 '\nComment đồng bộ: ' + (result.refresh.comments || 0) +
                 '\nTimeline: ' + (result.refresh.timeline || 0) +
-                '\nKH tiềm năng: ' + (result.refresh.leads || 0) +
+                '\nKH PASS: ' + (result.refresh.leads || 0) +
+                '\nKH PASS mới: ' + (result.refresh.newLeads || 0) +
                 '\nHàng điều phối: ' + (result.refresh.queue || 0) +
                 '\nDòng thống kê ngày: ' + (result.refresh.dailyStats || 0)
               : '';
@@ -430,7 +431,8 @@
             '\nDòng trùng xóa: ' + ((r.rawRemoved||0) + (r.commentRemoved||0) + (r.oppRemoved||0)) +
             '\nComment: ' + (r.comments||0) +
             '\nTimeline: ' + (r.timeline||0) +
-            '\nKH tiềm năng: ' + (r.leads||0) +
+            '\nKH PASS: ' + (r.leads||0) +
+            '\nKH PASS mới: ' + (r.newLeads||0) +
             '\nGroup: ' + (r.groups||0) +
             '\nĐiều phối: ' + (r.queue||0) +
             '\nThống kê ngày: ' + (r.dailyStats||0)
