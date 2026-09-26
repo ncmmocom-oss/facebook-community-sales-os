@@ -42,7 +42,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -1367,8 +1367,9 @@ const RemoteApp = (() => {
       'Phân tích CHỈ dựa trên evidence được cung cấp; không suy đoán thuộc tính nhạy cảm hay thông tin cá nhân ngoài dữ liệu.',
       'Mục tiêu không phải tìm mọi người có vấn đề. Mục tiêu là phân biệt: (1) người có nhu cầu, (2) người có khả năng là buyer, (3) nhu cầu có phù hợp đúng sản phẩm/dịch vụ đang bán hay không.',
       'buyer_role chỉ được dùng: Có, Không, Chưa rõ. Có = chính người đăng/comment có tín hiệu là người có thể mua/ra quyết định/sử dụng giải pháp. Không = người bán, quảng cáo, chia sẻ kiến thức hoặc không phải đối tượng mua. Chưa rõ = evidence không đủ.',
-      'product_fit chỉ được dùng: Có, Không, Chưa rõ. Có chỉ khi nhu cầu khớp trực tiếp Business context. Không khi nhu cầu lệch sản phẩm/dịch vụ. Chưa rõ khi Business context trống hoặc evidence không đủ.',
-      'Nếu Business context trống: BẮT BUỘC product_fit = Chưa rõ. Không được tự bịa product fit.',
+      'Mỗi input có thể có offerContext. offerContext là ngữ cảnh bán hàng của đúng Group và được ƯU TIÊN để đánh giá Product Fit; Business context toàn cục chỉ là fallback khi offerContext trống.',
+      'product_fit chỉ được dùng: Có, Không, Chưa rõ. Có chỉ khi nhu cầu khớp trực tiếp offerContext hoặc Business context fallback. Không khi nhu cầu lệch offer/context. Chưa rõ khi cả hai context trống hoặc evidence không đủ.',
+      'Nếu cả offerContext và Business context đều trống: BẮT BUỘC product_fit = Chưa rõ. Không được tự bịa product fit.',
       'need_evidence phải là bằng chứng ngắn, cụ thể từ nội dung cho thấy nhu cầu/ý định; nếu không có thì ghi Không có bằng chứng nhu cầu rõ.',
       'Không coi người bán/quảng cáo là khách hàng chỉ vì họ đăng sản phẩm. Nếu nội dung của họ hữu ích để tham gia thảo luận hoặc có thể chứa buyer trong comment, phân loại là Nguồn hội thoại.',
       'Comment gợi ý phải tự nhiên, hữu ích, không giả vờ đã dùng sản phẩm, không tạo testimonial giả, không spam và không chèn link bán hàng.',
@@ -1585,7 +1586,7 @@ const RemoteApp = (() => {
     const allowedAction = new Set(['Bỏ qua','Theo dõi','Comment giá trị','Hỏi chẩn đoán','Tạo nhu cầu','Nối tiếp hội thoại','Xử lý phản đối','Gợi ý giải pháp','Mời inbox','Kết bạn','CTA']);
     const allowedBinary = new Set(['Có','Không','Chưa rõ']);
     const cfg=getAiConfig_();
-    const hasBusinessContext=!!String(cfg.businessContext||'').trim();
+    const groupContextMap=loadGroupAiContextMap_();
     const now = new Date();
 
     const valid=(analyses||[])
@@ -1606,7 +1607,9 @@ const RemoteApp = (() => {
       const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
       const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
       let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
-      if(!hasBusinessContext) productFit='Chưa rõ';
+      const rowGroup=String(r[4]||'').trim();
+      const effectiveContext=resolveAiContextForGroup_(rowGroup,'',cfg,groupContextMap);
+      if(!effectiveContext) productFit='Chưa rõ';
 
       const needScore=clampScore_(a.need_score,0,25);
       const fitScore=clampScore_(a.fit_score,0,25);
@@ -1639,6 +1642,7 @@ const RemoteApp = (() => {
       const gateReason=[
         'Buyer='+buyerRole,
         'Fit='+productFit,
+        'Context='+(effectiveContext?'Có':'Thiếu'),
         'Need '+needScore+'/25',
         'Fit '+fitScore+'/25',
         'Action '+actionScore+'/20',
