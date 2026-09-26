@@ -2461,6 +2461,13 @@ const RemoteApp = (() => {
     const last=Math.max(2,sheet.getLastRow());
     const n=Math.max(1,last-1);
 
+    // Optional affinity: blank/AUTO = smart dispatcher; W1/W2/W3 pins a Group.
+    const profileRule=SpreadsheetApp.newDataValidation()
+      .requireValueInList(['AUTO','W1','W2','W3'], true)
+      .setAllowInvalid(true)
+      .build();
+    sheet.getRange(2,2,n,1).setDataValidation(profileRule);
+
     // Operator target: only 10/15/20/25 posts per selected Group.
     const targetRule=SpreadsheetApp.newDataValidation()
       .requireValueInList(['10','15','20','25'], true)
