@@ -2488,6 +2488,10 @@ const RemoteApp = (() => {
 
     sheet.getRange(2,23,n,1).insertCheckboxes();
 
+    // V1.8.1 used X as a command dropdown. From V1.8.3+ X:Y:Z are output-only
+    // status/progress/error columns, so remove every legacy validation rule first.
+    sheet.getRange(2,24,n,3).clearDataValidations();
+
     const statusRange=sheet.getRange(2,24,n,1);
     const statusValues=statusRange.getDisplayValues();
     let statusDirty=false;
