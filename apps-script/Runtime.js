@@ -3071,6 +3071,32 @@ const RemoteApp = (() => {
     return callSocialAioApiWithClient_(getBridgeClientId_(), apiName, apiParams);
   }
 
+  function apiDiagRaw_(clientId, params) {
+    const url=CFG.BRIDGE_SERVER.replace(/\/$/,'')+'/call';
+    const started=Date.now();
+    const res=UrlFetchApp.fetch(url,{
+      method:'post',
+      contentType:'application/json',
+      muteHttpExceptions:true,
+      followRedirects:true,
+      payload:JSON.stringify({
+        id:String(clientId||'').trim(),
+        apiname:'get_list_fb_group_posts',
+        apiparams:params||{}
+      })
+    });
+    const text=res.getContentText('UTF-8');
+    let parsed=text;
+    try{ parsed=JSON.parse(text); }catch(_){}
+    return {
+      code:res.getResponseCode(),
+      text,
+      parsed,
+      durationMs:Date.now()-started,
+      error:findBridgeError_(parsed)
+    };
+  }
+
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
     const id=String(clientId || '').trim();
     if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
