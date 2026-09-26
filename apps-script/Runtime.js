@@ -842,11 +842,12 @@ const RemoteApp = (() => {
 
     const scan = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
     if (scan) {
-      if (scan.getMaxColumns() < 26) scan.insertColumnsAfter(scan.getMaxColumns(),26-scan.getMaxColumns());
+      if (scan.getMaxColumns() < 27) scan.insertColumnsAfter(scan.getMaxColumns(),27-scan.getMaxColumns());
       scan.getRange(1,17,1,6).setValues([[
         'Lượt cập nhật hôm nay','Bản ghi lần cuối','Bài quét lần cuối',
         'Bài mới hôm nay','Comment mới hôm nay','KH mới hôm nay'
       ]]);
+      scan.getRange(1,27).setValue('AI Context / Offer');
       setupBridgeControlColumns_(scan);
     }
     props.setProperty(schemaKey, CFG.VERSION);
@@ -1089,6 +1090,32 @@ const RemoteApp = (() => {
     const head = Math.floor(max * 0.75);
     const tail = max - head - 24;
     return s.slice(0,head) + '\n...[rút gọn]...\n' + s.slice(-tail);
+  }
+
+  function loadGroupAiContextMap_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
+    const out={};
+    if(!sh || sh.getLastRow()<2) return out;
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
+    rows.forEach(r=>{
+      const name=String(r[2]||'').trim();
+      const key=String(r[4]||extractGroupKey_(r[3])||'').trim().toLowerCase();
+      const ctx=String(r[26]||'').trim();
+      if(!ctx) return;
+      if(name) out['NAME|'+name]=ctx;
+      if(key) out['KEY|'+key]=ctx;
+    });
+    return out;
+  }
+
+  function resolveAiContextForGroup_(groupName,groupKey,cfg,map) {
+    const m=map||loadGroupAiContextMap_();
+    return String(
+      m['NAME|'+String(groupName||'').trim()] ||
+      m['KEY|'+String(groupKey||'').trim().toLowerCase()] ||
+      (cfg&&cfg.businessContext) || ''
+    ).trim();
   }
 
   function analyzeNewPosts_(options) {
