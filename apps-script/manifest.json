@@ -7,10 +7,11 @@
     "Lead Qualification Hard Gate separates need detection from actual sales qualification.",
     "PASS requires Buyer Role=Co, Product Fit=Co and deterministic score >=65; FAIL/WATCH never enter KH PASS counters.",
     "Score components: Need 25 + Product Fit 25 + Action 20 + Urgency 15 + Reachability 10 + Freshness 5.",
-    "Per-Group AI Context / Offer in QUET NHOM is the primary Product Fit context; global Business Context is fallback. With no context, Product Fit is forced to Chua ro.",
-    "AI mode is explicit: AUTO analyzes only pending sources from Groups just scanned; MANUAL lets the operator choose checked Groups, selected CO HOI rows, all waiting sources, or legacy requalification.",
+    "Per-Group AI Context / Offer in QUET NHOM is the primary Product Fit context; global Business Context is fallback. With no effective context, Product Fit is forced to Chua ro.",
+    "AUTO AI is batch-bound: it analyzes only exact Source IDs newly imported by the current Group scan, preventing old waiting rows from leaking into the run.",
+    "MANUAL AI can analyze the exact last scan, checked Groups, selected CO HOI rows, all waiting sources, or legacy rows requiring Hard Gate requalification.",
     "Manual JSON import is fallback ingestion and does not auto-run AI.",
-    "KHACH HANG TIEM NANG preserves old rows as LEGACY until they are explicitly requalified; PASS metrics exclude LEGACY.",
-    "Operator menu bootstrap is simplified to 1 Settings, 2 Scan Group, 3 AI Analysis, 4 Refresh Data; diagnostics/import/dedupe/version are moved under tools/system."
+    "KHACH HANG TIEM NANG preserves old rows as LEGACY until all known sources for that person are requalified; PASS metrics exclude LEGACY.",
+    "Operator bootstrap menu is simplified to Settings, Scan Group, AI Analysis, Refresh Data (when needed), with diagnostics/import/dedupe/version moved under tools/system."
   ]
 }
