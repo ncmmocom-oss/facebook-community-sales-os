@@ -1683,7 +1683,7 @@ const RemoteApp = (() => {
     const map={};
     const ol=os.getLastRow();
     if(ol>=2) {
-      os.getRange(2,1,ol-1,21).getValues().forEach(r=>{
+      os.getRange(2,1,ol-1,26).getValues().forEach(r=>{
         if(String(r[3]||'')!=='Bình luận') return;
         const id=String(r[1]||'').replace(/^C:/,'');
         if(id) map[id]=r;
@@ -1692,7 +1692,7 @@ const RemoteApp = (() => {
 
     const cl=cs.getLastRow();
     if(cl<2) return {rows:0};
-    const rows=cs.getRange(2,1,cl-1,23).getValues();
+    const rows=cs.getRange(2,1,cl-1,27).getValues();
     rows.forEach(r=>{
       const o=map[String(r[6]||'')];
       if(!o) { r[21]='Chờ AI'; return; }
@@ -1703,8 +1703,12 @@ const RemoteApp = (() => {
       r[19]=o[13]||'';
       r[20]=o[15]||'';
       r[21]=[o[8],o[9],o[10],o[11]].some(v=>v!==''&&v!==null&&v!==undefined)?'Đã phân tích':'Chờ AI';
+      r[23]=o[21]||'';
+      r[24]=o[22]||'';
+      r[25]=o[23]||'';
+      r[26]=o[24]||'';
     });
-    cs.getRange(2,1,rows.length,23).setValues(rows);
+    cs.getRange(2,1,rows.length,27).setValues(rows);
     return {rows:rows.length};
   }
 
