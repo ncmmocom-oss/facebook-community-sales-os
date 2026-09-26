@@ -11,6 +11,8 @@
     "Adds consistency audit across raw posts, comments, opportunities, leads and group registry.",
     "Fast refresh skips expensive full dedupe/remap during normal import/AI cycles.",
     "AI input is compressed and AI result writes are batched to reduce tokens and Sheet RPC latency.",
-    "Lead rows persist first-lead date for accurate new-lead-per-day reporting."
+    "Lead rows persist first-lead date for accurate new-lead-per-day reporting.",
+    "Import returns before AI; auto-analyze starts in a second background RPC so new rows become visible sooner.",
+    "Import dialog prevents accidental use of Sync Sheet while JSON files are selected."
   ]
 }
