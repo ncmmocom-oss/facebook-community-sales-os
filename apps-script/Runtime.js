@@ -196,10 +196,10 @@ const RemoteApp = (() => {
     updateGroupScanStatus_(groupSheet, groupStats);
     logImportRun_(importRunId, groupStats, files.length, Date.now() - startedMs, errors);
 
-    // Keep import latency low: commit data first, then let the dialog start AI
-    // in a second asynchronous Apps Script call when autoAnalyze is enabled.
+    // V1.8.7: manual JSON import is a fallback ingestion path.
+    // Auto AI belongs to the Group-scan workflow only; manual imports wait for an explicit AI scope.
     const aiCfg = getAiConfig_();
-    const autoAnalyzeRequested = !workerFast && !!(aiCfg.autoAnalyze && aiCfg.configured && oppRows.length);
+    const autoAnalyzeRequested = false;
     const refresh = workerFast ? null : refreshCurrentData({ silent:true, fast:true });
     SpreadsheetApp.flush();
 
