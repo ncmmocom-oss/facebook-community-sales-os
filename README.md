@@ -441,3 +441,24 @@ Runtime không lưu full post text hoặc full cursor token vào Sheet.
 - `Z_UNKNOWN`: chưa đủ bằng chứng.
 
 Trong phase này không sửa business logic quét production cho đến khi có bằng chứng từ raw response.
+
+
+## V1.8.6-PAGINATION-FIX — Social AIO Group cursor
+
+Live diagnostic on `get_list_fb_group_posts` confirmed the relay response shape is effectively:
+
+```
+{ result: [ post ] }
+```
+
+and the returned post item contains a `cursor`. The API documentation lists `cursor` as the pagination input but does not document where the next cursor is emitted in the response.
+
+The previous cursor walker intentionally ignored a generic `cursor` inside arrays, so after `unwrapBridgeResult_()` returned `result[]`, the scanner treated page 1 as exhausted.
+
+Fix: when walking an array, inspect items from the last item backward and allow the item's top-level generic `cursor`. The last item cursor becomes the next-page cursor.
+
+Diagnostic proof from Group `hxx.gang`:
+- page 1: 1 post + cursor,
+- page 2 probe: 3 posts,
+- full Group URL works,
+- vanity slug alone (`hxx.gang`) is rejected by the current Social AIO implementation.
