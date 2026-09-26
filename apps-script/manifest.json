@@ -1,18 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.7.0",
-  "channel": "stable",
+  "version": "1.8.0-poc",
+  "channel": "poc",
   "updated_at": "2026-09-26",
   "notes": [
-    "Adds NHẬT KÝ IMPORT and THỐNG KÊ NGÀY with per-group daily scan/new/duplicate/lead counters.",
-    "New JSON rows are inserted at the top of NHẬP JSON, BÌNH LUẬN and CƠ HỘI.",
-    "Posts JSON can now expose nested comments; comments are parsed even when the parent post is already a duplicate.",
-    "Captures media CDN URLs into NHẬP JSON, BÌNH LUẬN and CƠ HỘI without embedding heavy inline images.",
-    "Adds consistency audit across raw posts, comments, opportunities, leads and group registry.",
-    "Fast refresh skips expensive full dedupe/remap during normal import/AI cycles.",
-    "AI input is compressed and AI result writes are batched to reduce tokens and Sheet RPC latency.",
-    "Lead rows persist first-lead date for accurate new-lead-per-day reporting.",
-    "Import returns before AI; auto-analyze starts in a second background RPC so new rows become visible sooner.",
-    "Import dialog prevents accidental use of Sync Sheet while JSON files are selected."
+    "Adds official Social AIO HTTP Relay POC using POST https://api.fbaio.org/call.",
+    "CLIENT_ID is taken from Social AIO > Automation > APIs > Connect and stored only in Apps Script Document Properties.",
+    "Import dialog now includes API Bridge controls: save Client ID, test relay, scan first Group page, and fetch first comment page.",
+    "Group POC uses get_list_fb_group_posts and feeds returned posts directly into the existing V1.7 import/dedupe pipeline.",
+    "Comment POC uses get_list_fb_comment and feeds returned comments directly into BÌNH LUẬN/CƠ HỘI.",
+    "POC intentionally limits scanning to the first page. Pagination and scheduled multi-group scans are gated on successful schema/latency acceptance.",
+    "Existing V1.7 daily metrics, import log, newest-first, media URLs, consistency audit, fast refresh and token saver remain unchanged."
   ]
 }
