@@ -9,6 +9,7 @@
     p { margin: 6px 0 14px; line-height: 1.45; }
     .box { border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
     .ai { border-color: #a7f3d0; background: #ecfdf5; }
+    .bridge { border-color:#fbbf24; background:#fffbeb; }
     input, textarea, select { box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     input[type="file"], input[type="checkbox"] { width: auto; }
     textarea { min-height: 72px; resize: vertical; }
@@ -87,6 +88,36 @@
     <div id="aiState" class="muted">Đang đọc cấu hình...</div>
     <div class="progress"><div id="progressBar"></div></div>
     <div id="progressText">Chưa có tiến trình AI.</div>
+  </div>
+
+
+  <div class="box bridge">
+    <h3>3. API Bridge POC — quét trực tiếp, không tải JSON</h3>
+    <p>
+      Mở <b>Social AIO → Automation → APIs → Connect</b>, giữ tab APIs đang kết nối,
+      sau đó dán <b>CLIENT_ID</b> vào đây. Google Sheet sẽ gọi relay chính thức
+      <b>api.fbaio.org</b> để chạy API bằng phiên Facebook đang đăng nhập trong browser.
+    </p>
+
+    <label>CLIENT_ID từ màn hình Social AIO APIs</label>
+    <input id="bridgeClientId" type="password" placeholder="Dán CLIENT_ID rồi LƯU">
+    <button class="secondary" onclick="saveBridgeConfig()">LƯU CLIENT_ID</button>
+    <button class="dark" onclick="testBridge()">TEST KẾT NỐI</button>
+    <div id="bridgeState" class="muted">Đang đọc cấu hình Bridge...</div>
+
+    <label style="display:block;margin-top:10px;">URL Group Facebook — POC page đầu</label>
+    <input id="bridgeGroupUrl" type="text" placeholder="https://www.facebook.com/groups/.../">
+    <button onclick="scanBridgeGroup()">QUÉT GROUP POC → SHEET</button>
+
+    <label style="display:block;margin-top:10px;">URL bài Facebook — POC comment page đầu</label>
+    <input id="bridgePostUrl" type="text" placeholder="https://www.facebook.com/groups/.../permalink/.../">
+    <button onclick="scanBridgeComments()">LẤY COMMENT POC → SHEET</button>
+
+    <div class="muted">
+      POC hiện chỉ gọi <b>page đầu</b> để nghiệm thu đường truyền, schema post/comment và tốc độ.
+      Sau khi PASS mới bật pagination + scheduler cho 15–30 Group/Profile.
+      CLIENT_ID chỉ lưu trong Document Properties, không ghi vào ô Sheet/GitHub.
+    </div>
   </div>
 
   <div id="status">Sẵn sàng.</div>
@@ -318,6 +349,84 @@
       });
     }
 
+
+    function loadBridgeConfig() {
+      command({__command:'GET_BRIDGE_CONFIG'}, cfg => {
+        const bits = [
+          'Runtime V' + cfg.version,
+          'Relay: ' + cfg.relay,
+          cfg.configured ? ('CLIENT_ID ' + cfg.clientIdMasked + ' ✅') : 'CLIENT_ID: CHƯA CẤU HÌNH'
+        ];
+        document.getElementById('bridgeState').textContent = bits.join(' | ');
+      }, () => {
+        document.getElementById('bridgeState').textContent = 'Không đọc được cấu hình Bridge.';
+      });
+    }
+
+    function saveBridgeConfig() {
+      const id = document.getElementById('bridgeClientId').value.trim();
+      if (!id) { setStatus('Hãy dán CLIENT_ID từ Social AIO > Automation > APIs > Connect.'); return; }
+      setStatus('Đang lưu CLIENT_ID...');
+      command({__command:'SAVE_BRIDGE_CONFIG', clientId:id}, cfg => {
+        document.getElementById('bridgeClientId').value = '';
+        document.getElementById('bridgeState').textContent =
+          'Runtime V' + cfg.version + ' | Relay: ' + cfg.relay + ' | CLIENT_ID ' + cfg.clientIdMasked + ' ✅';
+        setStatus('✅ Đã lưu CLIENT_ID. Bấm TEST KẾT NỐI.');
+      });
+    }
+
+    function testBridge() {
+      setStatus('Đang gọi Social AIO relay...');
+      command({__command:'TEST_BRIDGE'}, r => {
+        setStatus(
+          '✅ API BRIDGE PASS' +
+          '\nRuntime: V' + r.version +
+          '\nRelay: ' + r.relay +
+          '\nClient: ' + r.clientId +
+          '\nSocial AIO: ' + (r.socialAioVersion || 'OK') +
+          (r.profile ? ('\nProfile: ' + r.profile) : '') +
+          '\nRound-trip: ' + r.durationMs + ' ms'
+        );
+      });
+    }
+
+    function scanBridgeGroup() {
+      const url = document.getElementById('bridgeGroupUrl').value.trim();
+      if (!url) { setStatus('Hãy dán URL Group Facebook vào ô API Bridge.'); return; }
+      setStatus('API Bridge đang quét page đầu của Group...');
+      command({__command:'BRIDGE_SCAN_GROUP', groupUrl:url}, r => {
+        const x = r.imported || {};
+        setStatus(
+          '✅ GROUP API POC PASS' +
+          '\nAPI đọc: ' + r.postsRead + ' post' +
+          '\nPost mới: ' + (x.postImported || 0) +
+          '\nTrùng: ' + (x.duplicates || 0) +
+          '\nCursor tiếp: ' + (r.nextCursor ? 'CÓ' : 'KHÔNG') +
+          '\nThời gian: ' + Math.round(r.durationMs/100)/10 + 's' +
+          '\n→ Dữ liệu đã vào NHẬP JSON / CƠ HỘI.'
+        );
+      });
+    }
+
+    function scanBridgeComments() {
+      const url = document.getElementById('bridgePostUrl').value.trim();
+      if (!url) { setStatus('Hãy dán URL bài Facebook có comment.'); return; }
+      setStatus('API Bridge đang lấy comment page đầu...');
+      command({__command:'BRIDGE_FETCH_COMMENTS', postUrl:url}, r => {
+        const x = r.imported || {};
+        setStatus(
+          (r.commentsRead ? '✅ COMMENT API POC PASS' : '⚠️ API PASS NHƯNG CHƯA CÓ COMMENT RECORD') +
+          '\nAPI đọc: ' + r.commentsRead + ' comment' +
+          '\nComment mới: ' + (x.commentImported || 0) +
+          '\nTrùng: ' + (x.duplicates || 0) +
+          '\nCursor tiếp: ' + (r.nextCursor ? 'CÓ' : 'KHÔNG') +
+          '\nThời gian: ' + Math.round(r.durationMs/100)/10 + 's' +
+          (r.responsePreview ? ('\nResponse: ' + r.responsePreview) : '') +
+          '\n→ Kiểm tra tab BÌNH LUẬN / CƠ HỘI.'
+        );
+      });
+    }
+
     function saveAiConfig() {
       const payload = {
         __command:'SAVE_AI_CONFIG',
@@ -362,6 +471,7 @@
     }
 
     loadAiConfig();
+    loadBridgeConfig();
   </script>
 </body>
 </html>
