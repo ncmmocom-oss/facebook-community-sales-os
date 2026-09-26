@@ -848,6 +848,7 @@ const RemoteApp = (() => {
     if (name === 'GET_AI_CONFIG') return getAiConfig_();
     if (name === 'SAVE_AI_CONFIG') return saveAiConfig_(command);
     if (name === 'ANALYZE_NEW') return analyzeNewPosts_({ silent: false });
+    if (name === 'ANALYZE_SCOPE') return analyzeByScope_(command);
     if (name === 'TEST_AI') return testAiConnection_();
     if (name === 'GET_AI_PROGRESS') return getAiProgress_();
     if (name === 'AUDIT_CONSISTENCY') return auditConsistency_();
@@ -896,7 +897,8 @@ const RemoteApp = (() => {
       model,
       lastGeminiModel: p.getProperty('AI_LAST_GEMINI_MODEL') || '',
       businessContext: p.getProperty('AI_BUSINESS_CONTEXT') || '',
-      autoAnalyze: (p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true',
+      analysisMode: p.getProperty('AI_ANALYSIS_MODE') || (((p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true') ? 'auto_scan' : 'manual'),
+      autoAnalyze: (p.getProperty('AI_ANALYSIS_MODE') || (((p.getProperty('AI_AUTO_ANALYZE') || 'true') === 'true') ? 'auto_scan' : 'manual')) === 'auto_scan',
       maxRows: Math.max(1, Math.min(200, Number(p.getProperty('AI_MAX_ROWS') || 100))),
     };
   }
@@ -911,7 +913,8 @@ const RemoteApp = (() => {
     if (provider === 'openai' && /^gpt-6/i.test(model)) model = 'gpt-5.6-luna';
 
     const businessContext = String(command.businessContext || '').trim();
-    const autoAnalyze = command.autoAnalyze !== false;
+    const analysisMode = String(command.analysisMode || (command.autoAnalyze === false ? 'manual' : 'auto_scan')) === 'manual' ? 'manual' : 'auto_scan';
+    const autoAnalyze = analysisMode === 'auto_scan';
     const maxRows = Math.max(1, Math.min(200, Number(command.maxRows || 100)));
 
     if (openaiKey) p.setProperty('OPENAI_API_KEY', openaiKey);
@@ -919,6 +922,7 @@ const RemoteApp = (() => {
     p.setProperty('AI_PROVIDER', provider);
     p.setProperty('AI_MODEL', model);
     p.setProperty('AI_BUSINESS_CONTEXT', businessContext);
+    p.setProperty('AI_ANALYSIS_MODE', analysisMode);
     p.setProperty('AI_AUTO_ANALYZE', String(autoAnalyze));
     p.setProperty('AI_MAX_ROWS', String(maxRows));
 
