@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.7-lead-gate',
+    VERSION: '1.8.7-identity-fix.1',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -43,7 +43,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -105,6 +105,12 @@ const RemoteApp = (() => {
 
     files.forEach(file => {
       try {
+        const sourceGroupRow = Number(file && file.__sourceGroupRow || 0);
+        const sourceGroupUrl = String(file && file.__sourceGroupUrl || '').trim();
+        const sourceGroupKey = String(
+          file && file.__sourceGroupKey || extractGroupKey_(sourceGroupUrl) || ''
+        ).trim().toLowerCase();
+
         const parsed = JSON.parse(file.text || '[]');
         const kind = detectJsonKind_(file.name || '', parsed);
 
@@ -131,6 +137,26 @@ const RemoteApp = (() => {
 
         const fileGroupKeys = [...new Set(posts.map(p => extractGroupKey_(p && (p.url || p.permalink_url))).filter(Boolean))];
         const fileGroupKey = fileGroupKeys.length === 1 ? fileGroupKeys[0] : '';
+
+        // API scans know the exact QUÉT NHÓM source row. If Facebook resolves a
+        // numeric Group URL to a canonical vanity slug, bind that canonical
+        // identity back to the same source row instead of appending a new row.
+        // Manual JSON import has no source-row metadata and keeps the legacy
+        // ensureGroupRegistered_ fallback below.
+        if (fileGroupKey && !groupMap[fileGroupKey] && sourceGroupRow) {
+          const bound = bindCanonicalGroupToSourceRow_(groupSheet, {
+            row: sourceGroupRow,
+            sourceUrl: sourceGroupUrl,
+            sourceKey: sourceGroupKey,
+            canonicalKey: fileGroupKey
+          });
+          if (bound) {
+            groupMap[fileGroupKey] = bound;
+            if (sourceGroupKey) groupMap[sourceGroupKey] = bound;
+            const sourceUrlKey = extractGroupKey_(sourceGroupUrl);
+            if (sourceUrlKey) groupMap[sourceUrlKey] = bound;
+          }
+        }
 
         posts.forEach(post => {
           postScanned += 1;
@@ -2434,6 +2460,64 @@ const RemoteApp = (() => {
   }
 
 
+  function bindCanonicalGroupToSourceRow_(sheet, options) {
+    options = options || {};
+    const row = Number(options.row || 0);
+    const sourceUrl = String(options.sourceUrl || '').trim();
+    const sourceKey = String(options.sourceKey || extractGroupKey_(sourceUrl) || '').trim().toLowerCase();
+    const canonicalKey = String(options.canonicalKey || '').trim().toLowerCase();
+
+    if (!canonicalKey || row < 2 || row > sheet.getLastRow()) return null;
+
+    const values = sheet.getRange(row, 1, 1, 16).getDisplayValues()[0] || [];
+    const currentUrl = String(values[3] || '').trim();
+    const currentExplicitId = String(values[4] || '').trim().toLowerCase();
+    const currentUrlKey = extractGroupKey_(currentUrl);
+
+    const sourceMatches =
+      (!!sourceUrl && normalizeUrl_(currentUrl) === normalizeUrl_(sourceUrl)) ||
+      (!!sourceKey && (currentExplicitId === sourceKey || currentUrlKey === sourceKey));
+
+    // Fail closed: never hijack a row if it no longer matches the scan source.
+    if (!sourceMatches) return null;
+
+    const canonicalUrl = 'https://www.facebook.com/groups/' + canonicalKey + '/';
+    const existingName = String(values[2] || '').trim();
+    const placeholderKeys = [sourceKey, currentExplicitId, currentUrlKey]
+      .map(x => String(x || '').trim().toLowerCase())
+      .filter(Boolean);
+    const isPlaceholderName = !existingName || placeholderKeys.some(k =>
+      existingName.toLowerCase() === ('group ' + k).toLowerCase()
+    );
+    const name = isPlaceholderName ? ('Group ' + canonicalKey) : existingName;
+
+    if (!String(values[0] || '').trim()) sheet.getRange(row, 1).setValue('Có');
+    sheet.getRange(row, 3).setValue(name);
+    sheet.getRange(row, 4).setValue(canonicalUrl);
+    sheet.getRange(row, 5).setValue(canonicalKey);
+    if (!String(values[6] || '').trim()) sheet.getRange(row, 7).setValue('Thử nghiệm');
+    if (!String(values[7] || '').trim()) sheet.getRange(row, 8).setValue(3);
+
+    // Preserve operator-selected target in column I. Only repair formulas if absent.
+    if (!String(values[10] || '').trim()) {
+      sheet.getRange(row, 11).setFormula(`=IF(OR(H${row}="";J${row}="");"";J${row}+1/H${row})`);
+    }
+    if (!String(values[11] || '').trim()) {
+      sheet.getRange(row, 12).setFormula(`=IF(A${row}<>"Có";"TẮT";IF(K${row}="";"CẦN QUÉT";IF(K${row}<=NOW();"CẦN QUÉT";"CHỜ")))`);
+    }
+
+    if (sourceUrl && normalizeUrl_(sourceUrl) !== normalizeUrl_(canonicalUrl)) {
+      const oldNote = String(values[15] || '').trim();
+      const trace = 'Canonical identity: ' + sourceUrl + ' -> ' + canonicalUrl;
+      if (oldNote.indexOf(trace) < 0) {
+        sheet.getRange(row, 16).setValue(oldNote ? (oldNote + ' | ' + trace) : trace);
+      }
+    }
+
+    return { name, row, active: String(values[0] || '').trim() || 'Có' };
+  }
+
+
   function ensureGroupRegistered_(sheet, groupKey) {
     const key = String(groupKey || '').trim().toLowerCase();
     if (!key) return { name: 'Group không rõ', row: null };
@@ -2557,7 +2641,7 @@ const RemoteApp = (() => {
     return 25;
   }
 
-  function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast) {
+  function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast,sourceRow) {
     groupUrl=String(groupUrl || '').trim();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
       throw new Error('Hãy nhập URL Group Facebook hợp lệ.');
@@ -2631,7 +2715,10 @@ const RemoteApp = (() => {
       imported=importJsonFiles([{
         name:fileName,
         text:JSON.stringify(selectedPosts),
-        __workerFast:!!workerFast
+        __workerFast:!!workerFast,
+        __sourceGroupRow:Number(sourceRow||0),
+        __sourceGroupUrl:groupUrl,
+        __sourceGroupKey:String(groupKey||extractGroupKey_(groupUrl)||'').trim().toLowerCase()
       }]);
     }finally{
       lock.releaseLock();
@@ -2867,7 +2954,7 @@ const RemoteApp = (() => {
 
     const started=Date.now();
     try {
-      const result=scanGroupApiBridge_(groupUrl,target,groupKey);
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey,'',false,row);
       const imported=result.imported||{};
       const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
 
@@ -2993,7 +3080,7 @@ const RemoteApp = (() => {
 
     const started=Date.now();
     try{
-      const result=scanGroupApiBridge_(groupUrl,target,groupKey,worker.clientId,true);
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey,worker.clientId,true,row);
       const imported=result.imported||{};
       const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
 
