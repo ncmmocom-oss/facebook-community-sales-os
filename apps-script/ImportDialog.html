@@ -15,6 +15,14 @@
     .scanitem { padding:3px 0; border-bottom:1px dashed #e5e7eb; }
     .scanitem:last-child { border-bottom:0; }
     .opbar { border:2px solid #2563eb; background:#eff6ff; }
+    .monitorbox { border:2px solid #0f766e; background:#f0fdfa; }
+    .monitorMetrics { display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:8px 0 10px; }
+    .monitorMetric { background:#fff; border:1px solid #99f6e4; border-radius:8px; padding:7px; text-align:center; }
+    .monitorMetric b { display:block; font-size:17px; margin-top:2px; }
+    .monitorMetric small { color:#64748b; font-size:11px; }
+    .monitorActions { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+    .duepreview { max-height:90px; overflow:auto; background:#fff; border:1px solid #ccfbf1; border-radius:7px; padding:7px; margin-top:8px; font-size:11px; }
+    .monitorOn { background:#0f766e !important; }
     .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 10px; }
     .metric { background:#fff; border:1px solid #dbeafe; border-radius:8px; padding:8px; text-align:center; }
     .metric b { display:block; font-size:18px; margin-top:2px; }
@@ -53,9 +61,32 @@
 <body>
   <h2>Social AIO → Community Sales OS</h2>
 
+  <div class="box monitorbox" id="monitorBox">
+    <h3>MONITOR 200 GROUP — PILOT</h3>
+    <div class="muted">Due Queue tự lấy Group đến hạn. <b>AUTO MONITOR chỉ chạy khi cửa sổ Control Center này đang mở.</b></div>
+    <div class="monitorMetrics">
+      <div class="monitorMetric"><small>Group hoạt động</small><b id="monActive">0</b></div>
+      <div class="monitorMetric"><small>Đến hạn</small><b id="monDue">0</b></div>
+      <div class="monitorMetric"><small>Đang quét</small><b id="monRunning">0</b></div>
+      <div class="monitorMetric"><small>Lỗi / Thiếu</small><b id="monExceptions">0</b></div>
+      <div class="monitorMetric"><small>Post mới hôm nay</small><b id="monNew">0</b></div>
+      <div class="monitorMetric"><small>AI chưa Gate</small><b id="monAiBacklog">0</b></div>
+      <div class="monitorMetric"><small>Lead PASS</small><b id="monPass">0</b></div>
+      <div class="monitorMetric"><small>Worker online</small><b id="monWorkers">0/0</b></div>
+    </div>
+    <div class="monitorActions">
+      <button class="primary" onclick="runDueGroups(false)">▶ QUÉT GROUP ĐẾN HẠN</button>
+      <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR</button>
+      <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG AUTO</button>
+      <button class="retry" onclick="pollMonitoring()">↻ LÀM MỚI</button>
+    </div>
+    <div id="monitorState" class="muted">Đang đọc Monitoring Overview...</div>
+    <div id="duePreview" class="duepreview">Chưa có Due Queue.</div>
+  </div>
+
   <div class="box opbar" id="scanBox">
     <h3>QUÉT NHÓM</h3>
-    <div class="muted"><b>2 thao tác nếu dùng mặc định:</b> tick Group trong sheet → bấm QUÉT.</div>
+    <div class="muted"><b>Quét thủ công:</b> tick Group trong sheet → QUÉT ĐÃ CHỌN. Với vận hành 200 Group, ưu tiên Due Queue ở phía trên.</div>
 
     <div class="metrics">
       <div class="metric"><small>Đã chọn</small><b id="mSelected">0</b></div>
@@ -467,6 +498,159 @@
     }
 
 
+    let monitoringTimer=null;
+    let autoMonitorTimer=null;
+    let autoMonitorEnabled=false;
+    let monitorBusy=false;
+
+    function renderMonitoring(o) {
+      if(!o) return;
+      document.getElementById('monActive').textContent=Number(o.activeGroups||0);
+      document.getElementById('monDue').textContent=Number(o.dueNow||0);
+      document.getElementById('monRunning').textContent=Number(o.running||0);
+      document.getElementById('monExceptions').textContent=Number(o.exceptions||0);
+      document.getElementById('monNew').textContent=Number(o.newPostsToday||0);
+      document.getElementById('monAiBacklog').textContent=Number(o.aiBacklog||0);
+      document.getElementById('monPass').textContent=Number(o.passLeads||0);
+      const w=o.workers||{};
+      document.getElementById('monWorkers').textContent=Number(w.onlineCount||0)+'/'+Number(w.configuredCount||0);
+
+      const ctx='Context '+Number(o.groupsWithContext||0)+'/'+Number(o.activeGroups||0);
+      const cycle='Cycle tối đa '+Number(o.dueCycleLimit||30)+' Group';
+      document.getElementById('monitorState').textContent=
+        'Runtime V'+o.version+' • '+ctx+' • '+cycle+
+        (autoMonitorEnabled?' • AUTO đang bật':' • AUTO đang tắt');
+
+      const due=(o.duePreview||[]);
+      document.getElementById('duePreview').innerHTML=due.length
+        ? due.map(x=>
+            '<div><b>Dòng '+x.row+'</b> — '+escapeHtml(x.name||'')+
+            ' • '+escapeHtml(x.lifecycle||'')+
+            ' • '+Number(x.targetCount||25)+' bài'+
+            (x.profile&&x.profile!=='AUTO'?' • '+escapeHtml(x.profile):'')+
+            '</div>'
+          ).join('')
+        : 'Không có Group đến hạn.';
+    }
+
+    function pollMonitoring() {
+      command({__command:'GET_MONITORING_OVERVIEW'},renderMonitoring,e=>{
+        document.getElementById('monitorState').textContent='Monitoring lỗi: '+(e.message||e);
+      });
+    }
+
+    function startMonitoringPolling() {
+      if(monitoringTimer) clearInterval(monitoringTimer);
+      pollMonitoring();
+      monitoringTimer=setInterval(pollMonitoring,15000);
+    }
+
+    function setAutoMonitorUi() {
+      const btn=document.getElementById('autoMonitorBtn');
+      if(!btn) return;
+      btn.textContent=autoMonitorEnabled?'⚡ AUTO MONITOR ĐANG BẬT':'⚡ BẬT AUTO MONITOR';
+      btn.classList.toggle('monitorOn',autoMonitorEnabled);
+    }
+
+    function scheduleNextAutoMonitor(delayMs) {
+      if(autoMonitorTimer) clearTimeout(autoMonitorTimer);
+      if(!autoMonitorEnabled) return;
+      autoMonitorTimer=setTimeout(()=>runDueGroups(true),Math.max(5000,Number(delayMs||20000)));
+    }
+
+    function startAutoMonitor() {
+      autoMonitorEnabled=true;
+      setAutoMonitorUi();
+      pollMonitoring();
+      runDueGroups(true);
+    }
+
+    function stopAutoMonitor() {
+      autoMonitorEnabled=false;
+      if(autoMonitorTimer) clearTimeout(autoMonitorTimer);
+      autoMonitorTimer=null;
+      setAutoMonitorUi();
+      document.getElementById('monitorState').textContent='AUTO MONITOR đã tạm dừng.';
+      pollMonitoring();
+    }
+
+    function runDueGroups(fromAuto) {
+      if(monitorBusy) {
+        if(!fromAuto) setStatus('Monitoring đang xử lý một cycle khác.');
+        return;
+      }
+      monitorBusy=true;
+      setStatus('Đang tạo Due Queue cho tối đa 30 Group đến hạn...');
+      command({__command:'PREPARE_DUE_WORKER_BATCH',limit:30},plan=>{
+        if(!plan || !plan.selected){
+          monitorBusy=false;
+          setStatus('Due Queue hiện không có Group cần quét.');
+          pollMonitoring();
+          if(fromAuto) scheduleNextAutoMonitor(60000);
+          return;
+        }
+        runWorkerPlan(plan,false,result=>{
+          monitorBusy=false;
+          pollMonitoring();
+          if(fromAuto && autoMonitorEnabled){
+            if(result&&result.pauseAuto){
+              autoMonitorEnabled=false;
+              setAutoMonitorUi();
+              setStatus((result.message||'AUTO MONITOR tạm dừng do có exception cần xử lý.'));
+            } else {
+              scheduleNextAutoMonitor(20000);
+            }
+          }
+        });
+      },e=>{
+        monitorBusy=false;
+        setStatus('Không tạo được Due Queue: '+(e.message||e));
+        if(fromAuto) scheduleNextAutoMonitor(60000);
+      });
+    }
+
+    function analyzeSourceIdsSequential(sourceIds,baseStatus,done) {
+      const ids=[...new Set((sourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean))];
+      const chunkSize=150;
+      let index=0,totalAnalyzed=0,totalPassNew=0,lastPass='-';
+      if(!ids.length){ if(done) done({analyzed:0}); return; }
+
+      startProgressPolling();
+      const next=()=>{
+        if(index>=ids.length){
+          stopProgressPolling();
+          setStatus(
+            baseStatus+
+            '\nAI đã phân tích: '+totalAnalyzed+'/'+ids.length+
+            '\nAI còn lại trong batch: 0'+
+            '\nKH PASS mới: '+totalPassNew+
+            '\nTổng KH PASS: '+lastPass
+          );
+          pollGroupScanState();
+          pollMonitoring();
+          if(done) done({analyzed:totalAnalyzed});
+          return;
+        }
+
+        const chunk=ids.slice(index,index+chunkSize);
+        setStatus(baseStatus+'\nAI AUTO: '+Math.min(index+chunk.length,ids.length)+'/'+ids.length+' nguồn...');
+        command({__command:'ANALYZE_SCOPE',scope:'source_ids',sourceIds:chunk},r=>{
+          totalAnalyzed+=Number(r.analyzed||0);
+          if(r.refresh){
+            totalPassNew+=Number(r.refresh.newLeads||0);
+            lastPass=r.refresh.leads;
+          }
+          index+=chunk.length;
+          next();
+        },e=>{
+          stopProgressPolling();
+          setStatus(baseStatus+'\nLỗi AI ở chunk '+(Math.floor(index/chunkSize)+1)+': '+(e.message||e));
+          if(done) done({error:e.message||String(e),pauseAuto:true});
+        });
+      };
+      next();
+    }
+
     function workerHealthLabel(health) {
       const h=String(health||'UNKNOWN').toUpperCase();
       if(h==='ONLINE') return '● ONLINE';
@@ -687,9 +871,8 @@
     function startGroupScanPolling() {
       if (scanStateTimer) clearInterval(scanStateTimer);
       pollGroupScanState();
-      scanStateTimer = setInterval(pollGroupScanState, 2000);
+      scanStateTimer = setInterval(pollGroupScanState, 5000);
     }
-
     function selectedTarget() {
       return Number(document.getElementById('groupTarget').value || 25);
     }
@@ -756,22 +939,27 @@
       next();
     }
 
-    function runWorkerPlan(plan, retryMode) {
+    function runWorkerPlan(plan, retryMode, doneCallback) {
       const workers=(plan.workers||[]).filter(w=>(w.jobs||[]).length);
       if(!workers.length){
-        setStatus('Không có Worker/Job khả dụng.'+
-          ((plan.unassigned||[]).length?'\n'+plan.unassigned.map(x=>x.name+': '+x.error).join('\n'):''));
+        const msg='Không có Worker/Job khả dụng.'+
+          ((plan.unassigned||[]).length?'\n'+plan.unassigned.map(x=>x.name+': '+x.error).join('\n'):'');
+        setStatus(msg);
+        if(doneCallback) doneCallback({message:msg});
         return;
       }
 
       const ctx={results:[],started:Date.now()};
       let remaining=workers.length;
       const workerNames=workers.map(w=>w.slot+'('+w.jobs.length+')').join(' • ');
+      const label=plan.mode==='due'?'DUE QUEUE':(retryMode?'RETRY':'QUÉT');
       setStatus(
-        (retryMode?'RETRY':'QUÉT')+' bằng '+workers.length+' Worker song song...'+
+        label+' bằng '+workers.length+' Worker...'+
         '\nPhân phối: '+workerNames+
         ((plan.unassigned||[]).length?'\nKhông gán được: '+plan.unassigned.length:'')
       );
+
+      const finish=(payload)=>{ if(doneCallback) doneCallback(payload||{}); };
 
       const onWorkerDone=()=>{
         remaining--;
@@ -781,19 +969,20 @@
           .flatMap(r=>(r&&r.imported&&r.imported.newSourceIds)||[])
           .map(x=>String(x||'').trim())
           .filter(Boolean))];
-        command({__command:'FINALIZE_WORKER_BATCH',sourceIds:batchSourceIds}, fin=>{
-          const s=summarizePoolResults(ctx);
+
+        command({__command:'FINALIZE_WORKER_BATCH',sourceIds:batchSourceIds},fin=>{
+          const summary=summarizePoolResults(ctx);
           const elapsed=Date.now()-ctx.started;
           const newPosts=ctx.results.reduce((sum,r)=>
-            sum + Number(r&&r.imported&&r.imported.postImported||0),0);
+            sum+Number(r&&r.imported&&r.imported.postImported||0),0);
           const baseStatus=
-            ((s.failed===s.processed && s.processed>0)?'❌ QUÉT THẤT BẠI':((retryMode?'RETRY':'QUÉT')+' XONG'))+
+            ((summary.failed===summary.processed&&summary.processed>0)?'❌ QUÉT THẤT BẠI':label+' XONG')+
             ' - V'+fin.version+
-            '\nGroup xử lý: '+s.processed+
-            '\nXong đủ: '+s.passed+
-            '\nThiếu: '+s.incomplete+
-            '\nLỗi: '+s.failed+
-            '\nDừng: '+s.stopped+
+            '\nGroup xử lý: '+summary.processed+
+            '\nXong đủ: '+summary.passed+
+            '\nThiếu: '+summary.incomplete+
+            '\nLỗi: '+summary.failed+
+            '\nDừng: '+summary.stopped+
             '\nPost mới: '+newPosts+
             '\nTổng thời gian: '+Math.round(elapsed/100)/10+'s'+
             '\nKH PASS hiện có: '+((fin.refresh&&fin.refresh.leads)||0);
@@ -801,47 +990,47 @@
           setStatus(baseStatus);
           pollGroupScanState();
           loadWorkerPool();
+          pollMonitoring();
 
-          // Diagnostic build: if any Group stops short, diagnose ONE representative
-          // Group immediately instead of spending AI tokens on partial scan data.
-          if(s.incomplete>0){
-            const probe=ctx.results.find(r=>r&&r.incomplete&&Number(r.row||0)>=2);
-            if(probe){
+          // Any incomplete/failed Group is an operational exception. Do not let
+          // unattended AUTO MONITOR loop indefinitely on partial data.
+          if(summary.incomplete>0 || summary.failed>0){
+            const probe=ctx.results.find(r=>r&&(r.incomplete||(!r.ok&&!r.stopped))&&Number(r.row||0)>=2);
+            if(probe && summary.incomplete>0){
               const diagPrefix=baseStatus+
-                '\n\n⚠️ Quét chưa đủ mục tiêu. Tạm KHÔNG chạy AI.'+
-                '\nĐang tự chẩn đoán Group: '+(probe.name||probe.groupKey||('dòng '+probe.row));
+                '\n\n⚠️ Có Group quét thiếu. AUTO tạm dừng sau cycle này.'+
+                '\nĐang chẩn đoán: '+(probe.name||probe.groupKey||('dòng '+probe.row));
               runApiDiagnostic(probe.row,diagPrefix);
-              return;
             }
+            finish({
+              pauseAuto:true,
+              message:baseStatus+'\nAUTO MONITOR tạm dừng vì có '+(summary.failed+summary.incomplete)+' exception.'
+            });
+            return;
           }
 
           if(fin.autoAnalyzeRequested && newPosts>0){
-            const autoSourceIds=batchSourceIds;
-            setStatus(baseStatus+'\nAI AUTO: chỉ phân tích '+autoSourceIds.length+' nguồn MỚI của chính lần quét này...');
-            startProgressPolling();
-            command({__command:'ANALYZE_SCOPE',scope:'source_ids',sourceIds:autoSourceIds}, r=>{
-              setStatus(
-                baseStatus+
-                '\nAI đã phân tích: '+r.analyzed+
-                '\nAI còn lại trong phạm vi: '+r.remaining+
-                '\nKH PASS mới: '+(r.refresh?(r.refresh.newLeads||0):'-')+
-                '\nTổng KH PASS: '+(r.refresh?r.refresh.leads:'-')
-              );
-              stopProgressPolling();
-              pollGroupScanState();
-            }, e=>{
-              setStatus(baseStatus+'\nLỗi AI: '+(e.message||e));
-              stopProgressPolling();
+            analyzeSourceIdsSequential(batchSourceIds,baseStatus,r=>{
+              finish(r&&r.pauseAuto
+                ? {pauseAuto:true,message:baseStatus+'\nAUTO MONITOR tạm dừng vì AI lỗi.'}
+                : {ok:true,newPosts,processed:summary.processed});
             });
-          } else if(newPosts>0 && fin.analysisMode==='manual') {
-            setStatus(baseStatus+'\nAI: đang ở chế độ THỦ CÔNG — dữ liệu mới đã sẵn sàng để chọn phạm vi phân tích.');
+            return;
           }
+
+          if(newPosts>0 && fin.analysisMode==='manual'){
+            setStatus(baseStatus+'\nAI: THỦ CÔNG — dữ liệu mới đã sẵn sàng.');
+          }
+          finish({ok:true,newPosts,processed:summary.processed});
+        },e=>{
+          const msg='Finalize batch lỗi: '+(e.message||e);
+          setStatus(msg);
+          finish({pauseAuto:true,message:msg});
         });
       };
 
       workers.forEach(w=>runWorkerQueue(w,ctx,onWorkerDone));
     }
-
     function runCheckedGroups() {
       const target=selectedTarget();
       const btn=document.getElementById('scanSelectedBtn');
@@ -966,7 +1155,9 @@
 
     loadAiConfig();
     loadWorkerPool();
+    startMonitoringPolling();
     startGroupScanPolling();
+    setAutoMonitorUi();
     activateInitialView();
   </script>
 </body>
