@@ -161,7 +161,7 @@
     <select id="model"></select>
     <label style="display:block;margin-top:8px;">Business Context — mình thực sự đang bán gì?</label>
     <textarea id="businessContext" placeholder="Ghi cụ thể sản phẩm/dịch vụ, khu vực, nhóm khách phù hợp và trường hợp KHÔNG phù hợp. Nếu để trống, Hard Gate không cho Product Fit = Có."></textarea>
-    <div class="muted">Business Context là điều kiện bắt buộc để Lead Gate PASS. Nếu bán nhiều offer khác nhau, nên tách context theo chiến dịch ở phase sau.</div>
+    <div class="muted"><b>Ưu tiên context:</b> cột <b>AI Context / Offer</b> trong QUÉT NHÓM → nếu trống mới dùng Business Context toàn cục ở đây. Nếu cả hai trống, Product Fit = Chưa rõ và Lead Gate không PASS.</div>
     <button class="secondary" onclick="saveAiConfig()">LƯU CẤU HÌNH AI</button>
     <button class="dark" onclick="testAi()">TEST AI</button>
   </div>
@@ -298,7 +298,7 @@
           'Runtime V' + cfg.version,
           'AI ' + (cfg.provider === 'gemini' ? 'Gemini' : 'OpenAI') + ' ' + (cfg.configured ? '✅' : '⚠️'),
           'Mode: ' + ((cfg.analysisMode||'manual') === 'auto_scan' ? 'AUTO sau quét' : 'THỦ CÔNG'),
-          cfg.businessContext ? 'Business Context ✅' : '⚠️ CHƯA CÓ Business Context → Lead Gate không PASS',
+          cfg.businessContext ? 'Global Context ✅' : 'Global Context — (có thể dùng AI Context / Offer theo Group)',
           (cfg.provider === 'gemini' && cfg.lastGeminiModel ? 'Model: ' + cfg.lastGeminiModel : '')
         ].filter(Boolean);
         document.getElementById('aiState').textContent = bits.join(' | ');
@@ -849,7 +849,7 @@
       command(payload, cfg=>{
         document.getElementById('aiState').textContent=
           'Runtime V'+cfg.version+' | Mode: '+(cfg.analysisMode==='auto_scan'?'AUTO sau quét':'THỦ CÔNG')+
-          (cfg.businessContext?' | Business Context ✅':' | ⚠️ Chưa có Business Context');
+          (cfg.businessContext?' | Global Context ✅':' | Global Context — | ưu tiên Context theo Group');
       });
     }
 
