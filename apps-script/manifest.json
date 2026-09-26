@@ -1,16 +1,17 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.3-poc",
+  "version": "1.8.4-poc",
   "channel": "poc",
   "updated_at": "2026-09-26",
   "notes": [
-    "Operator UX reduced to a simple flow: select Groups, choose 10/15/20/25 posts per Group, press QUÉT.",
-    "QUÉT NHÓM column I is now validated to 10/15/20/25; legacy values outside the range are normalized to 25.",
-    "Visible operator columns W:Z are Chọn, Trạng thái, Tiến độ, Lỗi/Ghi chú.",
-    "Control Center shows counters for selected Groups, requested posts, running, completed, errors, incomplete/stopped.",
-    "Adds RETRY for LỖI and THIẾU groups.",
-    "Group API scanning now paginates by cursor until the requested target is reached, cursor is exhausted, stop is requested, or the per-group time budget is reached.",
-    "If Social AIO returns fewer posts than requested and no usable cursor, the row is marked THIẾU rather than XONG.",
-    "Technical Import JSON, AI and API Bridge settings are collapsed under Advanced; day-to-day operation stays at the top."
+    "Adds a 3-slot Social AIO Worker Pool (W1/W2/W3), each with its own Client ID, label, enabled state, profile identity, health and latency.",
+    "The existing working single Client ID migrates automatically into W1; W2/W3 can be added without re-entering W1.",
+    "Worker settings are stored only in Apps Script Document Properties. Client IDs are masked in the UI and never written to Sheet/GitHub.",
+    "TEST 3 WORKER verifies Social AIO version/profile and records latency for smart dispatch.",
+    "Selected Groups are planned across tested-online workers with load balancing. Column Profile can optionally pin a Group to W1/W2/W3, worker label, or returned Facebook profile; blank/AUTO remains automatic.",
+    "The Control Center launches up to three independent google.script.run worker queues concurrently. Each Worker processes its own queue sequentially.",
+    "API fetches run concurrently; Sheet dedupe/write is serialized with DocumentLock to avoid duplicate/race corruption.",
+    "Worker imports skip repeated full refresh; one FINALIZE pass refreshes leads/group/timeline after all workers finish, then AI can run once for the batch.",
+    "Operator UX remains tick Group -> choose 10/15/20/25 -> QUÉT. Worker implementation stays hidden under Advanced Settings."
   ]
 }
