@@ -25,6 +25,17 @@ function buildLocalMenu_() {
     .addItem('Đồng bộ KH tiềm năng', 'syncPotentialCustomers')
     .addItem('Kiểm tra bài trùng', 'auditDuplicates')
     .addSeparator()
+    .addSubMenu(
+      SpreadsheetApp.getUi().createMenu('API BRIDGE POC')
+        .addItem('1. Cấu hình CLIENT_ID', 'apiBridgeConfigure')
+        .addItem('2. TEST KẾT NỐI', 'apiBridgeTest')
+        .addItem('3. Quét Group đang chọn', 'apiBridgeScanSelectedGroup')
+        .addItem('4. Lấy comment Post đang chọn', 'apiBridgeFetchCommentsSelectedPost')
+        .addSeparator()
+        .addItem('Trạng thái Bridge', 'apiBridgeStatus')
+        .addItem('Xoá CLIENT_ID', 'apiBridgeClearConfig')
+    )
+    .addSeparator()
     .addItem('Cập nhật runtime từ GitHub', 'githubForceUpdate')
     .addItem('Thông tin phiên bản', 'showRuntimeInfo')
     .addToUi();
@@ -37,6 +48,12 @@ function syncPotentialCustomers() { return callRemote_('syncPotentialCustomers',
 function refreshCurrentData() { return callRemote_('refreshCurrentData', []); }
 function auditDuplicates() { return callRemote_('auditDuplicates', []); }
 function showRuntimeInfo() { return callRemote_('showRuntimeInfo', []); }
+function apiBridgeConfigure() { return callRemote_('apiBridgeConfigure', []); }
+function apiBridgeClearConfig() { return callRemote_('apiBridgeClearConfig', []); }
+function apiBridgeTest() { return callRemote_('apiBridgeTest', []); }
+function apiBridgeScanSelectedGroup() { return callRemote_('apiBridgeScanSelectedGroup', []); }
+function apiBridgeFetchCommentsSelectedPost() { return callRemote_('apiBridgeFetchCommentsSelectedPost', []); }
+function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
 
 function githubForceUpdate() {
   const cache = CacheService.getScriptCache();
