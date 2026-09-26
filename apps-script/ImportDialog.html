@@ -106,6 +106,7 @@
       <div>
         <label>Phân tích thủ công từ đâu?</label>
         <select id="analysisScope">
+          <option value="last_scan" selected>Dữ liệu MỚI của lần quét gần nhất</option>
           <option value="selected_groups">Group đang tick ở QUÉT NHÓM</option>
           <option value="selected_rows">Dòng đang chọn ở CƠ HỘI</option>
           <option value="all_waiting">Tất cả nguồn Chờ AI mới</option>
@@ -706,7 +707,11 @@
         remaining--;
         if(remaining>0) return;
 
-        command({__command:'FINALIZE_WORKER_BATCH'}, fin=>{
+        const batchSourceIds=[...new Set(ctx.results
+          .flatMap(r=>(r&&r.imported&&r.imported.newSourceIds)||[])
+          .map(x=>String(x||'').trim())
+          .filter(Boolean))];
+        command({__command:'FINALIZE_WORKER_BATCH',sourceIds:batchSourceIds}, fin=>{
           const s=summarizePoolResults(ctx);
           const elapsed=Date.now()-ctx.started;
           const newPosts=ctx.results.reduce((sum,r)=>
@@ -741,10 +746,7 @@
           }
 
           if(fin.autoAnalyzeRequested && newPosts>0){
-            const autoSourceIds=[...new Set(ctx.results
-              .flatMap(r=>(r&&r.imported&&r.imported.newSourceIds)||[])
-              .map(x=>String(x||'').trim())
-              .filter(Boolean))];
+            const autoSourceIds=batchSourceIds;
             setStatus(baseStatus+'\nAI AUTO: chỉ phân tích '+autoSourceIds.length+' nguồn MỚI của chính lần quét này...');
             startProgressPolling();
             command({__command:'ANALYZE_SCOPE',scope:'source_ids',sourceIds:autoSourceIds}, r=>{
