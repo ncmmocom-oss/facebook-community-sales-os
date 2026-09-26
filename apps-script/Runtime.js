@@ -35,7 +35,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.6.0: Post + Comment Intelligence + Person Timeline. AI phân tích cả bài viết và bình luận.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -1507,7 +1507,7 @@ const RemoteApp = (() => {
     const map={};
     const ol=os.getLastRow();
     if(ol>=2) {
-      os.getRange(2,1,ol-1,20).getValues().forEach(r=>{
+      os.getRange(2,1,ol-1,21).getValues().forEach(r=>{
         if(String(r[3]||'')!=='Bình luận') return;
         const id=String(r[1]||'').replace(/^C:/,'');
         if(id) map[id]=r;
@@ -1516,7 +1516,7 @@ const RemoteApp = (() => {
 
     const cl=cs.getLastRow();
     if(cl<2) return {rows:0};
-    const rows=cs.getRange(2,1,cl-1,22).getValues();
+    const rows=cs.getRange(2,1,cl-1,23).getValues();
     rows.forEach(r=>{
       const o=map[String(r[6]||'')];
       if(!o) { r[21]='Chờ AI'; return; }
@@ -1528,7 +1528,7 @@ const RemoteApp = (() => {
       r[20]=o[15]||'';
       r[21]=[o[8],o[9],o[10],o[11]].some(v=>v!==''&&v!==null&&v!==undefined)?'Đã phân tích':'Chờ AI';
     });
-    cs.getRange(2,1,rows.length,22).setValues(rows);
+    cs.getRange(2,1,rows.length,23).setValues(rows);
     return {rows:rows.length};
   }
 
@@ -2098,7 +2098,7 @@ const RemoteApp = (() => {
       if (!s.row) return;
       sheet.getRange(s.row, 10).setValue(now);
       sheet.getRange(s.row, 13).setValue(s.fileName);
-      sheet.getRange(s.row, 14).setValue(s.newCount || 0);
+      sheet.getRange(s.row, 14).setValue(s.postNew !== undefined ? s.postNew : (s.newCount || 0));
     });
   }
 
