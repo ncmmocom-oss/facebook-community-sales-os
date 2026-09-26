@@ -1,12 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.4-pilot.1",
-  "channel": "poc",
+  "version": "1.8.5-diagnostic",
+  "channel": "diagnostic",
   "updated_at": "2026-09-26",
   "notes": [
-    "Hotfix: clears legacy V1.8.1 data validation from QUÉT NHÓM X:Z before writing runtime status.",
-    "Hotfix: a fully failed scan no longer proceeds to AI or reports QUÉT + AI XONG.",
-    "Live Sheet operational status was reset to CHỜ while preserving the two selected Groups for retry.",
-    "Pilot remains W1-only; W2/W3 stay disabled for later scale-out."
+    "Adds one-click API RESPONSE DIAGNOSTIC for the active Group row without importing posts or running AI.",
+    "Diagnostic compares URL+sorting, UID+sorting, and URL-default requests for get_list_fb_group_posts.",
+    "Captures HTTP status, latency, response bytes, top-level keys, candidate post arrays, cursor paths, and before/after unwrap counts.",
+    "If a cursor is found, a PAGE2 probe is executed automatically to verify real pagination.",
+    "Classifies likely root cause as unwrap cursor loss, parser mismatch, UID mode, sorting parameter issue, upstream one-post/no-cursor, or unknown.",
+    "Writes structured diagnostics newest-first to the NHẬT KÝ API sheet. Raw post text and full cursor tokens are not persisted.",
+    "Normal W1 scan/import business logic remains unchanged during this diagnostic phase."
   ]
 }
