@@ -462,3 +462,66 @@ Diagnostic proof from Group `hxx.gang`:
 - page 2 probe: 3 posts,
 - full Group URL works,
 - vanity slug alone (`hxx.gang`) is rejected by the current Social AIO implementation.
+
+
+## V1.8.7 — Lead Qualification Hard Gate
+
+Mục tiêu của V1.8.7 là ngăn hệ thống đánh đồng **người có vấn đề** với **khách hàng tiềm năng thực sự cho offer đang bán**.
+
+### Hard Gate
+
+AI tạo các tín hiệu và điểm thành phần, nhưng code quyết định gate cuối cùng:
+
+- **PASS**: Buyer Role = Có + Product Fit = Có + Score >= 65.
+- **WATCH**: có tín hiệu nhu cầu nhưng buyer/fit/chất lượng evidence chưa đủ.
+- **FAIL**: Buyer Role = Không hoặc Product Fit = Không.
+
+Chỉ PASS mới được tính vào `KHÁCH HÀNG TIỀM NĂNG`, thống kê KH mới và lead count. Nguồn hội thoại vẫn được giữ cho chiến thuật community nhưng không bị tính là lead.
+
+### Score 100
+
+- Nhu cầu / Pain: 0–25.
+- Product Fit: 0–25.
+- Ý định hành động: 0–20.
+- Urgency: 0–15.
+- Khả năng tiếp cận / phản hồi: 0–10.
+- Độ mới / tín hiệu tương tác: 0–5.
+
+### Context theo Group
+
+`QUÉT NHÓM` có cột **AI Context / Offer**. Đây là context ưu tiên để chấm Product Fit cho Group đó.
+
+Thứ tự:
+
+1. AI Context / Offer của Group.
+2. Business Context toàn cục trong CÀI ĐẶT.
+3. Nếu cả hai trống → Product Fit = Chưa rõ → không PASS.
+
+Điều này cho phép cùng một hệ thống quản lý các community khác nhau mà không dùng sai offer/context.
+
+### AI execution mode
+
+**AUTO — sau khi quét Group**
+- Chỉ phân tích nguồn Chờ AI thuộc các Group vừa quét.
+- Không quét toàn bộ backlog toàn hệ thống.
+- Sau AI, refresh Lead Gate / KH PASS / Điều phối một lần.
+
+**THỦ CÔNG**
+Có thể chọn:
+- Group đang tick trong QUÉT NHÓM.
+- Dòng đang chọn trong CƠ HỘI.
+- Tất cả nguồn Chờ AI mới.
+- Dữ liệu legacy chưa có Lead Gate.
+
+Manual JSON import không tự chạy AI; nó chỉ là fallback ingestion.
+
+### Operator menu
+
+Bootstrap V1.8.7 rút menu SOCIAL AIO thành:
+
+1. CÀI ĐẶT
+2. QUÉT GROUP
+3. AI PHÂN TÍCH
+4. CẬP NHẬT DỮ LIỆU
+
+Các chức năng Import JSON, đồng bộ KH, dedupe, diagnostics và version/update được chuyển xuống CÔNG CỤ / HỆ THỐNG.
