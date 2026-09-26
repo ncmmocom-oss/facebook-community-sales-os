@@ -525,3 +525,12 @@ Bootstrap V1.8.7 rút menu SOCIAL AIO thành:
 4. CẬP NHẬT DỮ LIỆU
 
 Các chức năng Import JSON, đồng bộ KH, dedupe, diagnostics và version/update được chuyển xuống CÔNG CỤ / HỆ THỐNG.
+
+
+### Exact-batch attribution
+
+AUTO AI không dùng toàn bộ backlog của Group. Mỗi import từ API trả về danh sách `newSourceIds`; batch scan lưu danh sách này thành **last scan** và AUTO AI chỉ phân tích đúng các Source ID mới của batch đó.
+
+Vì vậy nếu quét 25 bài mới, một bài Chờ AI cũ ở cùng Group sẽ không còn bị kéo vào run thành 26. Manual mode có thêm phạm vi **Dữ liệu MỚI của lần quét gần nhất** để chạy lại đúng batch đó.
+
+Các lead cũ từ trước V1.8.7 được đánh dấu `LEGACY`. Chúng không được tính vào PASS KPI. Một LEGACY row chỉ bị loại khi toàn bộ nguồn đã biết của người đó đã được Hard Gate đánh giá và không có nguồn nào PASS; re-analysis từng phần không làm mất lead legacy ngoài ý muốn.
