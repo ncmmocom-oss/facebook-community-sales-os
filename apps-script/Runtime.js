@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.5-diagnostic.1',
+    VERSION: '1.8.6-pagination-fix',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -3862,8 +3862,8 @@ const RemoteApp = (() => {
       if (seen.indexOf(v) >= 0) return '';
       seen.push(v);
       if (Array.isArray(v)) {
-        for (const x of v) {
-          const found=walk(x,depth+1,false);
+        for (let i=v.length-1;i>=0;i--) {
+          const found=walk(v[i],depth+1,true);
           if (found) return found;
         }
         return '';
