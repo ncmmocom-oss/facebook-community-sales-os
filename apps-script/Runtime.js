@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.5-diagnostic',
+    VERSION: '1.8.5-diagnostic.1',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -3341,12 +3341,15 @@ const RemoteApp = (() => {
     ensureV16Sheets_(false);
 
     const ss=SpreadsheetApp.getActiveSpreadsheet();
-    const sh=ss.getActiveSheet();
-    const active=sh&&sh.getActiveRange();
-    const row=active?active.getRow():0;
+    const activeSheet=ss.getActiveSheet();
+    const active=activeSheet&&activeSheet.getActiveRange();
+    const requestedRow=Number(command&&command.row||0);
+    const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const row=requestedRow>=2 ? requestedRow :
+      ((activeSheet&&activeSheet.getName()===CFG.GROUP_SCAN_SHEET&&active)?active.getRow():0);
 
-    if(!sh || sh.getName()!==CFG.GROUP_SCAN_SHEET || row<2){
-      throw new Error('Mở QUÉT NHÓM và click một dòng Group cần chẩn đoán.');
+    if(row<2 || row>sh.getLastRow()){
+      throw new Error('Chọn một dòng Group hợp lệ trong QUÉT NHÓM để chẩn đoán.');
     }
 
     const groupName=String(sh.getRange(row,3).getDisplayValue()||'').trim()||('Group '+row);
