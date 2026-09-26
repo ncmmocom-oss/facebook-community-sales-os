@@ -1,15 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.5-diagnostic",
+  "version": "1.8.5-diagnostic.1",
   "channel": "diagnostic",
   "updated_at": "2026-09-26",
   "notes": [
-    "Adds one-click API RESPONSE DIAGNOSTIC for the active Group row without importing posts or running AI.",
-    "Diagnostic compares URL+sorting, UID+sorting, and URL-default requests for get_list_fb_group_posts.",
-    "Captures HTTP status, latency, response bytes, top-level keys, candidate post arrays, cursor paths, and before/after unwrap counts.",
-    "If a cursor is found, a PAGE2 probe is executed automatically to verify real pagination.",
-    "Classifies likely root cause as unwrap cursor loss, parser mismatch, UID mode, sorting parameter issue, upstream one-post/no-cursor, or unknown.",
-    "Writes structured diagnostics newest-first to the NHẬT KÝ API sheet. Raw post text and full cursor tokens are not persisted.",
-    "Normal W1 scan/import business logic remains unchanged during this diagnostic phase."
+    "Moves API diagnostic to the main Control Center surface so it is not hidden under Advanced.",
+    "When a batch scan ends THIẾU, automatically runs API RESPONSE DIAGNOSTIC for one representative incomplete Group.",
+    "Skips automatic AI analysis on partial/incomplete scan data during diagnostic mode to avoid wasting tokens and masking the API problem.",
+    "RUN_API_DIAGNOSTIC now accepts an explicit Group row, so post-scan auto-diagnostic does not depend on the active cell.",
+    "NHẬT KÝ API remains the structured source of truth for raw response shape/cursor diagnosis."
   ]
 }
