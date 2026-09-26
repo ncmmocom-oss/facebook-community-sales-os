@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.6-pagination-fix',
+    VERSION: '1.8.7-lead-gate',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -163,7 +163,8 @@ const RemoteApp = (() => {
             ]);
             oppRows.push([
               postDate,postId,url,'Bài viết',groupInfo.name,authorName,authorUrl,message,
-              '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n')
+              '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n'),
+              '','','','',''
             ]);
             postImported += 1;
             stat.postNew += 1;
@@ -188,8 +189,8 @@ const RemoteApp = (() => {
 
     applyPostMetadataUpdates_(rawSheet, oppSheet, postRowMap, postUpdates);
     writeRowsNewestFirst_(rawSheet, 5, rawRows, 16, [5]);
-    writeRowsNewestFirst_(commentSheet, 2, commentRows, 23, [5,7]);
-    writeRowsNewestFirst_(oppSheet, 2, oppRows, 21, [2]);
+    writeRowsNewestFirst_(commentSheet, 2, commentRows, 27, [5,7]);
+    writeRowsNewestFirst_(oppSheet, 2, oppRows, 26, [2]);
 
     finalizeGroupStats_(groupStats);
     updateGroupScanStatus_(groupSheet, groupStats);
@@ -298,12 +299,13 @@ const RemoteApp = (() => {
     ctx.commentRows.push([
       now,fileName || '',groupName,groupKey,n.postId,postUrl,commentId,commentUrl,n.parentId || '',
       n.authorName,n.authorUrl,n.message,eventDate,n.reactions,n.replies,
-      '','','','','','','Chờ AI',mediaUrls.join('\n')
+      '','','','','','','Chờ AI',mediaUrls.join('\n'),'','','',''
     ]);
 
     ctx.oppRows.push([
       eventDate,sourceId,commentUrl,'Bình luận',groupName,n.authorName,n.authorUrl,evidence,
-      '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n')
+      '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n'),
+      '','','','',''
     ]);
 
     stat.commentNew += 1;
@@ -776,11 +778,12 @@ const RemoteApp = (() => {
 
     let cs = ss.getSheetByName(CFG.COMMENT_SHEET);
     if (!cs) cs = ss.insertSheet(CFG.COMMENT_SHEET);
-    if (cs.getMaxColumns() < 23) cs.insertColumnsAfter(cs.getMaxColumns(), 23 - cs.getMaxColumns());
-    cs.getRange(1,1,1,23).setValues([[
+    if (cs.getMaxColumns() < 27) cs.insertColumnsAfter(cs.getMaxColumns(), 27 - cs.getMaxColumns());
+    cs.getRange(1,1,1,27).setValues([[
       'Ngày import','File JSON','Nhóm','Group ID','Post ID','URL bài','Comment ID','URL comment','Parent Comment ID',
       'Người comment','Link Facebook','Nội dung comment','Ngày comment','Reaction','Reply','Pain','Intent','Điểm',
-      'Phân loại KH','Reply gợi ý','Hành động tiếp theo','Trạng thái xử lý','Media URL'
+      'Phân loại KH','Reply gợi ý','Hành động tiếp theo','Trạng thái xử lý','Media URL',
+      'Vai trò mua','Product Fit','Bằng chứng nhu cầu','Lead Gate'
     ]]);
 
     let ts = ss.getSheetByName(CFG.PERSON_TIMELINE_SHEET);
@@ -812,15 +815,20 @@ const RemoteApp = (() => {
     if (raw && raw.getMaxColumns() >= 16) raw.getRange(4,15,1,2).setValues([['Media URL','Media count']]);
 
     const opp = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
-    if (opp && opp.getMaxColumns() >= 21) {
+    if (opp) {
+      if (opp.getMaxColumns() < 26) opp.insertColumnsAfter(opp.getMaxColumns(), 26 - opp.getMaxColumns());
       opp.getRange(1,2).setValue('Source ID');
-      opp.getRange(1,21).setValue('Media URL');
+      opp.getRange(1,21,1,6).setValues([[
+        'Media URL','Vai trò mua','Product Fit','Bằng chứng nhu cầu','Lead Gate','Lý do Gate'
+      ]]);
     }
 
     const lead = ss.getSheetByName(CFG.LEAD_SHEET);
     if (lead) {
-      if (lead.getMaxColumns() < 17) lead.insertColumnsAfter(lead.getMaxColumns(), 17-lead.getMaxColumns());
-      lead.getRange(1,17).setValue('Ngày thành KH tiềm năng');
+      if (lead.getMaxColumns() < 21) lead.insertColumnsAfter(lead.getMaxColumns(), 21-lead.getMaxColumns());
+      lead.getRange(1,17,1,5).setValues([[
+        'Ngày thành KH tiềm năng','Vai trò mua','Product Fit','Lead Gate','Bằng chứng Gate'
+      ]]);
     }
 
     const scan = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
@@ -1503,7 +1511,7 @@ const RemoteApp = (() => {
   function normalizeAndDedupeCommentSheet_(sheet) {
     const last = sheet.getLastRow();
     if (last < 2) return { removed:0, rows:0 };
-    const rows = sheet.getRange(2,1,last-1,23).getValues();
+    const rows = sheet.getRange(2,1,last-1,27).getValues();
     const groups = [];
     const keyMap = new Map();
 
@@ -1521,10 +1529,10 @@ const RemoteApp = (() => {
     });
 
     const removed = rows.length-groups.length;
-    sheet.getRange(2,1,rows.length,23).clearContent();
+    sheet.getRange(2,1,rows.length,27).clearContent();
     if (groups.length) {
       sheet.getRange(2,5,groups.length,4).setNumberFormat('@');
-      sheet.getRange(2,1,groups.length,23).setValues(groups);
+      sheet.getRange(2,1,groups.length,27).setValues(groups);
     }
     return { removed, rows:groups.length };
   }
@@ -1532,7 +1540,7 @@ const RemoteApp = (() => {
   function normalizeAndDedupeOpportunitySheet_(sheet) {
     const last = sheet.getLastRow();
     if (last < 2) return { removed:0, repairedIds:0, rows:0 };
-    const rows = sheet.getRange(2,1,last-1,21).getValues();
+    const rows = sheet.getRange(2,1,last-1,26).getValues();
     const groups = [];
     const keyMap = new Map();
     let repairedIds = 0;
@@ -1563,10 +1571,10 @@ const RemoteApp = (() => {
     });
 
     const removed=rows.length-groups.length;
-    sheet.getRange(2,1,rows.length,21).clearContent();
+    sheet.getRange(2,1,rows.length,26).clearContent();
     if (groups.length) {
       sheet.getRange(2,2,groups.length,1).setNumberFormat('@');
-      sheet.getRange(2,1,groups.length,21).setValues(groups);
+      sheet.getRange(2,1,groups.length,26).setValues(groups);
     }
     return { removed, repairedIds, rows:groups.length };
   }
