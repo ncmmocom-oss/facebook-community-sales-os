@@ -210,6 +210,302 @@ const RemoteApp = (() => {
     };
   }
 
+  function touchGroupStat_(stats, groupKey, groupInfo, fileName) {
+    const key = String(groupKey || '__unknown__').toLowerCase();
+    if (!stats[key]) {
+      stats[key] = {
+        key,
+        name: groupInfo && groupInfo.name ? groupInfo.name : (groupKey ? 'Group ' + groupKey : 'Group không rõ'),
+        row: groupInfo && groupInfo.row ? groupInfo.row : null,
+        files: {},
+        fileName: '',
+        scanned: 0,
+        newCount: 0,
+        postScanned: 0,
+        commentScanned: 0,
+        postNew: 0,
+        commentNew: 0,
+        duplicates: 0
+      };
+    }
+    const s = stats[key];
+    if (fileName) {
+      s.files[fileName] = true;
+      s.fileName = fileName;
+    }
+    return s;
+  }
+
+  function finalizeGroupStats_(stats) {
+    Object.keys(stats).forEach(k => {
+      const s = stats[k];
+      s.scanned = Number(s.postScanned || 0) + Number(s.commentScanned || 0);
+      s.newCount = Number(s.postNew || 0) + Number(s.commentNew || 0);
+    });
+  }
+
+  function ingestCommentRecord_(item, fileName, ctx, fallback) {
+    const n = normalizeCommentRecord_(item.record, item.parentId, fileName, ctx.postLookup);
+    if (!n.message) return { scanned:1, imported:0, duplicate:0 };
+
+    if (fallback) {
+      n.postId = n.postId || fallback.postId || '';
+      n.postUrl = n.postUrl || fallback.postUrl || '';
+      n.groupKey = n.groupKey || fallback.groupKey || '';
+      n.groupName = n.groupName || fallback.groupName || '';
+    }
+
+    let groupKey = String(n.groupKey || '').toLowerCase();
+    if (groupKey && !ctx.groupMap[groupKey]) ctx.groupMap[groupKey] = ensureGroupRegistered_(ctx.groupSheet, groupKey);
+    const groupInfo = ctx.groupMap[groupKey] || { name:n.groupName || `Group ${groupKey || 'không rõ'}`, row:null };
+    const groupName = n.groupName || groupInfo.name;
+    const stat = touchGroupStat_(ctx.groupStats, groupKey, groupInfo, fileName);
+    stat.commentScanned += 1;
+
+    const commentId = n.commentId || stableId_([n.postId,n.authorUrl,n.authorName,n.message,n.createdAt].join('|'));
+    const sourceId = 'C:' + commentId;
+    const keys = makeCommentKeys_(commentId, n.commentUrl);
+    if (keys.some(k => ctx.existingCommentKeys.has(k))) {
+      stat.duplicates += 1;
+      return { scanned:1, imported:0, duplicate:1 };
+    }
+    keys.forEach(k => ctx.existingCommentKeys.add(k));
+
+    const postCtx = n.postId && ctx.postLookup[n.postId] ? ctx.postLookup[n.postId] : null;
+    const postUrl = n.postUrl || (postCtx ? postCtx.url : '');
+    const commentUrl = n.commentUrl || postUrl;
+    let evidence = n.message;
+    if (postCtx && postCtx.content) {
+      evidence += '\n\n[Ngữ cảnh bài gốc]\n' + String(postCtx.content).slice(0, 900);
+    }
+
+    const mediaUrls = extractMediaUrls_(item.record);
+    const now = new Date();
+    const eventDate = n.createdAt || now;
+    const resultText = `${n.reactions} reaction | ${n.replies} reply` + (n.postId ? ` | Post ID ${n.postId}` : '');
+
+    ctx.commentRows.push([
+      now,fileName || '',groupName,groupKey,n.postId,postUrl,commentId,commentUrl,n.parentId || '',
+      n.authorName,n.authorUrl,n.message,eventDate,n.reactions,n.replies,
+      '','','','','','','Chờ AI',mediaUrls.join('\n')
+    ]);
+
+    ctx.oppRows.push([
+      eventDate,sourceId,commentUrl,'Bình luận',groupName,n.authorName,n.authorUrl,evidence,
+      '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n')
+    ]);
+
+    stat.commentNew += 1;
+    return { scanned:1, imported:1, duplicate:0 };
+  }
+
+  function extractMediaUrls_(obj) {
+    const out = [];
+    const seen = {};
+    const mediaKey = /media|image|photo|video|thumbnail|picture|src|uri|playable|attachment/i;
+    const mediaUrl = /fbcdn|scontent|\.jpe?g(?:\?|$)|\.png(?:\?|$)|\.webp(?:\?|$)|\.gif(?:\?|$)|\.mp4(?:\?|$)|\.mov(?:\?|$)|\.m3u8(?:\?|$)/i;
+
+    const add = s => {
+      s = String(s || '').trim();
+      if (!/^https?:\/\//i.test(s) || seen[s]) return;
+      if (!(mediaUrl.test(s))) return;
+      seen[s] = true;
+      if (out.length < 12) out.push(s);
+    };
+
+    const walk = (v, keyHint, depth) => {
+      if (depth > 7 || v === null || v === undefined || out.length >= 12) return;
+      if (typeof v === 'string') {
+        if (mediaKey.test(String(keyHint || '')) || mediaUrl.test(v)) add(v);
+        return;
+      }
+      if (Array.isArray(v)) {
+        v.forEach(x => walk(x,keyHint,depth+1));
+        return;
+      }
+      if (typeof v === 'object') {
+        Object.keys(v).forEach(k => walk(v[k],k,depth+1));
+      }
+    };
+    walk(obj,'',0);
+    return out;
+  }
+
+  function writeRowsNewestFirst_(sheet, startRow, rows, totalCols, textCols) {
+    if (!rows || !rows.length) return;
+    sheet.insertRowsBefore(startRow, rows.length);
+    sheet.setRowHeights(startRow, rows.length, 42);
+    const range = sheet.getRange(startRow,1,rows.length,totalCols);
+    range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    range.setVerticalAlignment('middle');
+    (textCols || []).forEach(col => sheet.getRange(startRow,col,rows.length,1).setNumberFormat('@'));
+    range.setValues(rows);
+  }
+
+  function logImportRun_(runId, groupStats, fileCount, durationMs, errors) {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = mustSheet_(ss, CFG.IMPORT_LOG_SHEET);
+    const now = new Date();
+    const rows = [];
+
+    Object.keys(groupStats).forEach(k => {
+      const s = groupStats[k];
+      rows.push([
+        now,runId,s.name || '',k === '__unknown__' ? '' : k,Object.keys(s.files || {}).join('\n'),
+        fileCount,s.scanned || 0,s.postScanned || 0,s.commentScanned || 0,s.postNew || 0,s.commentNew || 0,
+        s.duplicates || 0,s.postScanned || 0,durationMs,
+        errors && errors.length ? 'CÓ LỖI' : ((s.postNew||0)+(s.commentNew||0) ? 'CÓ DỮ LIỆU MỚI' : 'KHÔNG CÓ MỚI'),
+        CFG.VERSION,(errors || []).join(' | ').slice(0,2500),''
+      ]);
+    });
+
+    if (!rows.length) {
+      rows.push([now,runId,'','','',fileCount,0,0,0,0,0,0,0,durationMs,errors.length?'CÓ LỖI':'KHÔNG CÓ MỚI',CFG.VERSION,(errors||[]).join(' | ').slice(0,2500),'']);
+    }
+    writeRowsNewestFirst_(sheet,2,rows,18,[]);
+  }
+
+  function dateKey_(value) {
+    const d = value instanceof Date ? value : toDate_(value);
+    if (!d || isNaN(d.getTime())) return '';
+    return Utilities.formatDate(d, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+
+  function refreshDailyStats_() {
+    ensureV16Sheets_();
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const logSheet = mustSheet_(ss,CFG.IMPORT_LOG_SHEET);
+    const statSheet = mustSheet_(ss,CFG.DAILY_STATS_SHEET);
+    const scanSheet = mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const oppSheet = mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
+    const leadSheet = mustSheet_(ss,CFG.LEAD_SHEET);
+    const today = dateKey_(new Date());
+
+    const scanRows = scanSheet.getLastRow()>=2 ? scanSheet.getRange(2,1,scanSheet.getLastRow()-1,22).getValues() : [];
+    const registry = {};
+    scanRows.forEach((r,i)=>{
+      const id=String(r[4]||'').toLowerCase();
+      const name=String(r[2]||'').trim();
+      if(id||name) registry[id||name]={id,name,row:i+2};
+    });
+
+    const agg = {};
+    const logRows = logSheet.getLastRow()>=2 ? logSheet.getRange(2,1,logSheet.getLastRow()-1,18).getValues() : [];
+    logRows.forEach(r=>{
+      if(dateKey_(r[0])!==today) return;
+      const id=String(r[3]||'').toLowerCase();
+      const name=String(r[2]||'').trim();
+      const key=id||name||'__unknown__';
+      if(!agg[key]) agg[key]={id,name,runs:{},records:0,postScanned:0,commentScanned:0,postNew:0,commentNew:0,dup:0,maxPost:0,lastTime:null,lastRecords:0,lastPost:0};
+      const a=agg[key];
+      a.runs[String(r[1]||'')]=true;
+      a.records+=Number(r[6]||0); a.postScanned+=Number(r[7]||0); a.commentScanned+=Number(r[8]||0);
+      a.postNew+=Number(r[9]||0); a.commentNew+=Number(r[10]||0); a.dup+=Number(r[11]||0);
+      a.maxPost=Math.max(a.maxPost,Number(r[12]||0));
+      const t=r[0] instanceof Date?r[0]:toDate_(r[0]);
+      if(t && (!a.lastTime || t>a.lastTime)){a.lastTime=t;a.lastRecords=Number(r[6]||0);a.lastPost=Number(r[7]||0);}
+    });
+
+    const current={};
+    const oppRows=oppSheet.getLastRow()>=2 ? oppSheet.getRange(2,1,oppSheet.getLastRow()-1,21).getValues() : [];
+    oppRows.forEach(r=>{
+      const name=String(r[4]||'').trim();
+      if(!name) return;
+      if(!current[name]) current[name]={posts:0,comments:0};
+      if(String(r[3]||'')==='Bình luận') current[name].comments++; else current[name].posts++;
+    });
+
+    const leadNow={};
+    const leadNew={};
+    const leadRows=leadSheet.getLastRow()>=2 ? leadSheet.getRange(2,1,leadSheet.getLastRow()-1,17).getValues() : [];
+    leadRows.forEach(r=>{
+      const name=String(r[2]||'').trim();
+      if(!name) return;
+      leadNow[name]=(leadNow[name]||0)+1;
+      if(dateKey_(r[16])===today) leadNew[name]=(leadNew[name]||0)+1;
+    });
+
+    const todayRows=[];
+    scanRows.forEach((r,i)=>{
+      const id=String(r[4]||'').toLowerCase();
+      const name=String(r[2]||'').trim();
+      if(!name) return;
+      const a=agg[id]||agg[name]||{runs:{},records:0,postScanned:0,commentScanned:0,postNew:0,commentNew:0,dup:0,maxPost:0,lastTime:null,lastRecords:0,lastPost:0};
+      const cur=current[name]||{posts:0,comments:0};
+      const newLead=leadNew[name]||0;
+      const status=newLead>0?'CÓ KH MỚI':((a.postNew+a.commentNew)>0?'CÓ DỮ LIỆU MỚI':(Object.keys(a.runs).length?'KHÔNG CÓ MỚI':'CHƯA QUÉT'));
+      const note=(Object.keys(a.runs).length && (a.postNew+a.commentNew)===0 && (a.postScanned+a.commentScanned)>0)?'Dữ liệu quét hôm nay đều đã có/trùng':'';
+      todayRows.push([
+        new Date(),name,id,Object.keys(a.runs).length,a.records,a.postScanned,a.commentScanned,a.postNew,a.commentNew,a.dup,
+        a.maxPost,cur.posts,cur.comments,newLead,leadNow[name]||0,a.lastTime||'',status,note
+      ]);
+      scanRows[i][16]=Object.keys(a.runs).length;
+      scanRows[i][17]=a.lastRecords||0;
+      scanRows[i][18]=a.lastPost||0;
+      scanRows[i][19]=a.postNew||0;
+      scanRows[i][20]=a.commentNew||0;
+      scanRows[i][21]=newLead;
+    });
+
+    const old = statSheet.getLastRow()>=2 ? statSheet.getRange(2,1,statSheet.getLastRow()-1,18).getValues() : [];
+    const history = old.filter(r=>dateKey_(r[0])!==today);
+    const output=todayRows.concat(history);
+    if(statSheet.getLastRow()>=2) statSheet.getRange(2,1,statSheet.getLastRow()-1,18).clearContent();
+    if(output.length) statSheet.getRange(2,1,output.length,18).setValues(output);
+    if(scanRows.length) scanSheet.getRange(2,1,scanRows.length,22).setValues(scanRows);
+    return {rows:todayRows.length,today};
+  }
+
+  function auditConsistency_() {
+    ensureV16Sheets_();
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const raw=mustSheet_(ss,CFG.RAW_SHEET);
+    const comments=mustSheet_(ss,CFG.COMMENT_SHEET);
+    const opp=mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
+    const lead=mustSheet_(ss,CFG.LEAD_SHEET);
+    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+
+    const rawIds=new Set();
+    if(raw.getLastRow()>=5) raw.getRange(5,5,raw.getLastRow()-4,1).getDisplayValues().forEach(r=>{if(r[0])rawIds.add(String(r[0]));});
+    const commentIds=new Set();
+    if(comments.getLastRow()>=2) comments.getRange(2,7,comments.getLastRow()-1,1).getDisplayValues().forEach(r=>{if(r[0])commentIds.add(String(r[0]));});
+
+    const oppPost=new Set(), oppComment=new Set(), oppUrls=new Set(), oppGroups=new Set();
+    if(opp.getLastRow()>=2) opp.getRange(2,1,opp.getLastRow()-1,21).getValues().forEach(r=>{
+      const id=String(r[1]||'');
+      if(String(r[3]||'')==='Bình luận') oppComment.add(id.replace(/^C:/,''));
+      else if(id) oppPost.add(id);
+      if(r[2]) oppUrls.add(normalizeUrl_(r[2]));
+      if(r[4]) oppGroups.add(String(r[4]));
+    });
+
+    const registry=new Set();
+    if(scan.getLastRow()>=2) scan.getRange(2,3,scan.getLastRow()-1,1).getDisplayValues().forEach(r=>{if(r[0])registry.add(String(r[0]));});
+
+    let leadMissing=0;
+    if(lead.getLastRow()>=2) lead.getRange(2,1,lead.getLastRow()-1,17).getValues().forEach(r=>{
+      if(r[4] && !oppUrls.has(normalizeUrl_(r[4]))) leadMissing++;
+    });
+
+    const result={
+      version:CFG.VERSION,
+      rawPosts:rawIds.size,
+      commentRows:commentIds.size,
+      opportunityPosts:oppPost.size,
+      opportunityComments:oppComment.size,
+      rawWithoutOpportunity:[...rawIds].filter(x=>!oppPost.has(x)).length,
+      opportunityPostWithoutRaw:[...oppPost].filter(x=>!rawIds.has(x)).length,
+      commentsWithoutOpportunity:[...commentIds].filter(x=>!oppComment.has(x)).length,
+      opportunityCommentsWithoutRaw:[...oppComment].filter(x=>!commentIds.has(x)).length,
+      unknownGroups:[...oppGroups].filter(x=>x!=='Group không rõ'&&!registry.has(x)).length,
+      leadsWithoutEvidence:leadMissing
+    };
+    result.ok = !result.rawWithoutOpportunity && !result.opportunityPostWithoutRaw &&
+      !result.commentsWithoutOpportunity && !result.opportunityCommentsWithoutRaw &&
+      !result.unknownGroups && !result.leadsWithoutEvidence;
+    return result;
+  }
+
   function detectJsonKind_(fileName, parsed) {
     const name = String(fileName || '').toLowerCase();
     if (/comment|reply|repl(y|ies)|binh.?luan/i.test(name)) return 'comments';
@@ -235,19 +531,31 @@ const RemoteApp = (() => {
     else if (parsed && typeof parsed === 'object') roots = [parsed];
 
     const out = [];
-    const walk = (obj, parentId) => {
+    const forceRootComment = /comment|reply/i.test(String(fileName || ''));
+
+    const walk = (obj, parentCommentId, forceComment) => {
       if (!obj || typeof obj !== 'object') return;
-      const cid = String(pickPath_(obj,['comment_id','commentId','id']) || '');
-      if (looksLikeComment_(obj) || /comment|reply/i.test(String(fileName || '')) || parentId) {
-        out.push({ record:obj, parentId: parentId || pickPath_(obj,['parent_comment_id','parentCommentId','parent.id']) || '' });
+      const isComment = !!forceComment || looksLikeComment_(obj);
+      const cid = isComment ? String(pickPath_(obj,['comment_id','commentId','id']) || '') : '';
+
+      if (isComment) {
+        out.push({
+          record:obj,
+          parentId: parentCommentId || pickPath_(obj,['parent_comment_id','parentCommentId','parent.id']) || ''
+        });
       }
+
       ['replies','children','comments'].forEach(key => {
         let child = obj[key];
         if (child && !Array.isArray(child) && Array.isArray(child.data)) child = child.data;
-        if (Array.isArray(child)) child.forEach(x => walk(x, cid || parentId || ''));
+        if (child && !Array.isArray(child) && Array.isArray(child.items)) child = child.items;
+        if (Array.isArray(child)) {
+          child.forEach(x => walk(x, isComment ? cid : parentCommentId, true));
+        }
       });
     };
-    roots.forEach(x => walk(x,''));
+
+    roots.forEach(x => walk(x,'',forceRootComment));
     return out;
   }
 
