@@ -10,6 +10,10 @@
     .box { border: 1px solid #bfdbfe; background: #eff6ff; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
     .ai { border-color: #a7f3d0; background: #ecfdf5; }
     .bridge { border-color:#fbbf24; background:#fffbeb; }
+    .scanctl { border-color:#c4b5fd; background:#f5f3ff; }
+    .scanlist { max-height:130px; overflow:auto; background:#fff; border:1px solid #ddd6fe; border-radius:7px; padding:8px; margin-top:8px; font-size:12px; }
+    .scanitem { padding:3px 0; border-bottom:1px dashed #e5e7eb; }
+    .scanitem:last-child { border-bottom:0; }
     input, textarea, select { box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     input[type="file"], input[type="checkbox"] { width: auto; }
     textarea { min-height: 72px; resize: vertical; }
@@ -117,6 +121,25 @@
       POC hiện chỉ gọi <b>page đầu</b> để nghiệm thu đường truyền, schema post/comment và tốc độ.
       Sau khi PASS mới bật pagination + scheduler cho 15–30 Group/Profile.
       CLIENT_ID chỉ lưu trong Document Properties, không ghi vào ô Sheet/GitHub.
+    </div>
+  </div>
+
+
+  <div class="box scanctl">
+    <h3>4. QUÉT NHÓM API — điều khiển trực tiếp từ sheet QUÉT NHÓM</h3>
+    <p>
+      Trong sheet <b>QUÉT NHÓM</b>, cột <b>Chọn API</b> dùng để chọn nhiều Group.
+      Cột <b>API Quét / Dừng</b> cho phép chạy từng dòng. Khi đang chạy, lệnh sẽ chuyển sang
+      <b>ĐANG QUÉT…</b>; muốn dừng chọn <b>■ DỪNG</b>.
+    </p>
+    <button id="scanSelectedBtn" onclick="runCheckedGroups()">▶ QUÉT CÁC GROUP ĐÃ CHỌN</button>
+    <button class="dark" onclick="stopCheckedGroups()">■ DỪNG CÁC GROUP ĐÃ CHỌN</button>
+    <button class="secondary" onclick="clearCheckedGroups()">BỎ CHỌN</button>
+    <div id="scanState" class="muted">Đang đọc danh sách Group...</div>
+    <div id="scanList" class="scanlist">Chưa chọn Group.</div>
+    <div class="muted" style="margin-top:8px;">
+      POC dùng page đầu. Batch tự dừng trước giới hạn thời gian Apps Script; các Group chưa chạy vẫn giữ dấu chọn để bấm tiếp.
+      Lệnh DỪNG có hiệu lực sau API call/page đang chạy.
     </div>
   </div>
 
@@ -411,6 +434,10 @@
     function scanBridgeComments() {
       const url = document.getElementById('bridgePostUrl').value.trim();
       if (!url) { setStatus('Hãy dán URL bài Facebook có comment.'); return; }
+      if (/facebook\.com\/groups\/[^\/?#]+\/?(?:[?#].*)?$/i.test(url)) {
+        setStatus('URL này là URL GROUP. Muốn lấy comment phải dán URL POST / permalink cụ thể, không phải URL nhóm.');
+        return;
+      }
       setStatus('API Bridge đang lấy comment page đầu...');
       command({__command:'BRIDGE_FETCH_COMMENTS', postUrl:url}, r => {
         const x = r.imported || {};
@@ -424,6 +451,86 @@
           (r.responsePreview ? ('\nResponse: ' + r.responsePreview) : '') +
           '\n→ Kiểm tra tab BÌNH LUẬN / CƠ HỘI.'
         );
+      });
+    }
+
+
+    let scanStateTimer = null;
+
+    function renderGroupScanState(s) {
+      if (!s) return;
+      const state = document.getElementById('scanState');
+      const list = document.getElementById('scanList');
+      const btn = document.getElementById('scanSelectedBtn');
+
+      state.textContent =
+        'Runtime V' + s.version +
+        ' | Đã chọn: ' + (s.selectedCount || 0) +
+        ' | Đang quét: ' + (s.runningCount || 0) +
+        ' | Lỗi: ' + (s.errorCount || 0);
+
+      btn.disabled = !(s.selectedCount > 0);
+
+      const items = (s.selected || []).map(x =>
+        '<div class="scanitem"><b>Dòng ' + x.row + '</b> — ' +
+        escapeHtml(x.name || x.groupKey || x.url) +
+        (x.status ? ' <span class="muted">[' + escapeHtml(x.status) + ']</span>' : '') +
+        '</div>'
+      );
+      list.innerHTML = items.length ? items.join('') : 'Chưa chọn Group.';
+    }
+
+    function escapeHtml(v) {
+      return String(v == null ? '' : v)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    }
+
+    function pollGroupScanState() {
+      command({__command:'GET_GROUP_SCAN_CONTROL'}, renderGroupScanState, () => {});
+    }
+
+    function startGroupScanPolling() {
+      if (scanStateTimer) clearInterval(scanStateTimer);
+      pollGroupScanState();
+      scanStateTimer = setInterval(pollGroupScanState, 2000);
+    }
+
+    function runCheckedGroups() {
+      const btn = document.getElementById('scanSelectedBtn');
+      btn.disabled = true;
+      setStatus('Đang quét các Group đã chọn...');
+      command({__command:'RUN_CHECKED_GROUPS'}, r => {
+        setStatus(
+          'QUÉT NHÓM API XONG - V' + r.version +
+          '\nĐã chọn: ' + r.selected +
+          '\nĐã xử lý: ' + r.processed +
+          '\nPASS: ' + r.passed +
+          '\nLỗi: ' + r.failed +
+          '\nDừng: ' + r.stopped +
+          '\nHoãn do time budget: ' + r.deferred +
+          '\nCòn đang chọn: ' + r.remainingChecked +
+          '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
+        );
+        pollGroupScanState();
+      }, e => {
+        setStatus('Lỗi quét Group đã chọn: ' + (e.message || e));
+        pollGroupScanState();
+      });
+    }
+
+    function stopCheckedGroups() {
+      setStatus('Đang gửi yêu cầu dừng...');
+      command({__command:'STOP_CHECKED_GROUPS'}, r => {
+        setStatus('Đã gửi yêu cầu DỪNG cho ' + (r.requested || 0) + ' Group. API call/page hiện tại sẽ hoàn tất rồi dừng.');
+        pollGroupScanState();
+      });
+    }
+
+    function clearCheckedGroups() {
+      command({__command:'CLEAR_CHECKED_GROUPS'}, () => {
+        setStatus('Đã bỏ chọn các Group.');
+        pollGroupScanState();
       });
     }
 
@@ -472,6 +579,7 @@
 
     loadAiConfig();
     loadBridgeConfig();
+    startGroupScanPolling();
   </script>
 </body>
 </html>
