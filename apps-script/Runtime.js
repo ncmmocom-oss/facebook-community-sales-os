@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.2-poc',
+    VERSION: '1.8.3-poc',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -40,7 +40,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -53,11 +53,6 @@ const RemoteApp = (() => {
   }
 
   function importJsonFiles(files) {
-    // Installable onEdit trigger reuses the existing global importJsonFiles wrapper.
-    // Edit events are handled here before normal JSON-import logic.
-    if (files && !Array.isArray(files) && files.range && files.source) {
-      return handleBridgeSheetEdit_(files);
-    }
     if (Array.isArray(files) && files.length === 1 && files[0] && files[0].__command) {
       return handleUiCommand_(files[0]);
     }
@@ -847,11 +842,12 @@ const RemoteApp = (() => {
     if (name === 'GET_BRIDGE_CONFIG') return getApiBridgeConfig_();
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
     if (name === 'TEST_BRIDGE') return testApiBridge_();
-    if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl);
+    if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl, command.targetCount || 25);
     if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
     if (name === 'GET_GROUP_SCAN_CONTROL') return getGroupScanControlState_();
-    if (name === 'RUN_ACTIVE_GROUP') return scanActiveGroupApiBridge_();
-    if (name === 'RUN_CHECKED_GROUPS') return scanCheckedGroupsApiBridge_();
+    if (name === 'RUN_ACTIVE_GROUP') return scanActiveGroupApiBridge_(command.targetCount);
+    if (name === 'RUN_CHECKED_GROUPS') return scanCheckedGroupsApiBridge_(command.targetCount);
+    if (name === 'RETRY_FAILED_GROUPS') return retryFailedGroupsApiBridge_();
     if (name === 'STOP_CHECKED_GROUPS') return stopCheckedGroupsApiBridge_();
     if (name === 'CLEAR_CHECKED_GROUPS') return clearCheckedGroups_();
     if (name === 'SETUP_GROUP_CONTROLS') return setupGroupScanControls_();
@@ -2284,30 +2280,91 @@ const RemoteApp = (() => {
     };
   }
 
-  function scanGroupApiBridge_(groupUrl) {
+  function normalizeGroupTarget_(value) {
+    const n=Number(value||25);
+    if(n<=10) return 10;
+    if(n<=15) return 15;
+    if(n<=20) return 20;
+    return 25;
+  }
+
+  function scanGroupApiBridge_(groupUrl,targetCount,groupKey) {
     groupUrl=String(groupUrl || '').trim();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
       throw new Error('Hãy nhập URL Group Facebook hợp lệ.');
     }
+
+    const target=normalizeGroupTarget_(targetCount);
     const started=Date.now();
-    const apiResult=callSocialAioApi_('get_list_fb_group_posts',{
-      url:groupUrl,
-      sorting:'Newest Posts',
-      cursor:''
-    });
-    const posts=findBridgeArray_(apiResult,['posts']);
-    if(!posts.length) {
-      throw new Error('API trả về nhưng không tìm thấy post. Response: '+compactBridgePreview_(apiResult,700));
+    const pageBudgetMs=60000;
+    const seenPost={};
+    const seenCursor={};
+    const posts=[];
+    let cursor='';
+    let nextCursor='';
+    let pages=0;
+    let exhausted=false;
+    let stopped=false;
+
+    while(posts.length<target && pages<30 && (Date.now()-started)<pageBudgetMs) {
+      if(groupKey && isGroupStopRequested_(groupKey)) {
+        stopped=true;
+        break;
+      }
+
+      const apiResult=callSocialAioApi_('get_list_fb_group_posts',{
+        url:groupUrl,
+        sorting:'Newest Posts',
+        cursor:cursor || ''
+      });
+      pages++;
+
+      const pagePosts=findBridgeArray_(apiResult,['posts']);
+      if(!pagePosts.length) {
+        exhausted=true;
+        nextCursor='';
+        break;
+      }
+
+      pagePosts.forEach(p=>{
+        if(posts.length>=target) return;
+        const u=String((p&&(p.url||p.permalink_url||p.permalink))||'').trim();
+        const id=String((p&&(p.post_id||p.postId||p.id))||'').trim();
+        const k=id ? ('ID|'+id) : ('URL|'+normalizeUrl_(u));
+        if(!k || seenPost[k]) return;
+        seenPost[k]=true;
+        posts.push(p);
+      });
+
+      nextCursor=findBridgeCursor_(apiResult)||'';
+      if(!nextCursor || nextCursor===cursor || seenCursor[nextCursor]) {
+        exhausted=true;
+        break;
+      }
+      seenCursor[nextCursor]=true;
+      cursor=nextCursor;
     }
+
+    if(!posts.length) {
+      throw new Error('API trả về nhưng không tìm thấy post cho Group này.');
+    }
+
+    const selectedPosts=posts.slice(0,target);
     const fileName='api_posts_'+(extractGroupKey_(groupUrl)||'group')+'_'+
       Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-    const imported=importJsonFiles([{name:fileName,text:JSON.stringify(posts)}]);
+    const imported=importJsonFiles([{name:fileName,text:JSON.stringify(selectedPosts)}]);
+
     return {
       ok:true,
       version:CFG.VERSION,
       groupUrl,
-      postsRead:posts.length,
-      nextCursor:findBridgeCursor_(apiResult)||'',
+      targetCount:target,
+      postsRead:selectedPosts.length,
+      pages,
+      exhausted,
+      stopped,
+      incomplete:selectedPosts.length<target,
+      nextCursor:nextCursor||'',
       imported,
       durationMs:Date.now()-started
     };
@@ -2369,8 +2426,9 @@ const RemoteApp = (() => {
       sheet.insertColumnsAfter(sheet.getMaxColumns(), 26 - sheet.getMaxColumns());
     }
 
+    sheet.getRange(1,9).setValue('Số bài/lần');
     sheet.getRange(1,23,1,4).setValues([[
-      'Chọn API','API trạng thái','API chi tiết','API Run'
+      'Chọn','Trạng thái','Tiến độ','Lỗi / Ghi chú'
     ]]);
     sheet.getRange(1,23,1,4)
       .setFontWeight('bold')
@@ -2378,6 +2436,25 @@ const RemoteApp = (() => {
 
     const last=Math.max(2,sheet.getLastRow());
     const n=Math.max(1,last-1);
+
+    // Operator target: only 10/15/20/25 posts per selected Group.
+    const targetRule=SpreadsheetApp.newDataValidation()
+      .requireValueInList(['10','15','20','25'], true)
+      .setAllowInvalid(false)
+      .build();
+    const targetRange=sheet.getRange(2,9,n,1);
+    targetRange.setDataValidation(targetRule);
+    const targetValues=targetRange.getValues();
+    let targetDirty=false;
+    targetValues.forEach(r=>{
+      const v=Number(r[0]||0);
+      if(![10,15,20,25].includes(v)) {
+        r[0]=25;
+        targetDirty=true;
+      }
+    });
+    if(targetDirty) targetRange.setValues(targetValues);
+
     sheet.getRange(2,23,n,1).insertCheckboxes();
 
     const statusRange=sheet.getRange(2,24,n,1);
@@ -2385,24 +2462,22 @@ const RemoteApp = (() => {
     let statusDirty=false;
     statusValues.forEach(r=>{
       const current=String(r[0]||'').trim();
-      // Repair V1.8.1 command values into read-only status values.
-      if(!current || current==='▶ QUÉT' || current==='■ DỪNG' || current==='ĐANG QUÉT…'){
-        r[0]='SẴN SÀNG';
+      if(!current || ['▶ QUÉT','■ DỪNG','ĐANG QUÉT…','SẴN SÀNG'].includes(current)){
+        r[0]='CHỜ';
         statusDirty=true;
       }
     });
     if(statusDirty) statusRange.setValues(statusValues);
 
-    sheet.setColumnWidth(23,70);
-    sheet.setColumnWidth(24,120);
-    sheet.setColumnWidth(25,300);
-    sheet.setColumnWidth(26,150);
+    sheet.setColumnWidth(9,90);
+    sheet.setColumnWidth(23,60);
+    sheet.setColumnWidth(24,110);
+    sheet.setColumnWidth(25,270);
+    sheet.setColumnWidth(26,300);
     sheet.getRange(2,23,n,4).setVerticalAlignment('middle');
-    sheet.getRange(2,25,n,1).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    sheet.getRange(2,25,n,2).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
 
-    // Q:V keep the daily metrics but are hidden in the operator registry.
     try { sheet.hideColumns(17,6); } catch (_) {}
-
     return { rows:n };
   }
 
@@ -2420,7 +2495,7 @@ const RemoteApp = (() => {
     };
   }
 
-  function scanActiveGroupApiBridge_() {
+  function scanActiveGroupApiBridge_(targetOverride) {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sheet=ss.getActiveSheet();
     if(!sheet || sheet.getName()!==CFG.GROUP_SCAN_SHEET) {
@@ -2429,7 +2504,7 @@ const RemoteApp = (() => {
     const range=sheet.getActiveRange();
     const row=range ? range.getRow() : 0;
     if(row<2) throw new Error('Hãy chọn một dòng Group từ dòng 2 trở xuống.');
-    return scanGroupRowApiBridge_(row,{source:'ACTIVE_ROW'});
+    return scanGroupRowApiBridge_(row,{source:'ACTIVE_ROW',targetCount:targetOverride});
   }
 
 
@@ -2447,16 +2522,17 @@ const RemoteApp = (() => {
       (groupKey && p.getProperty(groupStopKey_(groupKey))==='1');
   }
 
-  function setGroupRowStatus_(sheet,row,status,detail,runId) {
+  function setGroupRowStatus_(sheet,row,status,progress,note) {
     sheet.getRange(row,24).setValue(status || '');
-    if(detail!==undefined) sheet.getRange(row,25).setValue(String(detail || '').slice(0,1500));
-    if(runId!==undefined) sheet.getRange(row,26).setValue(String(runId || '').slice(0,300));
+    if(progress!==undefined) sheet.getRange(row,25).setValue(String(progress || '').slice(0,1500));
+    if(note!==undefined) sheet.getRange(row,26).setValue(String(note || '').slice(0,2000));
 
     const cell=sheet.getRange(row,24);
     if(status==='ĐANG QUÉT') cell.setBackground('#fff2cc');
     else if(status==='XONG') cell.setBackground('#d9ead3');
+    else if(status==='THIẾU') cell.setBackground('#fce5cd');
     else if(status==='LỖI') cell.setBackground('#f4cccc');
-    else if(/^DỪNG/.test(status||'')) cell.setBackground('#fce5cd');
+    else if(/^DỪNG/.test(status||'')) cell.setBackground('#d9d9d9');
     else cell.setBackground(null);
   }
 
@@ -2465,7 +2541,7 @@ const RemoteApp = (() => {
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
     if(groupKey) PropertiesService.getDocumentProperties().setProperty(groupStopKey_(groupKey),'1');
-    setGroupRowStatus_(sheet,row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
+    setGroupRowStatus_(sheet,row,'DỪNG YÊU CẦU','Đang chờ dừng','Sẽ dừng sau API call/page hiện tại.');
     SpreadsheetApp.flush();
     return { ok:true, row, groupKey, stopRequested:true };
   }
@@ -2479,52 +2555,61 @@ const RemoteApp = (() => {
     const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group dòng '+row);
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+    const target=normalizeGroupTarget_(options.targetCount || sheet.getRange(row,9).getValue() || 25);
 
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
       throw new Error('Dòng '+row+' không có URL Group Facebook hợp lệ.');
     }
 
     const currentStatus=String(sheet.getRange(row,24).getDisplayValue()||'');
-    if(currentStatus==='ĐANG QUÉT' && options.source!=='BATCH') {
-      return { ok:false, alreadyRunning:true, row, name, groupUrl };
+    if(currentStatus==='ĐANG QUÉT' && options.source!=='BATCH' && options.source!=='RETRY') {
+      return {ok:false,alreadyRunning:true,row,name,groupUrl,targetCount:target};
     }
 
+    sheet.getRange(row,9).setValue(target);
     clearGroupStop_(groupKey);
-    const operatorRunId='GR-' + Utilities.getUuid().slice(0,8);
-    setGroupRowStatus_(sheet,row,'ĐANG QUÉT','Đang gọi Social AIO API…',operatorRunId);
+    setGroupRowStatus_(sheet,row,'ĐANG QUÉT','0/'+target+' bài','');
     SpreadsheetApp.flush();
 
     const started=Date.now();
     try {
-      const result=scanGroupApiBridge_(groupUrl);
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey);
       const imported=result.imported||{};
-      const stopped=isGroupStopRequested_(groupKey);
+      const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
 
-      // Preserve the existing operational columns.
-      sheet.getRange(row,10).setValue(new Date()); // Lần quét gần nhất
-      sheet.getRange(row,14).setValue(Number(imported.postImported||0)); // Bài mới lần cuối
+      sheet.getRange(row,10).setValue(new Date());
+      sheet.getRange(row,14).setValue(Number(imported.postImported||0));
 
-      const detail=[
-        (result.postsRead||0)+' post',
+      const progress=[
+        (result.postsRead||0)+'/'+target+' bài',
         (imported.postImported||0)+' mới',
         (imported.duplicates||0)+' trùng',
-        result.nextCursor ? 'cursor:CÓ' : 'cursor:KHÔNG',
+        (result.pages||1)+' page',
         (Math.round((Date.now()-started)/100)/10)+'s'
-      ].join(' | ');
+      ].join(' • ');
 
-      if(stopped) setGroupRowStatus_(sheet,row,'DỪNG',detail);
-      else setGroupRowStatus_(sheet,row,'XONG',detail);
+      let status='XONG';
+      let note='';
+      if(stopped) {
+        status='DỪNG';
+        note='Đã dừng theo yêu cầu.';
+      } else if((result.postsRead||0)<target) {
+        status='THIẾU';
+        note='API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
+          (result.nextCursor ? ' trước time budget.' : ' vì không còn cursor.');
+      }
 
+      setGroupRowStatus_(sheet,row,status,progress,note);
       clearGroupStop_(groupKey);
       SpreadsheetApp.flush();
-      return Object.assign({},result,{row,name,groupKey,stopped,detail});
+      return Object.assign({},result,{row,name,groupKey,status,targetCount:target,stopped,incomplete:status==='THIẾU',progress,note});
     } catch(err) {
-      setGroupRowStatus_(sheet,row,'LỖI',String(err.message||err));
+      const msg=String(err.message||err);
+      setGroupRowStatus_(sheet,row,'LỖI','0/'+target+' bài',msg);
       SpreadsheetApp.flush();
       return {
-        ok:false,row,name,groupKey,groupUrl,
-        error:String(err.message||err),
-        durationMs:Date.now()-started
+        ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
+        error:msg,durationMs:Date.now()-started
       };
     }
   }
@@ -2545,6 +2630,7 @@ const RemoteApp = (() => {
           name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
           url,
           groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
+          targetCount:normalizeGroupTarget_(r[8]||25),
           status:String(r[23]||'')
         });
       }
@@ -2557,33 +2643,44 @@ const RemoteApp = (() => {
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const selected=getCheckedGroupRows_();
     const last=sheet.getLastRow();
-    let running=0, errors=0;
+    const counts={running:0,done:0,error:0,stopped:0,incomplete:0,waiting:0};
     if(last>=2) {
       sheet.getRange(2,24,last-1,1).getDisplayValues().forEach(r=>{
-        if(r[0]==='ĐANG QUÉT') running++;
-        if(r[0]==='LỖI') errors++;
+        const s=String(r[0]||'');
+        if(s==='ĐANG QUÉT') counts.running++;
+        else if(s==='XONG') counts.done++;
+        else if(s==='LỖI') counts.error++;
+        else if(/^DỪNG/.test(s)) counts.stopped++;
+        else if(s==='THIẾU') counts.incomplete++;
+        else counts.waiting++;
       });
     }
     return {
       version:CFG.VERSION,
       selectedCount:selected.length,
-      runningCount:running,
-      errorCount:errors,
+      selectedTargetTotal:selected.reduce((sum,x)=>sum+Number(x.targetCount||0),0),
+      runningCount:counts.running,
+      doneCount:counts.done,
+      errorCount:counts.error,
+      stoppedCount:counts.stopped,
+      incompleteCount:counts.incomplete,
+      waitingCount:counts.waiting,
       selected:selected.slice(0,30)
     };
   }
 
-  function scanCheckedGroupsApiBridge_() {
+  function scanCheckedGroupsApiBridge_(targetOverride) {
     ensureV16Sheets_(false);
     const props=PropertiesService.getDocumentProperties();
     props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
 
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const selected=getCheckedGroupRows_();
-    if(!selected.length) throw new Error('Chưa chọn Group nào ở cột Chọn API.');
+    if(!selected.length) throw new Error('Chưa chọn Group nào ở cột Chọn.');
 
+    const override=targetOverride ? normalizeGroupTarget_(targetOverride) : 0;
     const started=Date.now();
-    const budgetMs=230000; // keep safely below Apps Script execution ceiling
+    const budgetMs=230000;
     const results=[];
     let deferred=0;
 
@@ -2595,31 +2692,67 @@ const RemoteApp = (() => {
       }
 
       const item=selected[i];
+      const target=override || item.targetCount || 25;
+      if(override) sheet.getRange(item.row,9).setValue(target);
+
       if(isGroupStopRequested_(item.groupKey)) {
-        setGroupRowStatus_(sheet,item.row,'DỪNG','Bỏ qua theo yêu cầu dừng.');
-        results.push({ok:false,stopped:true,row:item.row,name:item.name});
+        setGroupRowStatus_(sheet,item.row,'DỪNG','0/'+target+' bài','Bỏ qua theo yêu cầu dừng.');
+        results.push({ok:false,stopped:true,row:item.row,name:item.name,targetCount:target});
         continue;
       }
 
-      const r=scanGroupRowApiBridge_(item.row,{source:'BATCH'});
+      const r=scanGroupRowApiBridge_(item.row,{source:'BATCH',targetCount:target});
       results.push(r);
-      if(r && r.ok && !r.stopped) sheet.getRange(item.row,23).setValue(false);
+      if(r && r.ok && !r.stopped && !r.incomplete) sheet.getRange(item.row,23).setValue(false);
     }
 
     props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
     SpreadsheetApp.flush();
 
-    const passed=results.filter(r=>r&&r.ok&&!r.stopped).length;
+    const passed=results.filter(r=>r&&r.ok&&!r.stopped&&!r.incomplete).length;
+    const incomplete=results.filter(r=>r&&r.incomplete).length;
     const stopped=results.filter(r=>r&&r.stopped).length;
     const failed=results.filter(r=>r&&!r.ok&&!r.stopped).length;
     return {
       version:CFG.VERSION,
       selected:selected.length,
+      targetOverride:override||null,
       processed:results.length,
-      passed,failed,stopped,deferred,
+      passed,failed,stopped,incomplete,deferred,
       remainingChecked:getCheckedGroupRows_().length,
       durationMs:Date.now()-started,
       results
+    };
+  }
+
+  function retryFailedGroupsApiBridge_() {
+    ensureV16Sheets_(false);
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return {version:CFG.VERSION,retried:0,passed:0,failed:0,incomplete:0};
+
+    const rows=sheet.getRange(2,1,last-1,26).getValues();
+    const retryRows=[];
+    rows.forEach((r,i)=>{
+      const status=String(r[23]||'');
+      if(status==='LỖI' || status==='THIẾU') retryRows.push(i+2);
+    });
+    if(!retryRows.length) throw new Error('Không có Group LỖI hoặc THIẾU để retry.');
+
+    const started=Date.now();
+    const budgetMs=230000;
+    const results=[];
+    let deferred=0;
+    for(let i=0;i<retryRows.length;i++) {
+      if(Date.now()-started>budgetMs){deferred=retryRows.length-i;break;}
+      results.push(scanGroupRowApiBridge_(retryRows[i],{source:'RETRY'}));
+    }
+    const passed=results.filter(r=>r&&r.ok&&!r.incomplete&&!r.stopped).length;
+    const incomplete=results.filter(r=>r&&r.incomplete).length;
+    const failed=results.filter(r=>r&&!r.ok&&!r.stopped).length;
+    return {
+      version:CFG.VERSION,retried:results.length,passed,failed,incomplete,deferred,
+      durationMs:Date.now()-started,results
     };
   }
 
@@ -2629,7 +2762,7 @@ const RemoteApp = (() => {
     const selected=getCheckedGroupRows_();
     selected.forEach(item=>{
       if(item.groupKey) props.setProperty(groupStopKey_(item.groupKey),'1');
-      setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
+      setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Đang chờ dừng','Sẽ dừng sau API call/page hiện tại.');
     });
     props.setProperty(CFG.BRIDGE_STOP_ALL_KEY,'1');
     SpreadsheetApp.flush();
@@ -3084,6 +3217,7 @@ const RemoteApp = (() => {
     getGroupScanControlState_,
     scanActiveGroupApiBridge_,
     scanCheckedGroupsApiBridge_,
+    retryFailedGroupsApiBridge_,
     stopCheckedGroupsApiBridge_,
     clearCheckedGroups_,
   };
