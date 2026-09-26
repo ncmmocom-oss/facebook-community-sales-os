@@ -46,12 +46,20 @@ const RemoteApp = (() => {
     );
   }
 
-  function showImportDialog() {
+  function showControlCenter(view) {
     ensureV16Sheets_(true);
-    const html = HtmlService.createHtmlOutput(getRemoteHtml_())
-      .setWidth(680)
-      .setHeight(760);
+    const allowed=new Set(['scan','ai','settings']);
+    const initial=allowed.has(String(view||''))?String(view):'scan';
+    let htmlText=getRemoteHtml_();
+    htmlText=htmlText.replace('<body>', '<body data-initial-view="'+initial+'">');
+    const html = HtmlService.createHtmlOutput(htmlText)
+      .setWidth(720)
+      .setHeight(780);
     SpreadsheetApp.getUi().showModelessDialog(html, 'Social AIO Control Center');
+  }
+
+  function showImportDialog() {
+    return showControlCenter('scan');
   }
 
   function importJsonFiles(files) {
@@ -4108,6 +4116,7 @@ const RemoteApp = (() => {
     getVersion,
     onOpen,
     showRuntimeInfo,
+    showControlCenter,
     showImportDialog,
     importJsonFiles,
     refreshCurrentData,
