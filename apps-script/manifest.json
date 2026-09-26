@@ -1,13 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.5-diagnostic.1",
-  "channel": "diagnostic",
+  "version": "1.8.6-pagination-fix",
+  "channel": "pilot",
   "updated_at": "2026-09-26",
   "notes": [
-    "Moves API diagnostic to the main Control Center surface so it is not hidden under Advanced.",
-    "When a batch scan ends THIẾU, automatically runs API RESPONSE DIAGNOSTIC for one representative incomplete Group.",
-    "Skips automatic AI analysis on partial/incomplete scan data during diagnostic mode to avoid wasting tokens and masking the API problem.",
-    "RUN_API_DIAGNOSTIC now accepts an explicit Group row, so post-scan auto-diagnostic does not depend on the active cell.",
-    "NHẬT KÝ API remains the structured source of truth for raw response shape/cursor diagnosis."
+    "Root cause confirmed from NHẬT KÝ API: get_list_fb_group_posts returns a top-level result array whose post item carries a cursor.",
+    "The previous cursor walker disabled generic cursor lookup inside arrays, so scan stopped after page 1.",
+    "Pagination now scans result arrays from the last item backward and allows the item's cursor to drive the next request.",
+    "Diagnostic evidence: page 1 returned 1 post + cursor; PAGE2 probe returned 3 posts, proving the API can paginate.",
+    "Full Group URL remains the supported input for vanity-slug groups; passing only hxx.gang was rejected by Social AIO in the live test."
   ]
 }
