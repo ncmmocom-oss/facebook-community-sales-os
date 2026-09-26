@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.8.4-pilot.1',
+    VERSION: '1.8.5-diagnostic',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
@@ -12,6 +12,7 @@ const RemoteApp = (() => {
     PERSON_TIMELINE_SHEET: 'LỊCH SỬ KH',
     IMPORT_LOG_SHEET: 'NHẬT KÝ IMPORT',
     DAILY_STATS_SHEET: 'THỐNG KÊ NGÀY',
+    API_DIAG_SHEET: 'NHẬT KÝ API',
     BRIDGE_SERVER: 'https://api.fbaio.org',
     BRIDGE_CLIENT_ID_KEY: 'SOCIAL_AIO_BRIDGE_CLIENT_ID',
     WORKER_POOL_KEY: 'SOCIAL_AIO_WORKER_POOL_V1',
@@ -41,7 +42,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -848,6 +849,7 @@ const RemoteApp = (() => {
     if (name === 'GET_WORKER_POOL') return getWorkerPoolPublic_();
     if (name === 'SAVE_WORKER_POOL') return saveWorkerPool_(command.workers || []);
     if (name === 'TEST_WORKER_POOL') return testWorkerPool_();
+    if (name === 'RUN_API_DIAGNOSTIC') return runApiResponseDiagnostic_(command);
     if (name === 'PREPARE_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, false);
     if (name === 'PREPARE_RETRY_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, true);
     if (name === 'RUN_WORKER_JOB') return runWorkerJob_(command);
