@@ -21,7 +21,7 @@ function buildLocalMenu_() {
     .addItem('1. ⚙ CÀI ĐẶT', 'showSettingsDialog')
     .addItem('2. 🔎 QUÉT GROUP', 'showScanDialog')
     .addItem('3. 🤖 AI PHÂN TÍCH', 'showAiDialog')
-    .addItem('4. 🔄 CẬP NHẬT DỮ LIỆU', 'refreshCurrentData')
+    .addItem('4. 🔄 CẬP NHẬT DỮ LIỆU (khi cần)', 'refreshCurrentData')
     .addSeparator()
     .addSubMenu(
       ui.createMenu('CÔNG CỤ')
