@@ -1240,7 +1240,7 @@ const RemoteApp = (() => {
         message:errors.length ? errors.join(' | ').slice(0, 4000) : 'Hoàn thành.'
       });
 
-      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh };
+      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh, scope };
 
       if (!silent) {
         SpreadsheetApp.getActive().toast(
