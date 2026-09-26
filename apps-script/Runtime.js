@@ -19,6 +19,7 @@ const RemoteApp = (() => {
     BRIDGE_STOP_ALL_KEY: 'SOCIAL_AIO_BRIDGE_STOP_ALL',
     BRIDGE_STOP_PREFIX: 'SOCIAL_AIO_BRIDGE_STOP_',
     GROUP_CONTROL_START_COL: 23,
+    LAST_SCAN_SOURCE_IDS_KEY: 'SOCIAL_AIO_LAST_SCAN_SOURCE_IDS_V1',
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -873,7 +874,7 @@ const RemoteApp = (() => {
     if (name === 'PREPARE_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, false);
     if (name === 'PREPARE_RETRY_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, true);
     if (name === 'RUN_WORKER_JOB') return runWorkerJob_(command);
-    if (name === 'FINALIZE_WORKER_BATCH') return finalizeWorkerBatch_();
+    if (name === 'FINALIZE_WORKER_BATCH') return finalizeWorkerBatch_(command);
     if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl, command.targetCount || 25);
     if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
     if (name === 'GET_GROUP_SCAN_CONTROL') return getGroupScanControlState_();
@@ -994,6 +995,26 @@ const RemoteApp = (() => {
     return analyzeNewPosts_({ silent: false, scope:'all_waiting' });
   }
 
+  function saveLastScanSourceIds_(ids) {
+    const clean=[...new Set((ids||[]).map(x=>String(x||'').trim()).filter(Boolean))].slice(0,1000);
+    PropertiesService.getDocumentProperties().setProperty(
+      CFG.LAST_SCAN_SOURCE_IDS_KEY,
+      JSON.stringify({sourceIds:clean,updatedAt:new Date().toISOString()})
+    );
+    return clean;
+  }
+
+  function getLastScanSourceIds_() {
+    const raw=PropertiesService.getDocumentProperties().getProperty(CFG.LAST_SCAN_SOURCE_IDS_KEY)||'';
+    if(!raw) return [];
+    try {
+      const parsed=JSON.parse(raw);
+      return Array.isArray(parsed.sourceIds)?parsed.sourceIds.map(x=>String(x||'').trim()).filter(Boolean):[];
+    } catch (_) {
+      return [];
+    }
+  }
+
   function analyzeByScope_(command) {
     command=command||{};
     let scope=String(command.scope||'all_waiting');
@@ -1018,6 +1039,10 @@ const RemoteApp = (() => {
       const end=ar.getLastRow();
       options.rowNumbers=[];
       for(let r=start;r<=end;r++) options.rowNumbers.push(r);
+    } else if(scope==='last_scan') {
+      options.scope='source_ids';
+      options.sourceIds=getLastScanSourceIds_();
+      if(!options.sourceIds.length) throw new Error('Chưa có dữ liệu mới từ lần quét gần nhất.');
     } else if(scope==='source_ids') {
       options.sourceIds=(command.sourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean);
       if(!options.sourceIds.length) throw new Error('Không có Source ID mới để AI phân tích.');
@@ -3014,8 +3039,9 @@ const RemoteApp = (() => {
     }
   }
 
-  function finalizeWorkerBatch_() {
+  function finalizeWorkerBatch_(command) {
     const started=Date.now();
+    const sourceIds=saveLastScanSourceIds_((command&&command.sourceIds)||[]);
     const refresh=refreshCurrentData({silent:true,fast:true});
     const aiCfg=getAiConfig_();
     SpreadsheetApp.flush();
@@ -3024,6 +3050,7 @@ const RemoteApp = (() => {
       refresh,
       analysisMode:aiCfg.analysisMode||'manual',
       autoAnalyzeRequested:!!(aiCfg.configured&&aiCfg.analysisMode==='auto_scan'),
+      lastScanSources:sourceIds.length,
       durationMs:Date.now()-started
     };
   }
