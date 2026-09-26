@@ -1933,6 +1933,8 @@ const RemoteApp = (() => {
     const oldRows=oldLast>=2 ? leadSheet.getRange(2,1,oldLast-1,21).getValues() : [];
     const grouped = {};
     const evaluatedKeys=new Set();
+    const pendingKeys=new Set();
+    const opportunityKeys=new Set();
 
     opp.forEach(r => {
       const sourceUrl = normalizeUrl_(r[2] || '');
@@ -1940,8 +1942,9 @@ const RemoteApp = (() => {
       const key = fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
       if (!key || key === 'ANON|') return;
 
+      opportunityKeys.add(key);
       const gate=String(r[24]||'').trim();
-      if(gate) evaluatedKeys.add(key);
+      if(gate) evaluatedKeys.add(key); else pendingKeys.add(key);
       if(gate!=='PASS') return;
 
       const classification = String(r[11] || '').trim();
@@ -1959,7 +1962,7 @@ const RemoteApp = (() => {
 
     const passKeys=Object.keys(grouped);
     const passSet=new Set(passKeys);
-    const newCount=passKeys.filter(key=>!existing[key]).length;
+    const newCount=passKeys.filter(key=>!existing[key] || String(existing[key].gate||'')!=='PASS').length;
     const now = new Date();
     const passRows = passKeys.map(key => {
       const g = grouped[key];
@@ -1969,7 +1972,7 @@ const RemoteApp = (() => {
         r[5] || '', r[6] || '', r[4] || '', r[3] || '', r[2] || '', r[7] || '', r[8] || '', r[9] || '',
         Number(r[10] || 0), r[11] || '', g.count,
         old.lastAction || r[14] || '', old.nextAction || r[15] || '', old.followUp || r[16] || '',
-        old.conversion || r[17] || 'Chưa có', old.note || '', old.firstLeadAt || now,
+        old.conversion || r[17] || 'Chưa có', old.note || '', (String(old.gate||'')==='PASS' && old.firstLeadAt) ? old.firstLeadAt : now,
         r[21] || '', r[22] || '', 'PASS', r[23] || ''
       ];
     });
@@ -1981,7 +1984,11 @@ const RemoteApp = (() => {
       const sourceUrl=normalizeUrl_(r[4]||'');
       const fbUrl=normalizeFacebookProfileUrl_(r[1]||'');
       const key=fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
-      if(!key || key==='ANON|' || passSet.has(key) || evaluatedKeys.has(key)) return;
+      if(!key || key==='ANON|' || passSet.has(key)) return;
+      // Drop LEGACY only when all currently-known opportunities for this person
+      // have been re-qualified and none PASS. If any source is still ungated,
+      // keep the legacy row so partial/manual re-analysis cannot silently lose it.
+      if(evaluatedKeys.has(key) && !pendingKeys.has(key)) return;
       const x=r.slice(0,21);
       while(x.length<21) x.push('');
       x[19]='LEGACY';
@@ -2322,7 +2329,7 @@ const RemoteApp = (() => {
     const state = {};
     const last = leadSheet.getLastRow();
     if (last < 2) return state;
-    const rows = leadSheet.getRange(2,1,last-1,17).getValues();
+    const rows = leadSheet.getRange(2,1,last-1,21).getValues();
     rows.forEach(r => {
       const sourceUrl = normalizeUrl_(r[4] || '');
       const fbUrl = normalizeFacebookProfileUrl_(r[1] || '');
@@ -2330,7 +2337,8 @@ const RemoteApp = (() => {
       if (!key || key === 'ANON|') return;
       state[key] = {
         lastAction:r[11] || '', nextAction:r[12] || '', followUp:r[13] || '',
-        conversion:r[14] || '', note:r[15] || '', firstLeadAt:r[16] || ''
+        conversion:r[14] || '', note:r[15] || '', firstLeadAt:r[16] || '',
+        buyerRole:r[17] || '', productFit:r[18] || '', gate:r[19] || '', evidence:r[20] || ''
       };
     });
     return state;
