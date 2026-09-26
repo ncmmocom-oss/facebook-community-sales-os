@@ -2953,7 +2953,12 @@ const RemoteApp = (() => {
   }
 
   function callSocialAioApi_(apiName, apiParams) {
-    const id = getBridgeClientId_();
+    return callSocialAioApiWithClient_(getBridgeClientId_(), apiName, apiParams);
+  }
+
+  function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
+    const id=String(clientId || '').trim();
+    if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
     const url = CFG.BRIDGE_SERVER.replace(/\/$/,'') + '/call';
     const payload = {
       id,
@@ -2983,7 +2988,7 @@ const RemoteApp = (() => {
     if (err) {
       if (/not\s+connected/i.test(err)) {
         throw new Error(
-          'Social AIO báo Client not connected. Mở Social AIO > Automation > APIs, bấm Connect và giữ tab đó hoạt động. Chi tiết: ' + err
+          'Social AIO báo Client not connected. Mở đúng tab Social AIO > Automation > APIs, bấm Connect và giữ tab đó hoạt động. Chi tiết: ' + err
         );
       }
       throw new Error('Social AIO API lỗi: ' + err);
@@ -2992,15 +2997,236 @@ const RemoteApp = (() => {
   }
 
   function getBridgeClientId_() {
-    const id = String(
-      PropertiesService.getDocumentProperties().getProperty(CFG.BRIDGE_CLIENT_ID_KEY) || ''
-    ).trim();
-    if (!id) {
-      throw new Error(
-        'Chưa có CLIENT_ID. Vào SOCIAL AIO > API BRIDGE POC > 1. Cấu hình CLIENT_ID.'
-      );
+    const props=PropertiesService.getDocumentProperties();
+    const legacy=String(props.getProperty(CFG.BRIDGE_CLIENT_ID_KEY) || '').trim();
+    if(legacy) return legacy;
+
+    const pool=getWorkerPoolRaw_();
+    const w=pool.find(x=>x.enabled && x.clientId);
+    if(w) return w.clientId;
+    throw new Error('Chưa có CLIENT_ID. Hãy cấu hình ít nhất 1 Worker trong Cấu hình nâng cao.');
+  }
+
+  function defaultWorkerPool_() {
+    return [1,2,3].map(i=>({
+      slot:'W'+i,
+      label:'FB-0'+i,
+      enabled:true,
+      clientId:'',
+      profile:'',
+      socialAioVersion:'',
+      latencyMs:0,
+      testOk:false,
+      lastTestAt:''
+    }));
+  }
+
+  function getWorkerPoolRaw_() {
+    const props=PropertiesService.getDocumentProperties();
+    const raw=props.getProperty(CFG.WORKER_POOL_KEY);
+    let pool=null;
+    if(raw){
+      try{ pool=JSON.parse(raw); }catch(_){}
     }
-    return id;
+    const defaults=defaultWorkerPool_();
+    const bySlot={};
+    (Array.isArray(pool)?pool:[]).forEach(w=>{if(w&&w.slot)bySlot[String(w.slot).toUpperCase()]=w;});
+    return defaults.map(d=>{
+      const x=bySlot[d.slot]||{};
+      return Object.assign({},d,x,{
+        slot:d.slot,
+        label:String(x.label||d.label).trim()||d.label,
+        enabled:x.enabled!==false,
+        clientId:String(x.clientId||'').trim(),
+        profile:String(x.profile||'').trim(),
+        socialAioVersion:String(x.socialAioVersion||'').trim(),
+        latencyMs:Number(x.latencyMs||0),
+        testOk:!!x.testOk,
+        lastTestAt:String(x.lastTestAt||'')
+      });
+    });
+  }
+
+  function saveWorkerPoolRaw_(pool) {
+    PropertiesService.getDocumentProperties().setProperty(CFG.WORKER_POOL_KEY,JSON.stringify(pool||[]));
+  }
+
+  function workerPublic_(w) {
+    return {
+      slot:w.slot,
+      label:w.label,
+      enabled:!!w.enabled,
+      configured:!!w.clientId,
+      clientIdMasked:w.clientId?maskBridgeClientId_(w.clientId):'',
+      profile:w.profile||'',
+      socialAioVersion:w.socialAioVersion||'',
+      latencyMs:Number(w.latencyMs||0),
+      testOk:!!w.testOk,
+      lastTestAt:w.lastTestAt||''
+    };
+  }
+
+  function getWorkerPoolPublic_() {
+    return {
+      version:CFG.VERSION,
+      relay:CFG.BRIDGE_SERVER,
+      workers:getWorkerPoolRaw_().map(workerPublic_)
+    };
+  }
+
+  function saveWorkerPool_(inputWorkers) {
+    const old=getWorkerPoolRaw_();
+    const incoming={};
+    (Array.isArray(inputWorkers)?inputWorkers:[]).forEach(w=>{
+      if(w&&w.slot) incoming[String(w.slot).toUpperCase()]=w;
+    });
+
+    const merged=old.map(prev=>{
+      const x=incoming[prev.slot]||{};
+      const clientInput=String(x.clientId||'').trim();
+      return Object.assign({},prev,{
+        label:String(x.label!==undefined?x.label:prev.label).trim()||prev.label,
+        enabled:x.enabled!==undefined?!!x.enabled:prev.enabled,
+        clientId:clientInput || prev.clientId
+      });
+    });
+
+    saveWorkerPoolRaw_(merged);
+
+    const first=merged.find(w=>w.enabled&&w.clientId);
+    if(first){
+      PropertiesService.getDocumentProperties().setProperty(CFG.BRIDGE_CLIENT_ID_KEY,first.clientId);
+    }
+    return getWorkerPoolPublic_();
+  }
+
+  function testOneWorker_(worker) {
+    const started=Date.now();
+    if(!worker.clientId){
+      return Object.assign({},worker,{testOk:false,profile:'',latencyMs:0,lastTestAt:new Date().toISOString(),error:'Chưa có CLIENT_ID'});
+    }
+    try{
+      const ver=callSocialAioApiWithClient_(worker.clientId,'get_ext_version',{});
+      let profileRes=null;
+      try{profileRes=callSocialAioApiWithClient_(worker.clientId,'get_my_profile_lite',{});}catch(_){}
+      const profile=pickBridgeValue_(profileRes,['name','profile.name'])||worker.profile||'';
+      const socialAioVersion=pickBridgeValue_(ver,['version'])||compactBridgePreview_(ver,80)||'OK';
+      return Object.assign({},worker,{
+        testOk:true,
+        profile,
+        socialAioVersion,
+        latencyMs:Date.now()-started,
+        lastTestAt:new Date().toISOString(),
+        error:''
+      });
+    }catch(err){
+      return Object.assign({},worker,{
+        testOk:false,
+        latencyMs:Date.now()-started,
+        lastTestAt:new Date().toISOString(),
+        error:String(err.message||err).slice(0,500)
+      });
+    }
+  }
+
+  function testWorkerPool_() {
+    const pool=getWorkerPoolRaw_();
+    const tested=pool.map(w=>w.enabled?testOneWorker_(w):Object.assign({},w,{testOk:false}));
+    saveWorkerPoolRaw_(tested);
+    const first=tested.find(w=>w.enabled&&w.clientId);
+    if(first) PropertiesService.getDocumentProperties().setProperty(CFG.BRIDGE_CLIENT_ID_KEY,first.clientId);
+    return {
+      version:CFG.VERSION,
+      relay:CFG.BRIDGE_SERVER,
+      onlineCount:tested.filter(w=>w.enabled&&w.testOk).length,
+      workers:tested.map(w=>Object.assign(workerPublic_(w),{error:w.error||''}))
+    };
+  }
+
+  function workerMatchesProfile_(worker, profile) {
+    const p=String(profile||'').trim().toLowerCase();
+    if(!p || p==='auto') return true;
+    const aliases=[worker.slot,worker.label,worker.profile].map(x=>String(x||'').trim().toLowerCase()).filter(Boolean);
+    return aliases.includes(p);
+  }
+
+  function collectRetryJobs_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return [];
+    const values=sheet.getRange(2,1,last-1,26).getValues();
+    const out=[];
+    values.forEach((r,i)=>{
+      const status=String(r[23]||'');
+      if(status!=='LỖI' && status!=='THIẾU') return;
+      const url=String(r[3]||'').trim();
+      if(!url) return;
+      out.push({
+        row:i+2,
+        name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
+        profile:String(r[1]||'').trim() || 'AUTO',
+        url,
+        groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
+        targetCount:normalizeGroupTarget_(r[8]||25),
+        status
+      });
+    });
+    return out;
+  }
+
+  function prepareWorkerBatch_(targetOverride,retryMode) {
+    ensureV16Sheets_(false);
+    const jobs=retryMode?collectRetryJobs_():getCheckedGroupRows_();
+    if(!jobs.length) throw new Error(retryMode?'Không có Group LỖI/THIẾU để retry.':'Chưa chọn Group nào.');
+
+    const override=targetOverride?normalizeGroupTarget_(targetOverride):0;
+    const pool=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
+    if(!pool.length) throw new Error('Chưa cấu hình Worker. Mở Cấu hình nâng cao → Worker Pool.');
+
+    const loads={};
+    pool.forEach(w=>loads[w.slot]=0);
+    const assignments={};
+    pool.forEach(w=>assignments[w.slot]=[]);
+
+    jobs.forEach(job=>{
+      const target=override||job.targetCount||25;
+      const pinned=String(job.profile||'').trim() && String(job.profile||'').trim().toLowerCase()!=='auto';
+      let candidates=pool.filter(w=>workerMatchesProfile_(w,job.profile));
+      if(!candidates.length && pinned){
+        job.assignmentError='Không có Worker khớp Profile "'+job.profile+'".';
+        return;
+      }
+      if(!candidates.length) candidates=pool.slice();
+
+      candidates.sort((a,b)=>{
+        const la=loads[a.slot]||0, lb=loads[b.slot]||0;
+        if(la!==lb) return la-lb;
+        const aa=a.testOk?0:1, bb=b.testOk?0:1;
+        if(aa!==bb) return aa-bb;
+        return Number(a.latencyMs||999999)-Number(b.latencyMs||999999);
+      });
+      const chosen=candidates[0];
+      const weight=Math.max(1,Number(chosen.latencyMs||1500)/1000);
+      loads[chosen.slot]+=target*weight;
+      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot}));
+    });
+
+    const workers=pool.map(w=>({
+      slot:w.slot,label:w.label,profile:w.profile||'',testOk:!!w.testOk,latencyMs:Number(w.latencyMs||0),
+      jobs:assignments[w.slot]||[]
+    })).filter(w=>w.jobs.length);
+
+    const unassigned=jobs.filter(j=>j.assignmentError).map(j=>({row:j.row,name:j.name,error:j.assignmentError}));
+    return {
+      version:CFG.VERSION,
+      retryMode:!!retryMode,
+      selected:jobs.length,
+      assigned:workers.reduce((n,w)=>n+w.jobs.length,0),
+      unassigned,
+      workers,
+      onlineCount:pool.filter(w=>w.testOk).length,
+      configuredCount:pool.length
+    };
   }
 
   function maskBridgeClientId_(id) {
