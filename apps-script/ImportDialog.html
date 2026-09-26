@@ -442,84 +442,74 @@
     }
 
 
-    function loadBridgeConfig() {
-      command({__command:'GET_BRIDGE_CONFIG'}, cfg => {
-        const bits = [
-          'Runtime V' + cfg.version,
-          'Relay: ' + cfg.relay,
-          cfg.configured ? ('CLIENT_ID ' + cfg.clientIdMasked + ' ✅') : 'CLIENT_ID: CHƯA CẤU HÌNH'
-        ];
-        document.getElementById('bridgeState').textContent = bits.join(' | ');
-      }, () => {
-        document.getElementById('bridgeState').textContent = 'Không đọc được cấu hình Bridge.';
+    function renderWorkerPool(cfg) {
+      const workers=(cfg && cfg.workers) || [];
+      let online=0, configured=0;
+      workers.forEach(w=>{
+        const n=Number(String(w.slot||'').replace('W','')) || 0;
+        if(!n) return;
+        const enabled=document.getElementById('w'+n+'Enabled');
+        const label=document.getElementById('w'+n+'Label');
+        const state=document.getElementById('w'+n+'State');
+        if(enabled) enabled.checked=w.enabled!==false;
+        if(label) label.value=w.label || ('FB-0'+n);
+        if(w.configured) configured++;
+        if(w.testOk) online++;
+        if(state){
+          const bits=[
+            w.testOk?'● ONLINE':(w.configured?'● CHƯA TEST / OFFLINE':'○ CHƯA CẤU HÌNH'),
+            w.profile || '',
+            w.socialAioVersion?('AIO '+w.socialAioVersion):'',
+            w.latencyMs?(w.latencyMs+'ms'):'',
+            w.clientIdMasked || ''
+          ].filter(Boolean);
+          state.textContent=bits.join(' • ');
+          state.className='workerstate '+(w.testOk?'ok':(w.configured?'warn':''));
+        }
+      });
+      const txt='Worker Pool: '+online+'/'+workers.filter(w=>w.enabled!==false).length+' online • '+configured+' configured';
+      document.getElementById('workerPoolState').textContent=txt;
+      document.getElementById('workerTopState').textContent=txt;
+    }
+
+    function loadWorkerPool() {
+      command({__command:'GET_WORKER_POOL'}, renderWorkerPool, e=>{
+        document.getElementById('workerPoolState').textContent='Không đọc được Worker Pool: '+(e.message||e);
       });
     }
 
-    function saveBridgeConfig() {
-      const id = document.getElementById('bridgeClientId').value.trim();
-      if (!id) { setStatus('Hãy dán CLIENT_ID từ Social AIO > Automation > APIs > Connect.'); return; }
-      setStatus('Đang lưu CLIENT_ID...');
-      command({__command:'SAVE_BRIDGE_CONFIG', clientId:id}, cfg => {
-        document.getElementById('bridgeClientId').value = '';
-        document.getElementById('bridgeState').textContent =
-          'Runtime V' + cfg.version + ' | Relay: ' + cfg.relay + ' | CLIENT_ID ' + cfg.clientIdMasked + ' ✅';
-        setStatus('✅ Đã lưu CLIENT_ID. Bấm TEST KẾT NỐI.');
+    function collectWorkerInputs() {
+      return [1,2,3].map(n=>({
+        slot:'W'+n,
+        enabled:document.getElementById('w'+n+'Enabled').checked,
+        label:document.getElementById('w'+n+'Label').value.trim() || ('FB-0'+n),
+        clientId:document.getElementById('w'+n+'ClientId').value.trim()
+      }));
+    }
+
+    function saveWorkerPool() {
+      setStatus('Đang lưu 3 Worker...');
+      command({__command:'SAVE_WORKER_POOL',workers:collectWorkerInputs()}, cfg=>{
+        [1,2,3].forEach(n=>document.getElementById('w'+n+'ClientId').value='');
+        renderWorkerPool(cfg);
+        setStatus('✅ Đã lưu Worker Pool. Bấm TEST 3 WORKER để xác nhận các tab Social AIO đang Connected.');
       });
     }
 
-    function testBridge() {
-      setStatus('Đang gọi Social AIO relay...');
-      command({__command:'TEST_BRIDGE'}, r => {
-        setStatus(
-          '✅ API BRIDGE PASS' +
-          '\nRuntime: V' + r.version +
-          '\nRelay: ' + r.relay +
-          '\nClient: ' + r.clientId +
-          '\nSocial AIO: ' + (r.socialAioVersion || 'OK') +
-          (r.profile ? ('\nProfile: ' + r.profile) : '') +
-          '\nRound-trip: ' + r.durationMs + ' ms'
-        );
-      });
-    }
-
-    function scanBridgeGroup() {
-      const url = document.getElementById('bridgeGroupUrl').value.trim();
-      if (!url) { setStatus('Hãy dán URL Group Facebook vào ô API Bridge.'); return; }
-      setStatus('API Bridge đang quét page đầu của Group...');
-      command({__command:'BRIDGE_SCAN_GROUP', groupUrl:url, targetCount:25}, r => {
-        const x = r.imported || {};
-        setStatus(
-          '✅ GROUP API POC PASS' +
-          '\nAPI đọc: ' + r.postsRead + ' post' +
-          '\nPost mới: ' + (x.postImported || 0) +
-          '\nTrùng: ' + (x.duplicates || 0) +
-          '\nCursor tiếp: ' + (r.nextCursor ? 'CÓ' : 'KHÔNG') +
-          '\nThời gian: ' + Math.round(r.durationMs/100)/10 + 's' +
-          '\n→ Dữ liệu đã vào NHẬP JSON / CƠ HỘI.'
-        );
-      });
-    }
-
-    function scanBridgeComments() {
-      const url = document.getElementById('bridgePostUrl').value.trim();
-      if (!url) { setStatus('Hãy dán URL bài Facebook có comment.'); return; }
-      if (/facebook\.com\/groups\/[^\/?#]+\/?(?:[?#].*)?$/i.test(url)) {
-        setStatus('URL này là URL GROUP. Muốn lấy comment phải dán URL POST / permalink cụ thể, không phải URL nhóm.');
-        return;
-      }
-      setStatus('API Bridge đang lấy comment page đầu...');
-      command({__command:'BRIDGE_FETCH_COMMENTS', postUrl:url}, r => {
-        const x = r.imported || {};
-        setStatus(
-          (r.commentsRead ? '✅ COMMENT API POC PASS' : '⚠️ API PASS NHƯNG CHƯA CÓ COMMENT RECORD') +
-          '\nAPI đọc: ' + r.commentsRead + ' comment' +
-          '\nComment mới: ' + (x.commentImported || 0) +
-          '\nTrùng: ' + (x.duplicates || 0) +
-          '\nCursor tiếp: ' + (r.nextCursor ? 'CÓ' : 'KHÔNG') +
-          '\nThời gian: ' + Math.round(r.durationMs/100)/10 + 's' +
-          (r.responsePreview ? ('\nResponse: ' + r.responsePreview) : '') +
-          '\n→ Kiểm tra tab BÌNH LUẬN / CƠ HỘI.'
-        );
+    function testWorkerPool() {
+      setStatus('Đang test 3 Social AIO Worker...');
+      command({__command:'SAVE_WORKER_POOL',workers:collectWorkerInputs()}, ()=>{
+        [1,2,3].forEach(n=>document.getElementById('w'+n+'ClientId').value='');
+        command({__command:'TEST_WORKER_POOL'}, cfg=>{
+          renderWorkerPool(cfg);
+          const lines=(cfg.workers||[]).map(w=>
+            w.slot+' '+(w.testOk?'✅ ONLINE':'❌ OFFLINE')+
+            (w.profile?(' • '+w.profile):'')+
+            (w.latencyMs?(' • '+w.latencyMs+'ms'):'')+
+            (w.error?(' • '+w.error):'')
+          );
+          setStatus('WORKER TEST - V'+cfg.version+'\nOnline: '+cfg.onlineCount+'/3\n'+lines.join('\n'));
+        });
       });
     }
 
@@ -600,48 +590,126 @@
       });
     }
 
+    function summarizePoolResults(ctx) {
+      return {
+        processed:ctx.results.length,
+        passed:ctx.results.filter(r=>r&&r.ok&&!r.incomplete&&!r.stopped).length,
+        incomplete:ctx.results.filter(r=>r&&r.incomplete).length,
+        failed:ctx.results.filter(r=>r&&!r.ok&&!r.stopped).length,
+        stopped:ctx.results.filter(r=>r&&r.stopped).length
+      };
+    }
+
+    function runWorkerQueue(worker, ctx, done) {
+      const jobs=(worker.jobs||[]).slice();
+      const next=()=>{
+        if(!jobs.length){done();return;}
+        const job=jobs.shift();
+        command({
+          __command:'RUN_WORKER_JOB',
+          workerSlot:worker.slot,
+          row:job.row,
+          targetCount:job.targetCount
+        }, r=>{
+          ctx.results.push(r);
+          pollGroupScanState();
+          next();
+        }, e=>{
+          ctx.results.push({
+            ok:false,row:job.row,name:job.name,workerSlot:worker.slot,
+            error:String(e.message||e),status:'LỖI'
+          });
+          pollGroupScanState();
+          next();
+        });
+      };
+      next();
+    }
+
+    function runWorkerPlan(plan, retryMode) {
+      const workers=(plan.workers||[]).filter(w=>(w.jobs||[]).length);
+      if(!workers.length){
+        setStatus('Không có Worker/Job khả dụng.'+
+          ((plan.unassigned||[]).length?'\n'+plan.unassigned.map(x=>x.name+': '+x.error).join('\n'):''));
+        return;
+      }
+
+      const ctx={results:[],started:Date.now()};
+      let remaining=workers.length;
+      const workerNames=workers.map(w=>w.slot+'('+w.jobs.length+')').join(' • ');
+      setStatus(
+        (retryMode?'RETRY':'QUÉT')+' bằng '+workers.length+' Worker song song...'+
+        '\nPhân phối: '+workerNames+
+        ((plan.unassigned||[]).length?'\nKhông gán được: '+plan.unassigned.length:'')
+      );
+
+      const onWorkerDone=()=>{
+        remaining--;
+        if(remaining>0) return;
+
+        command({__command:'FINALIZE_WORKER_BATCH'}, fin=>{
+          const s=summarizePoolResults(ctx);
+          const elapsed=Date.now()-ctx.started;
+          setStatus(
+            (retryMode?'RETRY':'QUÉT')+' XONG - V'+fin.version+
+            '\n3-worker pool xử lý: '+s.processed+
+            '\nXong đủ: '+s.passed+
+            '\nThiếu: '+s.incomplete+
+            '\nLỗi: '+s.failed+
+            '\nDừng: '+s.stopped+
+            '\nTổng thời gian: '+Math.round(elapsed/100)/10+'s'+
+            '\nĐồng bộ KH: '+((fin.refresh&&fin.refresh.leads)||0)
+          );
+          pollGroupScanState();
+          loadWorkerPool();
+
+          if(fin.autoAnalyzeRequested){
+            setStatus(document.getElementById('status').textContent+'\nAI: đang phân tích dữ liệu mới...');
+            startProgressPolling();
+            command({__command:'ANALYZE_NEW'}, r=>{
+              setStatus(
+                (retryMode?'RETRY':'QUÉT')+' + AI XONG'+
+                '\nGroup xử lý: '+s.processed+
+                '\nAI đã phân tích: '+r.analyzed+
+                '\nCòn lại: '+r.remaining+
+                '\nKH tiềm năng: '+(r.refresh?r.refresh.leads:'-')
+              );
+              stopProgressPolling();
+              pollGroupScanState();
+            }, ()=>{
+              stopProgressPolling();
+            });
+          }
+        });
+      };
+
+      workers.forEach(w=>runWorkerQueue(w,ctx,onWorkerDone));
+    }
+
     function runCheckedGroups() {
       const target=selectedTarget();
       const btn=document.getElementById('scanSelectedBtn');
       btn.disabled=true;
-      setStatus('Đang quét các Group đã chọn • ' + target + ' bài/Group...');
-      command({__command:'RUN_CHECKED_GROUPS',targetCount:target}, r => {
-        setStatus(
-          'QUÉT XONG - V' + r.version +
-          '\nĐã xử lý: ' + r.processed + '/' + r.selected +
-          '\nXong đủ: ' + r.passed +
-          '\nThiếu: ' + (r.incomplete || 0) +
-          '\nLỗi: ' + r.failed +
-          '\nDừng: ' + r.stopped +
-          '\nHoãn: ' + r.deferred +
-          '\nCòn chọn: ' + r.remainingChecked +
-          '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
-        );
-        pollGroupScanState();
-      }, e => {
-        setStatus('Lỗi quét các Group đã chọn: ' + (e.message || e));
-        pollGroupScanState();
+      setStatus('Đang chia Group cho Worker Pool...');
+      command({__command:'PREPARE_WORKER_BATCH',targetCount:target}, plan=>{
+        btn.disabled=false;
+        runWorkerPlan(plan,false);
+      }, e=>{
+        btn.disabled=false;
+        setStatus('Không thể tạo Worker Plan: '+(e.message||e));
       });
     }
 
     function retryFailedGroups() {
-      setStatus('Đang retry các Group LỖI / THIẾU...');
-      command({__command:'RETRY_FAILED_GROUPS'}, r => {
-        setStatus(
-          'RETRY XONG - V' + r.version +
-          '\nĐã retry: ' + r.retried +
-          '\nXong đủ: ' + r.passed +
-          '\nCòn thiếu: ' + r.incomplete +
-          '\nCòn lỗi: ' + r.failed +
-          '\nHoãn: ' + (r.deferred || 0) +
-          '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
-        );
-        pollGroupScanState();
-      }, e => {
-        setStatus('Retry lỗi: ' + (e.message || e));
-        pollGroupScanState();
+      const target=selectedTarget();
+      setStatus('Đang chia Group LỖI/THIẾU cho Worker Pool...');
+      command({__command:'PREPARE_RETRY_WORKER_BATCH',targetCount:target}, plan=>{
+        runWorkerPlan(plan,true);
+      }, e=>{
+        setStatus('Retry lỗi: '+(e.message||e));
       });
     }
+
 
     function stopCheckedGroups() {
       setStatus('Đang gửi yêu cầu dừng...');
