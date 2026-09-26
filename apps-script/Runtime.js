@@ -3273,6 +3273,207 @@ const RemoteApp = (() => {
     };
   }
 
+  function ensureApiDiagSheet_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    let sh=ss.getSheetByName(CFG.API_DIAG_SHEET);
+    const h=[
+      'Thời gian','Diag ID','Group','Group ID','Worker','Variant',
+      'HTTP','Latency ms','Bytes','Raw type','Top keys','Preferred posts',
+      'Best array path','Best array count','Array summary','Cursor path',
+      'Cursor summary','Unwrapped type','Unwrapped posts','Page2 posts',
+      'Kết luận','Mã','Version','Ghi chú'
+    ];
+
+    if(!sh){
+      sh=ss.insertSheet(CFG.API_DIAG_SHEET);
+      sh.getRange(1,1,1,h.length).setValues([h]);
+      sh.setFrozenRows(1);
+      sh.getRange(1,1,1,h.length)
+        .setFontWeight('bold')
+        .setBackground('#0b3b70')
+        .setFontColor('#ffffff');
+      sh.setColumnWidth(3,220);
+      sh.setColumnWidth(13,250);
+      sh.setColumnWidth(15,500);
+      sh.setColumnWidth(17,500);
+      sh.setColumnWidth(21,340);
+      sh.setColumnWidth(24,400);
+    }
+    return sh;
+  }
+
+  function logApiDiag_(d) {
+    const sh=ensureApiDiagSheet_();
+    const rows=d.results.map(r=>[
+      new Date(),
+      d.diagId,
+      d.groupName,
+      d.groupKey,
+      d.workerSlot,
+      r.name,
+      r.httpCode,
+      r.durationMs,
+      r.bytes,
+      r.rawType,
+      (r.topKeys||[]).join(', '),
+      r.rawPreferred,
+      r.rawBestPath,
+      r.rawBestCount,
+      r.arrays,
+      r.cursorPath,
+      r.cursorSummary,
+      r.unType,
+      r.unPreferred,
+      (d.page2&&d.page2.sourceVariant===r.name)?d.page2.rawBestCount:'',
+      d.conclusion.title,
+      d.conclusion.code,
+      CFG.VERSION,
+      (r.error?('API error: '+r.error+' | '):'')+d.conclusion.action
+    ]);
+
+    if(rows.length){
+      sh.insertRowsBefore(2,rows.length);
+      sh.getRange(2,1,rows.length,24).setValues(rows);
+    }
+  }
+
+  function runApiResponseDiagnostic_(command) {
+    ensureV16Sheets_(false);
+
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet();
+    const active=sh&&sh.getActiveRange();
+    const row=active?active.getRow():0;
+
+    if(!sh || sh.getName()!==CFG.GROUP_SCAN_SHEET || row<2){
+      throw new Error('Mở QUÉT NHÓM và click một dòng Group cần chẩn đoán.');
+    }
+
+    const groupName=String(sh.getRange(row,3).getDisplayValue()||'').trim()||('Group '+row);
+    const groupUrl=String(sh.getRange(row,4).getDisplayValue()||'').trim();
+    const groupKey=String(sh.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim();
+
+    if(!groupUrl) throw new Error('Dòng đang chọn chưa có URL Group.');
+
+    const pool=getWorkerPoolRaw_();
+    const worker=pool.find(w=>w.enabled&&w.clientId) || pool.find(w=>w.clientId);
+    if(!worker) throw new Error('Chưa có W1 CLIENT_ID.');
+
+    const variants=[
+      {name:'URL+sorting',params:{url:groupUrl,sorting:'Newest Posts',cursor:''}}
+    ];
+    if(groupKey){
+      variants.push({
+        name:'UID+sorting',
+        params:{url:groupKey,sorting:'Newest Posts',cursor:''}
+      });
+    }
+    variants.push({
+      name:'URL-default',
+      params:{url:groupUrl,cursor:''}
+    });
+
+    const results=variants.map(v=>{
+      try{
+        return apiDiagVariant_(worker,v.name,v.params);
+      }catch(e){
+        return {
+          name:v.name,
+          params:v.params,
+          httpCode:0,
+          durationMs:0,
+          bytes:0,
+          error:String(e.message||e),
+          rawType:'error',
+          topKeys:[],
+          rawPreferred:0,
+          rawBestPath:'',
+          rawBestCount:0,
+          arrays:'',
+          cursorPath:'',
+          cursorSummary:'',
+          cursorValue:'',
+          unType:'error',
+          unPreferred:0,
+          unBestCount:0,
+          unCursor:''
+        };
+      }
+    });
+
+    let page2=null;
+    const source=results
+      .filter(x=>x.cursorValue)
+      .sort((a,b)=>Number(b.rawBestCount||0)-Number(a.rawBestCount||0))[0];
+
+    if(source){
+      try{
+        const p=apiDiagVariant_(
+          worker,
+          'PAGE2-probe',
+          Object.assign({},source.params,{cursor:source.cursorValue})
+        );
+        page2={
+          sourceVariant:source.name,
+          rawBestCount:p.rawBestCount,
+          rawPreferred:p.rawPreferred,
+          httpCode:p.httpCode,
+          durationMs:p.durationMs
+        };
+      }catch(e){
+        page2={
+          sourceVariant:source.name,
+          rawBestCount:0,
+          httpCode:0,
+          error:String(e.message||e)
+        };
+      }
+    }
+
+    const conclusion=apiDiagConclusion_(results,page2);
+    const diagId='API-'+Utilities.getUuid().slice(0,8);
+
+    logApiDiag_({
+      diagId,
+      groupName,
+      groupKey,
+      workerSlot:worker.slot,
+      results,
+      page2,
+      conclusion
+    });
+    SpreadsheetApp.flush();
+
+    return {
+      ok:true,
+      version:CFG.VERSION,
+      diagId,
+      row,
+      groupName,
+      groupKey,
+      workerSlot:worker.slot,
+      results:results.map(r=>({
+        name:r.name,
+        httpCode:r.httpCode,
+        durationMs:r.durationMs,
+        bytes:r.bytes,
+        rawType:r.rawType,
+        topKeys:r.topKeys,
+        rawPreferred:r.rawPreferred,
+        rawBestPath:r.rawBestPath,
+        rawBestCount:r.rawBestCount,
+        cursorPresent:!!r.cursorValue,
+        cursorPath:r.cursorPath,
+        unType:r.unType,
+        unPreferred:r.unPreferred,
+        unCursorPresent:!!r.unCursor,
+        error:r.error||''
+      })),
+      page2,
+      conclusion
+    };
+  }
+
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
     const id=String(clientId || '').trim();
     if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
@@ -3774,6 +3975,7 @@ const RemoteApp = (() => {
     apiBridgeScanSelectedGroup,
     apiBridgeFetchCommentsSelectedPost,
     apiBridgeStatus,
+    runApiResponseDiagnostic_,
     setupGroupScanControls_,
     getGroupScanControlState_,
     scanActiveGroupApiBridge_,
