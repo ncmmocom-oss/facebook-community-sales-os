@@ -3165,6 +3165,114 @@ const RemoteApp = (() => {
     return list[0] || null;
   }
 
+  function apiDiagVariant_(worker,name,params) {
+    const raw=apiDiagRaw_(worker.clientId,params);
+    const rawShape=apiDiagShape_(raw.parsed);
+    const unwrapped=unwrapBridgeResult_(raw.parsed);
+    const unShape=apiDiagShape_(unwrapped);
+    const rawBest=apiDiagBestArray_(rawShape);
+    const unBest=apiDiagBestArray_(unShape);
+    const preferred=findBridgeArray_(raw.parsed,['posts']);
+    const unPreferred=findBridgeArray_(unwrapped,['posts']);
+    const cursor=findBridgeCursor_(raw.parsed)||'';
+    const cursorObj=cursor ? {path:'findBridgeCursor_',value:cursor} : apiDiagCursor_(rawShape);
+
+    return {
+      name,
+      params,
+      httpCode:raw.code,
+      durationMs:raw.durationMs,
+      bytes:Utilities.newBlob(raw.text||'').getBytes().length,
+      error:raw.error||'',
+      rawType:rawShape.rootType,
+      topKeys:rawShape.topKeys,
+      rawPreferred:Array.isArray(preferred)?preferred.length:0,
+      rawBestPath:rawBest.path,
+      rawBestCount:Number(rawBest.length||0),
+      arrays:(rawShape.arrays||[])
+        .slice()
+        .sort((a,b)=>Number(b.length||0)-Number(a.length||0))
+        .slice(0,12)
+        .map(a=>a.path+'['+a.length+'] keys='+(a.keys||[]).slice(0,6).join(','))
+        .join(' | '),
+      cursorPath:cursorObj?cursorObj.path:'',
+      cursorValue:cursorObj?cursorObj.value:'',
+      cursorSummary:(rawShape.cursors||[])
+        .slice(0,15)
+        .map(x=>x.path+'='+(x.value?('len:'+String(x.value).length):'<object>'))
+        .join(' | '),
+      unType:unShape.rootType,
+      unPreferred:Array.isArray(unPreferred)?unPreferred.length:0,
+      unBestCount:Number(unBest.length||0),
+      unCursor:findBridgeCursor_(unwrapped)||''
+    };
+  }
+
+  function apiDiagConclusion_(results,page2) {
+    const first=results[0]||{};
+    const uid=results.find(x=>x.name==='UID+sorting');
+    const def=results.find(x=>x.name==='URL-default');
+
+    if(first.cursorValue && !first.unCursor){
+      return {
+        code:'B_UNWRAP_CURSOR',
+        title:'Wrapper/unwrap làm mất cursor',
+        action:'Giữ pagination metadata trước khi unwrap.'
+      };
+    }
+
+    if(page2 && page2.rawBestCount>0){
+      return {
+        code:'B_CURSOR_CONFIRMED',
+        title:'Cursor hoạt động nhưng scanner chưa dùng đúng metadata',
+        action:'Chuyển scanner sang raw-wrapper pagination.'
+      };
+    }
+
+    if(uid && uid.rawBestCount>Math.max(first.rawBestCount,first.rawPreferred)){
+      return {
+        code:'D_UID_MODE',
+        title:'Group UID trả nhiều bài hơn URL',
+        action:'Ưu tiên Group ID/UID khi gọi API.'
+      };
+    }
+
+    if(def && def.rawBestCount>Math.max(first.rawBestCount,first.rawPreferred)){
+      return {
+        code:'E_SORTING_PARAM',
+        title:'Bỏ sorting cho response tốt hơn',
+        action:'Không truyền sorting label, dùng default API.'
+      };
+    }
+
+    const mismatch=results.find(x=>
+      Number(x.rawBestCount||0)>Number(x.rawPreferred||0) ||
+      Number(x.rawBestCount||0)>Number(x.unPreferred||0)
+    );
+    if(mismatch){
+      return {
+        code:'A_ARRAY_PARSER',
+        title:'Parser đang chọn nhầm/mất array bài viết',
+        action:'Parse theo path array thực tế.'
+      };
+    }
+
+    const max=Math.max.apply(null,results.map(x=>Number(x.rawBestCount||0)).concat([0]));
+    if(max<=1 && !results.some(x=>x.cursorValue)){
+      return {
+        code:'C_UPSTREAM_1_NO_CURSOR',
+        title:'Raw API chỉ trả 1 bài và không có cursor',
+        action:'API hiện chưa tương đương Bulk Downloader.'
+      };
+    }
+
+    return {
+      code:'Z_UNKNOWN',
+      title:'Chưa đủ bằng chứng kết luận',
+      action:'Đọc NHẬT KÝ API và bổ sung parser theo schema thật.'
+    };
+  }
+
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
     const id=String(clientId || '').trim();
     if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
