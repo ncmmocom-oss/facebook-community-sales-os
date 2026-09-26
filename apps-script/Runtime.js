@@ -2382,7 +2382,7 @@ const RemoteApp = (() => {
     selectRange.insertCheckboxes();
 
     const commandRule=SpreadsheetApp.newDataValidation()
-      .requireValueInList(['▶ QUÉT','■ DỪNG'], true)
+      .requireValueInList(['SẴN SÀNG','▶ QUÉT','ĐANG QUÉT…','■ DỪNG'], true)
       .setAllowInvalid(false)
       .build();
     const commandRange=sheet.getRange(2,24,n,1);
@@ -2391,7 +2391,7 @@ const RemoteApp = (() => {
     const commandValues=commandRange.getDisplayValues();
     let commandDirty=false;
     commandValues.forEach(r=>{
-      if(!String(r[0]||'').trim()){r[0]='▶ QUÉT';commandDirty=true;}
+      if(!String(r[0]||'').trim()){r[0]='SẴN SÀNG';commandDirty=true;}
     });
     if(commandDirty) commandRange.setValues(commandValues);
 
@@ -2463,7 +2463,7 @@ const RemoteApp = (() => {
         const r=e && e.range;
         if(r && r.getSheet().getName()===CFG.GROUP_SCAN_SHEET && r.getRow()>=2) {
           const sh=r.getSheet();
-          sh.getRange(r.getRow(),24).setValue('▶ QUÉT');
+          sh.getRange(r.getRow(),24).setValue('SẴN SÀNG');
           setGroupRowStatus_(sh,r.getRow(),'LỖI',String(err.message||err));
         }
       } catch (_) {}
@@ -2503,7 +2503,7 @@ const RemoteApp = (() => {
     const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
     if(groupKey) PropertiesService.getDocumentProperties().setProperty(groupStopKey_(groupKey),'1');
     setGroupRowStatus_(sheet,row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
-    sheet.getRange(row,24).setValue('▶ QUÉT');
+    sheet.getRange(row,24).setValue('SẴN SÀNG');
     SpreadsheetApp.flush();
     return { ok:true, row, groupKey, stopRequested:true };
   }
@@ -2528,7 +2528,7 @@ const RemoteApp = (() => {
     }
 
     clearGroupStop_(groupKey);
-    sheet.getRange(row,24).setValue('■ DỪNG');
+    sheet.getRange(row,24).setValue('ĐANG QUÉT…');
     setGroupRowStatus_(sheet,row,'ĐANG QUÉT','Đang gọi Social AIO API…');
     SpreadsheetApp.flush();
 
@@ -2553,12 +2553,12 @@ const RemoteApp = (() => {
       if(stopped) setGroupRowStatus_(sheet,row,'DỪNG',detail);
       else setGroupRowStatus_(sheet,row,'XONG',detail);
 
-      sheet.getRange(row,24).setValue('▶ QUÉT');
+      sheet.getRange(row,24).setValue('SẴN SÀNG');
       clearGroupStop_(groupKey);
       SpreadsheetApp.flush();
       return Object.assign({},result,{row,name,groupKey,stopped,detail});
     } catch(err) {
-      sheet.getRange(row,24).setValue('▶ QUÉT');
+      sheet.getRange(row,24).setValue('SẴN SÀNG');
       setGroupRowStatus_(sheet,row,'LỖI',String(err.message||err));
       SpreadsheetApp.flush();
       return {
@@ -2593,7 +2593,7 @@ const RemoteApp = (() => {
   }
 
   function getGroupScanControlState_() {
-    setupGroupScanControls_();
+    ensureV16Sheets_(false);
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const selected=getCheckedGroupRows_();
     const last=sheet.getLastRow();
@@ -2614,7 +2614,7 @@ const RemoteApp = (() => {
   }
 
   function scanCheckedGroupsApiBridge_() {
-    setupGroupScanControls_();
+    ensureV16Sheets_(false);
     const props=PropertiesService.getDocumentProperties();
     props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
 
@@ -2637,7 +2637,7 @@ const RemoteApp = (() => {
       const item=selected[i];
       if(isGroupStopRequested_(item.groupKey)) {
         setGroupRowStatus_(sheet,item.row,'DỪNG','Bỏ qua theo yêu cầu dừng.');
-        sheet.getRange(item.row,24).setValue('▶ QUÉT');
+        sheet.getRange(item.row,24).setValue('SẴN SÀNG');
         results.push({ok:false,stopped:true,row:item.row,name:item.name});
         continue;
       }
@@ -2671,7 +2671,7 @@ const RemoteApp = (() => {
     selected.forEach(item=>{
       if(item.groupKey) props.setProperty(groupStopKey_(item.groupKey),'1');
       setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
-      sheet.getRange(item.row,24).setValue('▶ QUÉT');
+      sheet.getRange(item.row,24).setValue('SẴN SÀNG');
     });
     props.setProperty(CFG.BRIDGE_STOP_ALL_KEY,'1');
     SpreadsheetApp.flush();
