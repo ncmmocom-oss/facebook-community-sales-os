@@ -66,6 +66,8 @@ const RemoteApp = (() => {
     const existingCommentKeys = loadExistingCommentKeys_(commentSheet, oppSheet);
     const groupMap = loadGroupMap_(groupSheet);
     const postLookup = loadPostContext_(oppSheet);
+    const postRowMap = loadPostRowMap_(rawSheet, oppSheet);
+    const postUpdates = [];
 
     const rawRows = [];
     const commentRows = [];
@@ -143,6 +145,7 @@ const RemoteApp = (() => {
           if (isDup) {
             duplicateCount += 1;
             stat.duplicates += 1;
+            postUpdates.push({ postId, commentsCount, reactions, shares, mediaUrls, resultText });
           } else {
             keys.forEach(k => existingPostKeys.add(k));
             rawRows.push([
@@ -174,6 +177,7 @@ const RemoteApp = (() => {
       }
     });
 
+    applyPostMetadataUpdates_(rawSheet, oppSheet, postRowMap, postUpdates);
     writeRowsNewestFirst_(rawSheet, 5, rawRows, 16, [5]);
     writeRowsNewestFirst_(commentSheet, 2, commentRows, 23, [5,7]);
     writeRowsNewestFirst_(oppSheet, 2, oppRows, 21, [2]);
@@ -501,6 +505,63 @@ const RemoteApp = (() => {
       !result.commentsWithoutOpportunity && !result.opportunityCommentsWithoutRaw &&
       !result.unknownGroups && !result.leadsWithoutEvidence;
     return result;
+  }
+
+  function loadPostRowMap_(rawSheet, oppSheet) {
+    const map = {};
+    const rawLast = rawSheet.getLastRow();
+    if (rawLast >= 5) {
+      rawSheet.getRange(5,5,rawLast-4,1).getDisplayValues().forEach((r,i)=>{
+        const id=String(r[0]||'').trim();
+        if(id){ if(!map[id])map[id]={}; map[id].rawRow=i+5; }
+      });
+    }
+    const oppLast=oppSheet.getLastRow();
+    if(oppLast>=2){
+      oppSheet.getRange(2,2,oppLast-1,3).getDisplayValues().forEach((r,i)=>{
+        if(String(r[2]||'')==='Bình luận') return;
+        const id=String(r[0]||'').trim();
+        if(id){ if(!map[id])map[id]={}; map[id].oppRow=i+2; }
+      });
+    }
+    return map;
+  }
+
+  function applyPostMetadataUpdates_(rawSheet, oppSheet, rowMap, updates) {
+    if(!updates || !updates.length) return {rows:0};
+    const uniq={};
+    updates.forEach(u=>{ if(u.postId) uniq[u.postId]=u; });
+    const ids=Object.keys(uniq);
+    if(!ids.length) return {rows:0};
+
+    const rawRows=ids.map(id=>rowMap[id]&&rowMap[id].rawRow).filter(Boolean);
+    if(rawRows.length){
+      const min=Math.min(...rawRows), max=Math.max(...rawRows);
+      const vals=rawSheet.getRange(min,10,max-min+1,7).getValues(); // J:P
+      ids.forEach(id=>{
+        const meta=rowMap[id]; if(!meta||!meta.rawRow)return;
+        const u=uniq[id], r=vals[meta.rawRow-min];
+        r[0]=u.commentsCount||0; r[1]=u.reactions||0; r[2]=u.shares||0;
+        r[3]=(u.mediaUrls||[]).length;
+        r[5]=(u.mediaUrls||[]).join('\n');
+        r[6]=(u.mediaUrls||[]).length;
+      });
+      rawSheet.getRange(min,10,vals.length,7).setValues(vals);
+    }
+
+    const oppRows=ids.map(id=>rowMap[id]&&rowMap[id].oppRow).filter(Boolean);
+    if(oppRows.length){
+      const min=Math.min(...oppRows), max=Math.max(...oppRows);
+      const vals=oppSheet.getRange(min,19,max-min+1,3).getValues(); // S:U
+      ids.forEach(id=>{
+        const meta=rowMap[id]; if(!meta||!meta.oppRow)return;
+        const u=uniq[id], r=vals[meta.oppRow-min];
+        r[0]=u.resultText||r[0];
+        r[2]=(u.mediaUrls||[]).join('\n');
+      });
+      oppSheet.getRange(min,19,vals.length,3).setValues(vals);
+    }
+    return {rows:ids.length};
   }
 
   function detectJsonKind_(fileName, parsed) {
