@@ -1,9 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.8.7-identity-fix.2",
+  "version": "1.8.7-worker-health.1",
   "channel": "pilot",
   "updated_at": "2026-09-26",
   "notes": [
+    "Worker Health hotfix: replace ambiguous testOk-only ONLINE/OFFLINE semantics with evidence-based UNCONFIGURED, UNKNOWN, ONLINE, STALE and OFFLINE states.",
+    "ONLINE evidence can come from TEST WORKER or a successful Group scan; successful batch and direct-row scans now update lastSuccessAt/lastJobAt automatically.",
+    "OFFLINE is reserved for newer explicit connection/test failure evidence; UNKNOWN means configured but unverified, and STALE means the last success is older than the 15-minute health TTL.",
+    "Dispatcher excludes confirmed OFFLINE workers, still allows UNKNOWN/STALE workers so a normal scan can re-establish ONLINE, and preserves Profile pinning behavior.",
+    "Changing CLIENT_ID resets health evidence so a new Worker identity cannot inherit status from the previous credential.",
+    "Pagination, Group identity normalization, exact-batch AUTO AI attribution, Lead Qualification Hard Gate and manual JSON fallback are unchanged.",
     "P0 identity normalization fix.2: every API-driven Group scan with sourceRow now normalizes the exact QUET NHOM source row even when Facebook keeps the same numeric Group key.",
     "resolvedScanGroupKey uses canonical fileGroupKey when available and falls back to the original sourceGroupKey; numeric-to-slug and numeric-to-numeric scans share the same source-row path.",
     "The hotfix preserves target count, pagination/cursor logic, exact-batch AUTO AI attribution, Lead Qualification Hard Gate, and manual JSON fallback behavior.",
