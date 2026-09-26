@@ -3097,6 +3097,74 @@ const RemoteApp = (() => {
     };
   }
 
+  function apiDiagShape_(value) {
+    const arrays=[], cursors=[], seen=[];
+    const walk=(v,path,depth)=>{
+      if(depth>8 || v===null || v===undefined) return;
+      if(Array.isArray(v)){
+        const keys=(v[0] && typeof v[0]==='object' && !Array.isArray(v[0])) ? Object.keys(v[0]).slice(0,16) : [];
+        arrays.push({path,length:v.length,keys});
+        for(let i=0;i<Math.min(2,v.length);i++) walk(v[i],path+'['+i+']',depth+1);
+        return;
+      }
+      if(typeof v==='string'){
+        const s=v.trim();
+        if((s.startsWith('{')&&s.endsWith('}'))||(s.startsWith('[')&&s.endsWith(']'))){
+          try{ walk(JSON.parse(s),path+'<json>',depth+1); }catch(_){}
+        }
+        return;
+      }
+      if(typeof v!=='object' || seen.indexOf(v)>=0) return;
+      seen.push(v);
+      Object.keys(v).forEach(k=>{
+        const child=v[k], p=path+'.'+k, lk=String(k).toLowerCase();
+        if(/cursor|after|next|page.?info|paging/.test(lk)){
+          if(typeof child==='string' || typeof child==='number') cursors.push({path:p,value:String(child)});
+          else if(child && typeof child==='object') cursors.push({path:p,value:''});
+        }
+        walk(child,p,depth+1);
+      });
+    };
+    walk(value,'$',0);
+    return {
+      rootType:Array.isArray(value)?'array':(value===null?'null':typeof value),
+      topKeys:(value&&typeof value==='object'&&!Array.isArray(value)) ? Object.keys(value).slice(0,30) : [],
+      arrays,
+      cursors
+    };
+  }
+
+  function apiDiagBestArray_(shape) {
+    const scored=(shape.arrays||[]).map(a=>{
+      const p=String(a.path||'').toLowerCase();
+      const keys=(a.keys||[]).map(x=>String(x).toLowerCase());
+      let score=0;
+      if(/posts?/.test(p)) score+=100;
+      if(/feed|edges|nodes/.test(p)) score+=30;
+      if(/result|data/.test(p)) score+=10;
+      ['post_id','postid','message','actor','author','url','permalink'].forEach(k=>{
+        if(keys.indexOf(k)>=0) score+=12;
+      });
+      return Object.assign({},a,{score});
+    });
+    scored.sort((a,b)=>b.score-a.score || Number(b.length||0)-Number(a.length||0));
+    return scored[0] || {path:'',length:0,score:-1,keys:[]};
+  }
+
+  function apiDiagCursor_(shape) {
+    const list=(shape.cursors||[]).filter(x=>x.value);
+    const rank=x=>{
+      const p=String(x.path||'').toLowerCase();
+      if(/next_cursor|end_cursor/.test(p)) return 100;
+      if(/after/.test(p)) return 90;
+      if(/cursor/.test(p)) return 80;
+      if(/next/.test(p)) return 70;
+      return 10;
+    };
+    list.sort((a,b)=>rank(b)-rank(a));
+    return list[0] || null;
+  }
+
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
     const id=String(clientId || '').trim();
     if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
