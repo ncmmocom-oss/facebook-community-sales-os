@@ -834,6 +834,11 @@ const RemoteApp = (() => {
     if (name === 'TEST_AI') return testAiConnection_();
     if (name === 'GET_AI_PROGRESS') return getAiProgress_();
     if (name === 'AUDIT_CONSISTENCY') return auditConsistency_();
+    if (name === 'GET_BRIDGE_CONFIG') return getApiBridgeConfig_();
+    if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
+    if (name === 'TEST_BRIDGE') return testApiBridge_();
+    if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl);
+    if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
     throw new Error('Lệnh giao diện không được hỗ trợ: ' + name);
   }
 
@@ -2223,6 +2228,111 @@ const RemoteApp = (() => {
   // CLIENT_ID is obtained from Social AIO > Automation > APIs > Connect.
   // Never store Facebook cookies/access tokens in Sheet/GitHub.
   // ============================================================
+
+
+  function getApiBridgeConfig_() {
+    const id = String(
+      PropertiesService.getDocumentProperties().getProperty(CFG.BRIDGE_CLIENT_ID_KEY) || ''
+    ).trim();
+    return {
+      version:CFG.VERSION,
+      relay:CFG.BRIDGE_SERVER,
+      configured:!!id,
+      clientIdMasked:id ? maskBridgeClientId_(id) : ''
+    };
+  }
+
+  function saveApiBridgeConfig_(command) {
+    const id=String(command.clientId || '').trim();
+    if (!id) throw new Error('CLIENT_ID đang trống.');
+    if (id.length < 6 || id.length > 200) throw new Error('CLIENT_ID không hợp lệ.');
+    PropertiesService.getDocumentProperties().setProperty(CFG.BRIDGE_CLIENT_ID_KEY,id);
+    return getApiBridgeConfig_();
+  }
+
+  function testApiBridge_() {
+    const started=Date.now();
+    const versionResult=callSocialAioApi_('get_ext_version',{});
+    let profileResult=null;
+    try { profileResult=callSocialAioApi_('get_my_profile_lite',{}); } catch (_) {}
+    const version=pickBridgeValue_(versionResult,['version']) || compactBridgePreview_(versionResult,120);
+    const profile=pickBridgeValue_(profileResult,['name','profile.name']) || '';
+    return {
+      ok:true,
+      version:CFG.VERSION,
+      relay:CFG.BRIDGE_SERVER,
+      clientId:maskBridgeClientId_(getBridgeClientId_()),
+      socialAioVersion:version || 'OK',
+      profile,
+      durationMs:Date.now()-started
+    };
+  }
+
+  function scanGroupApiBridge_(groupUrl) {
+    groupUrl=String(groupUrl || '').trim();
+    if(!/facebook\.com\/groups\//i.test(groupUrl)) {
+      throw new Error('Hãy nhập URL Group Facebook hợp lệ.');
+    }
+    const started=Date.now();
+    const apiResult=callSocialAioApi_('get_list_fb_group_posts',{
+      url:groupUrl,
+      sorting:'Newest Posts',
+      cursor:''
+    });
+    const posts=findBridgeArray_(apiResult,['posts']);
+    if(!posts.length) {
+      throw new Error('API trả về nhưng không tìm thấy post. Response: '+compactBridgePreview_(apiResult,700));
+    }
+    const fileName='api_posts_'+(extractGroupKey_(groupUrl)||'group')+'_'+
+      Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+    const imported=importJsonFiles([{name:fileName,text:JSON.stringify(posts)}]);
+    return {
+      ok:true,
+      version:CFG.VERSION,
+      groupUrl,
+      postsRead:posts.length,
+      nextCursor:findBridgeCursor_(apiResult)||'',
+      imported,
+      durationMs:Date.now()-started
+    };
+  }
+
+  function fetchCommentsApiBridge_(postUrl) {
+    postUrl=String(postUrl || '').trim();
+    if(!postUrl) throw new Error('Hãy nhập URL bài Facebook.');
+    const started=Date.now();
+    const apiResult=callSocialAioApi_('get_list_fb_comment',{
+      url:postUrl,
+      type:'Newest',
+      cursor:''
+    });
+    const comments=findBridgeArray_(apiResult,['comments']);
+    if(!comments.length) {
+      return {
+        ok:true,
+        version:CFG.VERSION,
+        postUrl,
+        commentsRead:0,
+        nextCursor:findBridgeCursor_(apiResult)||'',
+        responsePreview:compactBridgePreview_(apiResult,700),
+        imported:null,
+        durationMs:Date.now()-started
+      };
+    }
+    const postId=normalizePostId_('',postUrl)||'post';
+    const fileName='api_comments_'+postId+'_'+
+      Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+    const imported=importJsonFiles([{name:fileName,text:JSON.stringify(comments)}]);
+    return {
+      ok:true,
+      version:CFG.VERSION,
+      postUrl,
+      commentsRead:comments.length,
+      nextCursor:findBridgeCursor_(apiResult)||'',
+      imported,
+      durationMs:Date.now()-started
+    };
+  }
 
   function apiBridgeConfigure() {
     const ui = SpreadsheetApp.getUi();
