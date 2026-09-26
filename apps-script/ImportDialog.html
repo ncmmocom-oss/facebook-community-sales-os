@@ -25,6 +25,11 @@
     .primary { font-size:14px; padding:11px 16px; }
     .danger { background:#b91c1c; }
     .retry { background:#d97706; }
+    .workergrid { display:grid; gap:8px; margin-top:8px; }
+    .workercard { display:grid; grid-template-columns:36px 86px 1fr; gap:8px; align-items:center; background:#fff; border:1px solid #fed7aa; border-radius:8px; padding:8px; }
+    .workerstate { grid-column:2 / 4; font-size:12px; color:#64748b; }
+    .workerbadge { font-weight:800; text-align:center; color:#7c2d12; }
+    .poolstate { margin-top:8px; font-size:12px; font-weight:700; }
     input, textarea, select { box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     input[type="file"], input[type="checkbox"] { width: auto; }
     textarea { min-height: 72px; resize: vertical; }
@@ -80,6 +85,7 @@
     <button class="secondary" onclick="runActiveGroup()">Quét dòng đang chọn</button>
     <button class="dark" onclick="clearCheckedGroups()">Bỏ chọn tất cả</button>
 
+    <div id="workerTopState" class="poolstate">Worker Pool: đang đọc...</div>
     <div id="scanState" class="muted">Đang đọc danh sách Group...</div>
     <div id="scanList" class="scanlist">Chưa chọn Group.</div>
   </div>
@@ -148,31 +154,57 @@
 
 
   <div class="box bridge">
-    <h3>3. API Bridge POC — quét trực tiếp, không tải JSON</h3>
+    <h3>3. Social AIO Worker Pool — 3 tài khoản</h3>
     <p>
-      Mở <b>Social AIO → Automation → APIs → Connect</b>, giữ tab APIs đang kết nối,
-      sau đó dán <b>CLIENT_ID</b> vào đây. Google Sheet sẽ gọi relay chính thức
-      <b>api.fbaio.org</b> để chạy API bằng phiên Facebook đang đăng nhập trong browser.
+      Mỗi Worker = <b>1 tài khoản/browser profile Social AIO</b> đang mở
+      <b>Automation → APIs → Connect</b>. Copy CLIENT_ID của từng tài khoản và dán vào đúng Worker.
+      Hệ thống tự chia Group cho tối đa 3 Worker chạy song song.
     </p>
 
-    <label>CLIENT_ID từ màn hình Social AIO APIs</label>
-    <input id="bridgeClientId" type="password" placeholder="Dán CLIENT_ID rồi LƯU">
-    <button class="secondary" onclick="saveBridgeConfig()">LƯU CLIENT_ID</button>
-    <button class="dark" onclick="testBridge()">TEST KẾT NỐI</button>
-    <div id="bridgeState" class="muted">Đang đọc cấu hình Bridge...</div>
-
-    <label style="display:block;margin-top:10px;">URL Group Facebook — POC page đầu</label>
-    <input id="bridgeGroupUrl" type="text" placeholder="https://www.facebook.com/groups/.../">
-    <button onclick="scanBridgeGroup()">QUÉT GROUP POC → SHEET</button>
-
-    <label style="display:block;margin-top:10px;">URL bài Facebook — POC comment page đầu</label>
-    <input id="bridgePostUrl" type="text" placeholder="https://www.facebook.com/groups/.../permalink/.../">
-    <button onclick="scanBridgeComments()">LẤY COMMENT POC → SHEET</button>
-
     <div class="muted">
-      POC hiện chỉ gọi <b>page đầu</b> để nghiệm thu đường truyền, schema post/comment và tốc độ.
-      Sau khi PASS mới bật pagination + scheduler cho 15–30 Group/Profile.
-      CLIENT_ID chỉ lưu trong Document Properties, không ghi vào ô Sheet/GitHub.
+      Setup một lần: mở 3 browser/profile → Connect APIs → copy 3 CLIENT_ID → dán W1/W2/W3 → LƯU & TEST 3 WORKER.
+      CLIENT_ID chỉ lưu trong Document Properties, không ghi vào Sheet/GitHub.
+    </div>
+
+    <div class="workergrid">
+      <div class="workercard">
+        <input id="w1Enabled" type="checkbox" checked>
+        <div class="workerbadge">W1</div>
+        <input id="w1Label" value="FB-01" placeholder="Tên worker">
+        <div></div>
+        <div></div>
+        <input id="w1ClientId" type="password" placeholder="CLIENT_ID Worker 1 — để trống nếu đã lưu">
+        <div id="w1State" class="workerstate">Chưa kiểm tra.</div>
+      </div>
+
+      <div class="workercard">
+        <input id="w2Enabled" type="checkbox" checked>
+        <div class="workerbadge">W2</div>
+        <input id="w2Label" value="FB-02" placeholder="Tên worker">
+        <div></div>
+        <div></div>
+        <input id="w2ClientId" type="password" placeholder="CLIENT_ID Worker 2 — để trống nếu đã lưu">
+        <div id="w2State" class="workerstate">Chưa kiểm tra.</div>
+      </div>
+
+      <div class="workercard">
+        <input id="w3Enabled" type="checkbox" checked>
+        <div class="workerbadge">W3</div>
+        <input id="w3Label" value="FB-03" placeholder="Tên worker">
+        <div></div>
+        <div></div>
+        <input id="w3ClientId" type="password" placeholder="CLIENT_ID Worker 3 — để trống nếu đã lưu">
+        <div id="w3State" class="workerstate">Chưa kiểm tra.</div>
+      </div>
+    </div>
+
+    <button class="secondary" onclick="saveWorkerPool()">LƯU 3 WORKER</button>
+    <button class="dark" onclick="testWorkerPool()">TEST 3 WORKER</button>
+    <div id="workerPoolState" class="muted">Đang đọc cấu hình Worker Pool...</div>
+
+    <div class="muted" style="margin-top:8px;">
+      Cột <b>Profile</b> trong QUÉT NHÓM: để trống/AUTO = hệ thống tự chọn Worker nhanh/rảnh nhất.
+      Nếu Group chỉ dùng được một account, nhập <b>W1 / W2 / W3</b>, tên worker (FB-01...) hoặc đúng tên Profile mà TEST trả về.
     </div>
   </div>
 
@@ -670,7 +702,7 @@
     }
 
     loadAiConfig();
-    loadBridgeConfig();
+    loadWorkerPool();
     startGroupScanPolling();
   </script>
 </body>
