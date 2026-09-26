@@ -1143,6 +1143,7 @@ const RemoteApp = (() => {
       const groupSet=new Set(((options&&options.groupNames)||[]).map(x=>String(x||'').trim()).filter(Boolean));
       const rowSet=new Set(((options&&options.rowNumbers)||[]).map(x=>Number(x||0)).filter(x=>x>=2));
       const rows = sheet.getRange(2, 1, last - 1, 26).getValues();
+      const contextMap=loadGroupAiContextMap_();
       const candidates = [];
 
       rows.forEach((r, i) => {
@@ -1173,6 +1174,7 @@ const RemoteApp = (() => {
           content: compressEvidenceForAi_(content, sourceType),
           sourceType,
           sourceUrl: String(r[2] || ''),
+          offerContext: resolveAiContextForGroup_(group,'',cfg,contextMap),
           engagement: String(r[18] || ''),
           postDate: r[0] instanceof Date
             ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
