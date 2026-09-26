@@ -226,3 +226,40 @@ raw post ↔ opportunity, comment ↔ opportunity, group registry và lead evide
 - AI write: một batch Sheet write thay vì nhiều setValue theo từng dòng.
 - Normal import/AI dùng FAST refresh; full dedupe/remap chỉ chạy khi người dùng bấm Đồng bộ Sheet.
 - Row height cố định + CLIP để content dài không phá layout.
+
+
+## V1.8.0-POC — Social AIO API Bridge
+
+POC này bỏ bước tải JSON thủ công cho luồng thử nghiệm.
+
+### Contract chính thức dùng trong POC
+
+Social AIO cung cấp relay HTTP:
+
+```
+POST https://api.fbaio.org/call
+Content-Type: application/json
+
+{
+  "id": "<CLIENT_ID>",
+  "apiname": "get_list_fb_group_posts",
+  "apiparams": {
+    "url": "https://www.facebook.com/groups/...",
+    "sorting": "Newest Posts",
+    "cursor": ""
+  }
+}
+```
+
+CLIENT_ID lấy tại **Social AIO → Automation → APIs → Connect**. Tab APIs phải giữ trạng thái Connected vì browser/extension là worker thực thi Facebook API bằng phiên đang đăng nhập.
+
+### POC Gates
+
+1. **TEST KẾT NỐI** — gọi `get_ext_version` và thử `get_my_profile_lite`.
+2. **GROUP API** — gọi `get_list_fb_group_posts` cho page đầu rồi đẩy trực tiếp vào pipeline NHẬP JSON → CƠ HỘI.
+3. **COMMENT API** — gọi `get_list_fb_comment` cho page đầu rồi đẩy vào BÌNH LUẬN → CƠ HỘI.
+4. Chỉ sau khi cả 3 gate PASS mới triển khai cursor pagination + scheduler 15–30 Group/Profile.
+
+### Bảo mật
+
+Không lưu Facebook cookie, access token hoặc CLIENT_ID trong GitHub hay ô Sheet. CLIENT_ID được giữ trong Apps Script Document Properties. Raw Facebook access token không được dùng trong POC.
