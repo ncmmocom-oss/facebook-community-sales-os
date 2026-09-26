@@ -1103,17 +1103,36 @@ const RemoteApp = (() => {
         return { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
       }
 
-      const rows = sheet.getRange(2, 1, last - 1, 20).getValues();
+      const scope=String((options&&options.scope)||'all_waiting');
+      const groupSet=new Set(((options&&options.groupNames)||[]).map(x=>String(x||'').trim()).filter(Boolean));
+      const rowSet=new Set(((options&&options.rowNumbers)||[]).map(x=>Number(x||0)).filter(x=>x>=2));
+      const rows = sheet.getRange(2, 1, last - 1, 26).getValues();
       const candidates = [];
+
       rows.forEach((r, i) => {
+        const rowNumber=i+2;
         const content = String(r[7] || '').trim();
-        const already = [r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
+        const priorAnalyzed=[r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
+        const gate=String(r[24]||'').trim();
         const status = String(r[19] || '').trim();
-        if (!content || already || status === 'Đóng') return;
+        const group=String(r[4]||'').trim();
+
+        if(!content || status==='Đóng') return;
+        if(scope==='groups' && !groupSet.has(group)) return;
+        if(scope==='selected_rows' && !rowSet.has(rowNumber)) return;
+        if(scope==='legacy_gate') {
+          if(!priorAnalyzed || gate) return;
+        } else if(scope==='selected_rows') {
+          // Explicit selection is a force re-analysis action.
+        } else {
+          // Normal/auto scopes process only genuinely pending sources.
+          if(priorAnalyzed || gate) return;
+        }
+
         const sourceType = String(r[3] || 'Bài viết');
         candidates.push({
-          rowNumber: i + 2,
-          group: String(r[4] || ''),
+          rowNumber,
+          group,
           author: String(r[5] || ''),
           content: compressEvidenceForAi_(content, sourceType),
           sourceType,
@@ -1132,8 +1151,8 @@ const RemoteApp = (() => {
 
       if (!selected.length) {
         setAiProgress_({ active:false, runId, status:'DONE', analyzed:0, total:0, remaining:0, batch:0, totalBatches:0 });
-        const result = { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [] };
-        if (!silent) SpreadsheetApp.getActive().toast('Không còn bài mới cần AI phân tích.', 'AI PHÂN TÍCH', 5);
+        const result = { version: CFG.VERSION, analyzed: 0, remaining: 0, errors: [], scope };
+        if (!silent) SpreadsheetApp.getActive().toast('Không có nguồn phù hợp với phạm vi AI đã chọn.', 'AI PHÂN TÍCH', 5);
         return result;
       }
 
