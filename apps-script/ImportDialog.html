@@ -719,7 +719,7 @@
             '\nDừng: '+s.stopped+
             '\nPost mới: '+newPosts+
             '\nTổng thời gian: '+Math.round(elapsed/100)/10+'s'+
-            '\nĐồng bộ KH: '+((fin.refresh&&fin.refresh.leads)||0);
+            '\nKH PASS hiện có: '+((fin.refresh&&fin.refresh.leads)||0);
 
           setStatus(baseStatus);
           pollGroupScanState();
@@ -739,14 +739,18 @@
           }
 
           if(fin.autoAnalyzeRequested && newPosts>0){
-            setStatus(baseStatus+'\nAI: đang phân tích dữ liệu mới...');
+            const autoGroups=[...new Set(ctx.results
+              .filter(r=>r&&r.ok&&r.name)
+              .map(r=>String(r.name)))];
+            setStatus(baseStatus+'\nAI AUTO: chỉ phân tích dữ liệu mới của '+autoGroups.length+' Group vừa quét...');
             startProgressPolling();
-            command({__command:'ANALYZE_NEW'}, r=>{
+            command({__command:'ANALYZE_SCOPE',scope:'groups',groupNames:autoGroups}, r=>{
               setStatus(
                 baseStatus+
                 '\nAI đã phân tích: '+r.analyzed+
-                '\nAI còn lại: '+r.remaining+
-                '\nKH tiềm năng: '+(r.refresh?r.refresh.leads:'-')
+                '\nAI còn lại trong phạm vi: '+r.remaining+
+                '\nKH PASS mới: '+(r.refresh?(r.refresh.newLeads||0):'-')+
+                '\nTổng KH PASS: '+(r.refresh?r.refresh.leads:'-')
               );
               stopProgressPolling();
               pollGroupScanState();
@@ -754,6 +758,8 @@
               setStatus(baseStatus+'\nLỗi AI: '+(e.message||e));
               stopProgressPolling();
             });
+          } else if(newPosts>0 && fin.analysisMode==='manual') {
+            setStatus(baseStatus+'\nAI: đang ở chế độ THỦ CÔNG — dữ liệu mới đã sẵn sàng để chọn phạm vi phân tích.');
           }
         });
       };
