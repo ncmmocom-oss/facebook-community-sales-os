@@ -14,6 +14,17 @@
     .scanlist { max-height:130px; overflow:auto; background:#fff; border:1px solid #ddd6fe; border-radius:7px; padding:8px; margin-top:8px; font-size:12px; }
     .scanitem { padding:3px 0; border-bottom:1px dashed #e5e7eb; }
     .scanitem:last-child { border-bottom:0; }
+    .opbar { border:2px solid #2563eb; background:#eff6ff; }
+    .metrics { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin:8px 0 10px; }
+    .metric { background:#fff; border:1px solid #dbeafe; border-radius:8px; padding:8px; text-align:center; }
+    .metric b { display:block; font-size:18px; margin-top:2px; }
+    .metric small { color:#64748b; }
+    .targetRow { display:grid; grid-template-columns:120px 1fr; gap:8px; align-items:end; }
+    details.advanced { margin-top:12px; }
+    details.advanced > summary { cursor:pointer; font-weight:700; padding:9px 0; color:#475569; }
+    .primary { font-size:14px; padding:11px 16px; }
+    .danger { background:#b91c1c; }
+    .retry { background:#d97706; }
     input, textarea, select { box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     input[type="file"], input[type="checkbox"] { width: auto; }
     textarea { min-height: 72px; resize: vertical; }
@@ -36,6 +47,47 @@
 <body>
   <h2>Social AIO → Community Sales OS</h2>
 
+  <div class="box opbar">
+    <h3>QUÉT NHÓM</h3>
+    <div class="muted"><b>2 thao tác nếu dùng mặc định:</b> tick Group trong sheet → bấm QUÉT.</div>
+
+    <div class="metrics">
+      <div class="metric"><small>Đã chọn</small><b id="mSelected">0</b></div>
+      <div class="metric"><small>Số bài yêu cầu</small><b id="mTarget">0</b></div>
+      <div class="metric"><small>Đang quét</small><b id="mRunning">0</b></div>
+      <div class="metric"><small>Xong</small><b id="mDone">0</b></div>
+      <div class="metric"><small>Lỗi</small><b id="mError">0</b></div>
+      <div class="metric"><small>Thiếu / Dừng</small><b id="mIncomplete">0</b></div>
+    </div>
+
+    <div class="targetRow">
+      <div>
+        <label>Số bài / Group</label>
+        <select id="groupTarget">
+          <option value="10">10 bài</option>
+          <option value="15">15 bài</option>
+          <option value="20">20 bài</option>
+          <option value="25" selected>25 bài</option>
+        </select>
+      </div>
+      <div>
+        <button id="scanSelectedBtn" class="primary" onclick="runCheckedGroups()">▶ QUÉT ĐÃ CHỌN</button>
+        <button class="danger" onclick="stopCheckedGroups()">■ DỪNG</button>
+        <button class="retry" onclick="retryFailedGroups()">↻ RETRY LỖI / THIẾU</button>
+      </div>
+    </div>
+
+    <button class="secondary" onclick="runActiveGroup()">Quét dòng đang chọn</button>
+    <button class="dark" onclick="clearCheckedGroups()">Bỏ chọn tất cả</button>
+
+    <div id="scanState" class="muted">Đang đọc danh sách Group...</div>
+    <div id="scanList" class="scanlist">Chưa chọn Group.</div>
+  </div>
+
+
+  <details class="advanced">
+    <summary>⚙️ Cấu hình nâng cao / Import JSON thủ công</summary>
+    <div>
   <div class="box">
     <h3>1. Import JSON</h3>
     <p>Chọn file <b>posts*.json</b>, <b>comments*.json</b> hoặc posts JSON có comment lồng bên trong. Hệ thống tự đếm bản ghi quét, lọc trùng, lấy Media CDN và đưa dữ liệu mới lên đầu bảng.</p>
@@ -125,24 +177,8 @@
   </div>
 
 
-  <div class="box scanctl">
-    <h3>4. QUÉT NHÓM API — điều khiển trực tiếp từ sheet QUÉT NHÓM</h3>
-    <p>
-      Trong sheet <b>QUÉT NHÓM</b>, cột <b>Chọn API</b> dùng để chọn nhiều Group.
-      Muốn quét một Group, chỉ cần click vào bất kỳ ô nào trên dòng đó rồi bấm
-      <b>QUÉT DÒNG ĐANG CHỌN</b>. Cách này không cần Apps Script onEdit trigger và không cần thêm quyền ScriptApp.
-    </p>
-    <button onclick="runActiveGroup()">▶ QUÉT DÒNG ĐANG CHỌN</button>
-    <button id="scanSelectedBtn" onclick="runCheckedGroups()">▶ QUÉT CÁC GROUP ĐÃ CHỌN</button>
-    <button class="dark" onclick="stopCheckedGroups()">■ DỪNG CÁC GROUP ĐÃ CHỌN</button>
-    <button class="secondary" onclick="clearCheckedGroups()">BỎ CHỌN</button>
-    <div id="scanState" class="muted">Đang đọc danh sách Group...</div>
-    <div id="scanList" class="scanlist">Chưa chọn Group.</div>
-    <div class="muted" style="margin-top:8px;">
-      POC dùng page đầu. Batch tự dừng trước giới hạn thời gian Apps Script; các Group chưa chạy vẫn giữ dấu chọn để bấm tiếp.
-      Lệnh DỪNG có hiệu lực sau API call/page đang chạy. Control Center là modeless nên anh có thể chọn dòng/tick Group trong Sheet trong khi cửa sổ này vẫn mở.
     </div>
-  </div>
+  </details>
 
   <div id="status">Sẵn sàng.</div>
 
@@ -418,7 +454,7 @@
       const url = document.getElementById('bridgeGroupUrl').value.trim();
       if (!url) { setStatus('Hãy dán URL Group Facebook vào ô API Bridge.'); return; }
       setStatus('API Bridge đang quét page đầu của Group...');
-      command({__command:'BRIDGE_SCAN_GROUP', groupUrl:url}, r => {
+      command({__command:'BRIDGE_SCAN_GROUP', groupUrl:url, targetCount:25}, r => {
         const x = r.imported || {};
         setStatus(
           '✅ GROUP API POC PASS' +
@@ -456,25 +492,33 @@
     }
 
 
+
     let scanStateTimer = null;
 
     function renderGroupScanState(s) {
       if (!s) return;
-      const state = document.getElementById('scanState');
-      const list = document.getElementById('scanList');
       const btn = document.getElementById('scanSelectedBtn');
+      const list = document.getElementById('scanList');
 
-      state.textContent =
+      document.getElementById('mSelected').textContent = s.selectedCount || 0;
+      document.getElementById('mTarget').textContent = s.selectedTargetTotal || 0;
+      document.getElementById('mRunning').textContent = s.runningCount || 0;
+      document.getElementById('mDone').textContent = s.doneCount || 0;
+      document.getElementById('mError').textContent = s.errorCount || 0;
+      document.getElementById('mIncomplete').textContent =
+        (Number(s.incompleteCount||0) + Number(s.stoppedCount||0));
+
+      document.getElementById('scanState').textContent =
         'Runtime V' + s.version +
-        ' | Đã chọn: ' + (s.selectedCount || 0) +
-        ' | Đang quét: ' + (s.runningCount || 0) +
-        ' | Lỗi: ' + (s.errorCount || 0);
+        ' • Đã chọn ' + (s.selectedCount || 0) +
+        ' Group • tổng ' + (s.selectedTargetTotal || 0) + ' bài';
 
       btn.disabled = !(s.selectedCount > 0);
 
       const items = (s.selected || []).map(x =>
         '<div class="scanitem"><b>Dòng ' + x.row + '</b> — ' +
         escapeHtml(x.name || x.groupKey || x.url) +
+        ' • ' + (x.targetCount || 25) + ' bài' +
         (x.status ? ' <span class="muted">[' + escapeHtml(x.status) + ']</span>' : '') +
         '</div>'
       );
@@ -497,22 +541,24 @@
       scanStateTimer = setInterval(pollGroupScanState, 2000);
     }
 
+    function selectedTarget() {
+      return Number(document.getElementById('groupTarget').value || 25);
+    }
+
     function runActiveGroup() {
-      setStatus('Đang quét Group ở dòng đang chọn...');
-      command({__command:'RUN_ACTIVE_GROUP'}, r => {
+      const target=selectedTarget();
+      setStatus('Đang quét dòng hiện tại • mục tiêu ' + target + ' bài...');
+      command({__command:'RUN_ACTIVE_GROUP',targetCount:target}, r => {
         if (!r || !r.ok) {
-          setStatus('Quét dòng hiện tại chưa hoàn tất: ' + ((r && r.error) || 'Không có kết quả.'));
+          setStatus('Quét chưa hoàn tất: ' + ((r && r.error) || 'Không có kết quả.'));
           pollGroupScanState();
           return;
         }
-        const x = r.imported || {};
         setStatus(
-          '✅ QUÉT DÒNG XONG' +
+          (r.incomplete ? '⚠️ QUÉT THIẾU' : '✅ QUÉT XONG') +
           '\nGroup: ' + (r.name || r.groupUrl || '') +
-          '\nAPI đọc: ' + (r.postsRead || 0) + ' post' +
-          '\nPost mới: ' + (x.postImported || 0) +
-          '\nTrùng: ' + (x.duplicates || 0) +
-          '\nCursor: ' + (r.nextCursor ? 'CÓ' : 'KHÔNG') +
+          '\nTiến độ: ' + (r.postsRead || 0) + '/' + (r.targetCount || target) + ' bài' +
+          '\nTrạng thái: ' + (r.status || '') +
           '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
         );
         pollGroupScanState();
@@ -523,24 +569,44 @@
     }
 
     function runCheckedGroups() {
-      const btn = document.getElementById('scanSelectedBtn');
-      btn.disabled = true;
-      setStatus('Đang quét các Group đã chọn...');
-      command({__command:'RUN_CHECKED_GROUPS'}, r => {
+      const target=selectedTarget();
+      const btn=document.getElementById('scanSelectedBtn');
+      btn.disabled=true;
+      setStatus('Đang quét các Group đã chọn • ' + target + ' bài/Group...');
+      command({__command:'RUN_CHECKED_GROUPS',targetCount:target}, r => {
         setStatus(
-          'QUÉT NHÓM API XONG - V' + r.version +
-          '\nĐã chọn: ' + r.selected +
-          '\nĐã xử lý: ' + r.processed +
-          '\nPASS: ' + r.passed +
+          'QUÉT XONG - V' + r.version +
+          '\nĐã xử lý: ' + r.processed + '/' + r.selected +
+          '\nXong đủ: ' + r.passed +
+          '\nThiếu: ' + (r.incomplete || 0) +
           '\nLỗi: ' + r.failed +
           '\nDừng: ' + r.stopped +
-          '\nHoãn do time budget: ' + r.deferred +
-          '\nCòn đang chọn: ' + r.remainingChecked +
+          '\nHoãn: ' + r.deferred +
+          '\nCòn chọn: ' + r.remainingChecked +
           '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
         );
         pollGroupScanState();
       }, e => {
-        setStatus('Lỗi quét Group đã chọn: ' + (e.message || e));
+        setStatus('Lỗi quét các Group đã chọn: ' + (e.message || e));
+        pollGroupScanState();
+      });
+    }
+
+    function retryFailedGroups() {
+      setStatus('Đang retry các Group LỖI / THIẾU...');
+      command({__command:'RETRY_FAILED_GROUPS'}, r => {
+        setStatus(
+          'RETRY XONG - V' + r.version +
+          '\nĐã retry: ' + r.retried +
+          '\nXong đủ: ' + r.passed +
+          '\nCòn thiếu: ' + r.incomplete +
+          '\nCòn lỗi: ' + r.failed +
+          '\nHoãn: ' + (r.deferred || 0) +
+          '\nThời gian: ' + Math.round((r.durationMs||0)/100)/10 + 's'
+        );
+        pollGroupScanState();
+      }, e => {
+        setStatus('Retry lỗi: ' + (e.message || e));
         pollGroupScanState();
       });
     }
@@ -548,14 +614,14 @@
     function stopCheckedGroups() {
       setStatus('Đang gửi yêu cầu dừng...');
       command({__command:'STOP_CHECKED_GROUPS'}, r => {
-        setStatus('Đã gửi yêu cầu DỪNG cho ' + (r.requested || 0) + ' Group. API call/page hiện tại sẽ hoàn tất rồi dừng.');
+        setStatus('Đã gửi DỪNG cho ' + (r.requested || 0) + ' Group. Request đang chạy sẽ kết thúc rồi dừng.');
         pollGroupScanState();
       });
     }
 
     function clearCheckedGroups() {
       command({__command:'CLEAR_CHECKED_GROUPS'}, () => {
-        setStatus('Đã bỏ chọn các Group.');
+        setStatus('Đã bỏ chọn tất cả Group.');
         pollGroupScanState();
       });
     }
