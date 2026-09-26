@@ -2630,7 +2630,6 @@ const RemoteApp = (() => {
     selected.forEach(item=>{
       if(item.groupKey) props.setProperty(groupStopKey_(item.groupKey),'1');
       setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Sẽ dừng sau API call/page hiện tại.');
-      sheet.getRange(item.row,24).setValue('SẴN SÀNG');
     });
     props.setProperty(CFG.BRIDGE_STOP_ALL_KEY,'1');
     SpreadsheetApp.flush();
