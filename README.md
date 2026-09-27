@@ -539,3 +539,19 @@ Các lead cũ từ trước V1.8.7 được đánh dấu `LEGACY`. Chúng không
 ## V1.9.2 — Phase 2 Control Center IA
 
 Control Center is reorganized into seven operator areas: Overview/System Health; 200 Group/Due Queue/Exceptions; Signal/Lead; AI/Offer Context/Settings; Worker/API; Data Operations; Runtime/Version/Logs. Backend remains Apps Script + Google Sheets + GitHub runtime. Scanner, raw pagination, Group identity, AI qualification, Lead Hard Gate, worker scheduler, retry/lease behavior and data semantics are unchanged.
+
+
+## V1.9.3 — Operations Dashboard
+
+Phase 3 adds operational intelligence for the 200-Group pilot without changing source schema or protected business logic.
+
+Dashboard metrics:
+- runnable Due Queue vs all overdue active Groups;
+- due-soon <1h, overdue >2h / >6h / >24h, never-scanned;
+- 24h scan coverage and stale active Groups;
+- Exception Queue with LỖI / THIẾU / DỪNG preview;
+- fresh sources <2h, fresh PASS/WATCH/REVIEW candidates, fresh PASS;
+- AI backlog >2h / >6h and oldest source age;
+- transparent Operational Health score with explicit deductions and reasons.
+
+Phase 3 keeps scanner, raw pagination, Group identity, run-scoped cancellation, lease/retry, AI qualification and Lead Hard Gate unchanged.
