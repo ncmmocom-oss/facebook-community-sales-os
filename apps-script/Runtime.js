@@ -4081,12 +4081,38 @@ const RemoteApp = (() => {
   }
 
   function saveAutoMonitorLastState_(state) {
-    const out=Object.assign({version:CFG.VERSION,finishedAt:new Date().toISOString()},state||{});
-    let text='{}';
-    try { text=JSON.stringify(out); } catch(_){}
-    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_MONITOR_LAST_STATE_KEY,text.slice(0,8000));
+    const input=state||{};
+    const cc=input.commentCycle||{};
+    const out=Object.assign({version:CFG.VERSION,finishedAt:new Date().toISOString()},input,{
+      error:String(input.error||'').slice(0,1200),
+      commentCycle:input.commentCycle ? {
+        enabled:cc.enabled!==false,
+        processedPosts:Number(cc.processedPosts||0),
+        commentsRead:Number(cc.commentsRead||0),
+        commentsNew:Number(cc.commentsNew||0),
+        partialPosts:Number(cc.partialPosts||0),
+        queueRemaining:Number(cc.queueRemaining||0),
+        errorCount:(cc.errors||[]).length,
+        errors:(cc.errors||[]).slice(0,2).map(x=>String(x||'').slice(0,500))
+      } : null
+    });
+    let text=JSON.stringify(out);
+    if(text.length>8000){
+      out.commentCycle=out.commentCycle ? Object.assign({},out.commentCycle,{errors:[]}) : null;
+      text=JSON.stringify(out);
+    }
+    if(text.length>8000){
+      text=JSON.stringify({
+        version:CFG.VERSION,finishedAt:out.finishedAt,ok:out.ok,enabled:out.enabled,
+        error:String(out.error||'').slice(0,1000),planned:Number(out.planned||0),
+        processed:Number(out.processed||0),passed:Number(out.passed||0),
+        incomplete:Number(out.incomplete||0),failed:Number(out.failed||0)
+      });
+    }
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_MONITOR_LAST_STATE_KEY,text);
     return out;
   }
+
 
   function ensureAutoMonitorTrigger_(enabled) {
     const triggers=ScriptApp.getProjectTriggers()
@@ -4534,12 +4560,13 @@ const RemoteApp = (() => {
     });
 
     const started=Date.now();
-    const newIds=[];
     const errors=[];
-    let commentsRead=0,commentsNew=0,processed=0,partial=0;
+    const pending=[];
+    let commentsRead=0,processed=0,partial=0,zeroAccessible=0;
+    const budget=Math.min(100000,Math.max(15000,Number(options.budgetMs||100000)));
 
     for(let i=0;i<candidates.length;i++){
-      if(Date.now()-started>Math.min(100000,Number(options.budgetMs||100000))) break;
+      if(Date.now()-started>budget-10000) break;
       const c=candidates[i];
       const worker=configured[i%configured.length];
       try{
@@ -4547,6 +4574,7 @@ const RemoteApp = (() => {
         commentsRead+=Number(fetched.commentsRead||0);
 
         if(!fetched.comments.length){
+          zeroAccessible++;
           updateCommentFetchState_(c,{
             handledCount:c.totalCount,
             cursor:'',
@@ -4556,22 +4584,6 @@ const RemoteApp = (() => {
           continue;
         }
 
-        const fileName='api_comments_'+c.postId+'_'+
-          Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-        const imported=importJsonFiles([{
-          name:fileName,
-          text:JSON.stringify(fetched.comments),
-          __workerFast:true,
-          __commentPostId:c.postId,
-          __commentPostUrl:c.postUrl,
-          __commentGroupKey:c.groupKey,
-          __commentGroupName:c.groupName
-        }]);
-
-        const added=Number(imported.commentImported||0);
-        commentsNew+=added;
-        (imported.newSourceIds||[]).forEach(id=>newIds.push(String(id||'').trim()));
-
         const incremental=!c.partial && c.handledCount>0;
         const initialFits=!c.partial && c.handledCount===0 && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE;
         const complete=
@@ -4580,21 +4592,21 @@ const RemoteApp = (() => {
           (incremental && fetched.commentsRead>=Math.max(1,c.delta)) ||
           (initialFits && fetched.commentsRead>=Math.max(1,c.totalCount));
 
-        if(!complete && fetched.nextCursor){
-          partial++;
-          updateCommentFetchState_(c,{
-            handledCount:c.handledCount,
-            cursor:fetched.nextCursor,
-            status:'PARTIAL • read='+fetched.commentsRead+' • new='+added+' • page='+fetched.pages
-          });
-        } else {
-          updateCommentFetchState_(c,{
-            handledCount:c.totalCount,
-            cursor:'',
-            status:'OK • read='+fetched.commentsRead+' • new='+added+' • page='+fetched.pages
-          });
-        }
-        processed++;
+        pending.push({
+          candidate:c,
+          fetched,
+          complete,
+          file:{
+            name:'api_comments_'+c.postId+'_'+
+              Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json',
+            text:JSON.stringify(fetched.comments),
+            __workerFast:true,
+            __commentPostId:c.postId,
+            __commentPostUrl:c.postUrl,
+            __commentGroupKey:c.groupKey,
+            __commentGroupName:c.groupName
+          }
+        });
       }catch(err){
         const msg=String(err&&err.message||err);
         errors.push('Post '+c.postId+': '+msg);
@@ -4606,18 +4618,57 @@ const RemoteApp = (() => {
       }
     }
 
+    let imported={commentImported:0,newSourceIds:[],errors:[]};
+    if(pending.length){
+      try{
+        imported=importJsonFiles(pending.map(x=>x.file));
+        pending.forEach(x=>{
+          if(!x.complete && x.fetched.nextCursor){
+            partial++;
+            updateCommentFetchState_(x.candidate,{
+              handledCount:x.candidate.handledCount,
+              cursor:x.fetched.nextCursor,
+              status:'PARTIAL • read='+x.fetched.commentsRead+' • batch-import • page='+x.fetched.pages
+            });
+          } else {
+            updateCommentFetchState_(x.candidate,{
+              handledCount:x.candidate.totalCount,
+              cursor:'',
+              status:'OK • read='+x.fetched.commentsRead+' • batch-import • page='+x.fetched.pages
+            });
+          }
+          processed++;
+        });
+      }catch(err){
+        const msg=String(err&&err.message||err);
+        errors.push('Batch import comment: '+msg);
+        pending.forEach(x=>{
+          updateCommentFetchState_(x.candidate,{
+            handledCount:x.candidate.handledCount,
+            cursor:x.candidate.cursor,
+            status:'ERROR • IMPORT • '+msg.slice(0,300)
+          });
+        });
+      }
+    }
+
+    (imported.errors||[]).forEach(e=>errors.push(String(e||'')));
     SpreadsheetApp.flush();
     return {
       enabled:true,
       processedPosts:processed,
+      zeroAccessiblePosts:zeroAccessible,
       commentsRead,
-      commentsNew,
+      commentsNew:Number(imported.commentImported||0),
       partialPosts:partial,
-      newSourceIds:[...new Set(newIds.filter(Boolean))],
+      newSourceIds:[...new Set((imported.newSourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean))],
       errors,
-      queueRemaining:Math.max(0,getCommentFetchCandidates_(CFG.PILOT_GROUP_LIMIT).length)
+      queueRemaining:Math.max(0,getCommentFetchCandidates_(CFG.PILOT_GROUP_LIMIT).length),
+      durationMs:Date.now()-started,
+      batchedImports:pending.length?1:0
     };
   }
+
 
   function runProductionAcceptance_(options) {
     options=options||{};
