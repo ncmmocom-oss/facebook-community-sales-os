@@ -1,9 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.1-hf2-raw-pagination",
+  "version": "1.9.1-hf3-stop-state",
   "channel": "pilot",
   "updated_at": "2026-09-27",
   "notes": [
+    "V1.9.1-HF3 Stop State: clears stale global STOP_ALL whenever a new selected/retry/due scan plan starts, so a previous Stop action cannot poison later scans.",
+    "If STOP is observed before any post is fetched, the scanner now returns a structured STOPPED result instead of misreporting 'API returned no posts'.",
+    "Direct active-row and legacy retry runs also clear stale STOP_ALL before starting.",
+    "HF2 raw-wrapper parsing and HTTP-200 empty-page retry remain active; HF1 retry, per-Group lease, stale Due Queue guard and AUTO fault isolation remain active.",
     "V1.9.1-HF2 Raw Pagination: production Group scanner now parses the raw relay wrapper directly, matching the API diagnostic path instead of parsing the already-unwrapped response.",
     "HTTP 200 empty/partial pages are retried up to 3 times on the same cursor before the scanner declares the page exhausted; first-page false empties are classified as transient instead of generic no-post errors.",
     "Long numeric Facebook Group IDs are derived from the URL first so scientific-notation display in Google Sheets cannot corrupt lease/diagnostic/group-key semantics.",
