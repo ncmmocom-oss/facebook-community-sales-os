@@ -1806,19 +1806,22 @@ const RemoteApp = (() => {
       const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
       const needEvidencePass=
         !!evidence &&
-        !/^không có bằng chứng nhu cầu rõ$/i.test(evidence) &&
-        needScore>=10;
-      const nonActionIntent=new Set(['Chia sẻ','Thảo luận','Không ưu tiên']);
+        !/^không có bằng chứng nhu cầu rõ$/i.test(evidence);
+      const actionableIntents=new Set([
+        'Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối',
+        'Muốn đổi','Muốn mua','Cần mua gấp'
+      ]);
+      const passiveActions=new Set(['Bỏ qua','Theo dõi']);
       const actionIntentPass=
-        actionScore>=8 &&
-        !nonActionIntent.has(intent);
+        actionableIntents.has(intent) &&
+        !passiveActions.has(action);
 
       let gate='WATCH';
       if(buyerRole==='Không' || productFit==='Không') {
         gate='FAIL';
       } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
         gate='REVIEW_REQUIRED';
-      } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass && score>=65) {
+      } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) {
         gate='PASS';
       } else {
         // Relevant need but no sufficiently strong action/solution intent.
@@ -3784,14 +3787,14 @@ const RemoteApp = (() => {
       duplicates.forEach(d=>{
         const current=String(sh.getRange(d.row,24).getDisplayValue()||'').trim();
         if(current==='ĐANG QUÉT') return;
+        sh.getRange(d.row,1).setValue('Không');
         setGroupRowStatus_(
-          sh,d.row,'LỖI',
+          sh,d.row,'DỪNG',
           String(sh.getRange(d.row,25).getDisplayValue()||'').trim(),
-          'AUTO HARD_QUARANTINE: DUPLICATE_IDENTITY → canonical row '+d.canonicalRow+' ('+d.canonicalName+').'
+          'AUTO REPAIR: DUPLICATE_IDENTITY → canonical row '+d.canonicalRow+' ('+d.canonicalName+'). Giữ row để audit nhưng tắt monitoring.'
         );
-        // Do not store duplicate quarantine by Group key: canonical and duplicate
-        // intentionally share the same identity. Row-level quarantine is enough,
-        // otherwise the canonical row would inherit the duplicate's hard retry state.
+        // Canonical row remains active. No Group-key retry state is written because
+        // duplicate and canonical intentionally share the same identity.
       });
     }
 
