@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "Social AIO Worker Keeper",
-  "version": "1.0.0",
-  "description": "Keeps one Social AIO /apis worker tab healthy and reconnects safely after reload or transient WebSocket drops.",
+  "version": "1.1.0",
+  "description": "Keeps one Social AIO /apis worker tab healthy, binds a chosen Worker URL, and reconnects safely after reload or transient WebSocket drops.",
   "permissions": [
     "storage",
     "tabs",
-    "alarms"
+    "alarms",
+    "scripting"
   ],
   "host_permissions": [
     "https://fbaio.org/*",
