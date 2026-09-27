@@ -1,0 +1,35 @@
+name: Package Apps Script Bootstrap
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bootstrap/**'
+      - '.github/workflows/package-bootstrap.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify bootstrap
+        run: |
+          grep -q "BOOTSTRAP_VERSION = '2.1-menu-shell'" bootstrap/Code.gs
+          grep -q "MỞ CONTROL CENTER" bootstrap/Code.gs
+          grep -q "openSignalFeed" bootstrap/Code.gs
+          grep -q "openLeadInbox" bootstrap/Code.gs
+      - name: Stage package
+        run: |
+          mkdir -p package
+          cp bootstrap/Code.gs package/Code.gs
+          cp bootstrap/appsscript.json package/appsscript.json
+      - name: Upload bootstrap package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Social_AIO_Bootstrap_V2.1_Menu_Shell
+          path: package/
+          if-no-files-found: error
+          retention-days: 30
