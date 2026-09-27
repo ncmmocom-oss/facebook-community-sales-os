@@ -61,7 +61,7 @@ async function appendEvent(code, severity, message, action, extra) {
     last &&
     last.code === code &&
     String(last.message || '') === String(message || '') &&
-    t - Number(last.ts || 0) < 10000
+    t - Number(last.ts || 0) < 60000
   ) return last;
 
   const event = Object.assign({
@@ -412,7 +412,7 @@ function countEvents(log, code, sinceMs) {
 }
 
 async function getPublicState() {
-  const data = await chrome.storage.local.get(DEFAULTS);
+  const data = await chrome.storage.local.get(Object.assign({},DEFAULTS,{workerState:{}}));
   const state = Object.assign({}, data.workerState || {});
   const log = Array.isArray(data.eventLog) ? data.eventLog : [];
   const age = state.updatedAt ? now() - Number(state.updatedAt) : Infinity;
