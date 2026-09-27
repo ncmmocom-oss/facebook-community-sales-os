@@ -30,7 +30,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 </style>
 </head>
 <body>
-<div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">Phase 3 • Operations Dashboard</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
+<div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">V1.10 • Pilot 200 Production</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
 <main class="mainPane"><header class="topbar"><div><div id="topViewTitle" class="topTitle">Tổng quan vận hành</div><div id="topViewSub" class="topSub">Theo dõi Group → Signal → AI → Lead trên một luồng.</div></div><div class="topActions"><span id="systemHealthPill" class="healthPill">ĐANG ĐỌC HỆ THỐNG</span><span id="runtimeVersionPill" class="runtimePill">Runtime —</span></div></header>
 <div class="viewStack">
 <section id="view-overview" class="view">
@@ -83,6 +83,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <div class="opsMetricRow"><span>Candidate fresh &lt;2h</span><b id="opsFreshCandidates">0</b></div>
         <div class="opsMetricRow"><span>PASS fresh &lt;2h</span><b id="opsFreshPass">0</b></div>
         <div class="opsMetricRow"><span>AI backlog tổng</span><b id="p2AiBacklog">0</b></div>
+        <div class="opsMetricRow"><span>Comment fetch queue</span><b id="opsCommentQueue">0</b></div>
+        <div class="opsMetricRow"><span>Comment đã lưu</span><b id="opsCommentRows">0</b></div>
       </div>
       <div style="margin-top:10px"><button class="secondary" onclick="openSignalFeed()">MỞ TÍN HIỆU</button></div>
     </div>
@@ -138,12 +140,12 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 <section id="view-ai" class="view"><div class="viewHead"><div><div class="sectionLabel">QUALIFICATION</div><h2>AI / Offer Context / Lead Gate</h2><p>Manual và Auto dùng cùng business logic; chỉ khác cách đưa source vào queue.</p></div></div><div id="mount-ai"></div></section>
 <section id="view-workers" class="view"><div class="viewHead"><div><div class="sectionLabel">INFRASTRUCTURE</div><h2>Worker Pool & API Diagnostic</h2><p>Worker Keeper giữ browser online; Control Center giữ registry, health và phân job.</p></div></div><div id="mount-workers"></div></section>
 <section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>Import / Sync / Consistency</h2><p>JSON là fallback; production ưu tiên API scan → import nội bộ → sync.</p></div></div><div id="mount-data"></div></section>
-<section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource"><b>NHẬT KÝ API</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource"><b>NHẬT KÝ IMPORT</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource"><b>NHẬT KÝ AI</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="emptyNote">Phase 3 bổ sung SLA/aging/health aggregate trên dữ liệu hiện có. Không đổi scanner, pagination, identity, AI Gate hay worker scheduler.</div></div></section>
+<section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="primary" onclick="runProductionAcceptance()">🧪 NGHIỆM THU + AUTO REPAIR</button><button class="secondary" onclick="runCommentIntelligenceNow()">💬 COMMENT INTELLIGENCE</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource"><b>NHẬT KÝ API</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource"><b>NHẬT KÝ IMPORT</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource"><b>NHẬT KÝ AI</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="emptyNote">V1.10 Production Pilot: backend Auto Monitor V2 + Comment Intelligence incremental + identity quarantine + Production Acceptance. Checkbox chỉ còn là Manual Override.</div></div></section>
 </div><div class="statusDock"><div class="statusDockHead"><b>LIVE ACTIVITY</b><span id="statusHeadline">Sẵn sàng.</span></div><div id="status">Sẵn sàng.</div></div></main></div><div id="legacyRoot">
 
   <div class="box monitorbox" id="monitorBox">
     <h3>MONITOR 200 GROUP — PILOT</h3>
-    <div class="muted">Due Queue tự lấy Group đến hạn. <b>AUTO MONITOR chỉ chạy khi cửa sổ Control Center này đang mở.</b></div>
+    <div class="muted">Due Queue tự lấy Group đến hạn. <b>AUTO MONITOR V2 chạy bằng backend trigger, kể cả khi đóng Control Center; không cần tick checkbox.</b></div>
     <div class="monitorMetrics">
       <div class="monitorMetric"><small>Group hoạt động</small><b id="monActive">0</b></div>
       <div class="monitorMetric"><small>Đến hạn</small><b id="monDue">0</b></div>
@@ -153,11 +155,15 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <div class="monitorMetric"><small>AI chưa Gate</small><b id="monAiBacklog">0</b></div>
       <div class="monitorMetric"><small>Lead PASS</small><b id="monPass">0</b></div>
       <div class="monitorMetric"><small>Worker online</small><b id="monWorkers">0/0</b></div>
+      <div class="monitorMetric"><small>Comment queue</small><b id="monCommentQueue">0</b></div>
+      <div class="monitorMetric"><small>Comment đã lưu</small><b id="monCommentRows">0</b></div>
     </div>
     <div class="monitorActions">
       <button class="primary" onclick="runDueGroups(false)">▶ QUÉT GROUP ĐẾN HẠN</button>
-      <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR</button>
+      <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR V2</button>
       <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG AUTO</button>
+      <button class="secondary" onclick="runAutoMonitorNow()">▶ RUN AUTO NGAY</button>
+      <button class="secondary" onclick="runCommentIntelligenceNow()">💬 QUÉT COMMENT NGAY</button>
       <button class="retry" onclick="pollMonitoring()">↻ LÀM MỚI</button>
       <button class="secondary" onclick="openSignalFeed()">📡 TÍN HIỆU</button>
       <button class="dark" onclick="openLeadInbox()">🎯 LEAD INBOX</button>
@@ -598,13 +604,27 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       document.getElementById('monPass').textContent=Number(o.passLeads||0);
       const w=o.workers||{};
       document.getElementById('monWorkers').textContent=Number(w.onlineCount||0)+'/'+Number(w.configuredCount||0);
+      const ci=o.commentIntelligence||{};
+      const auto=o.autoMonitorV2||{};
+      autoMonitorEnabled=!!auto.enabled;
+      document.getElementById('monCommentQueue').textContent=Number(ci.queue||0);
+      document.getElementById('monCommentRows').textContent=Number(ci.storedRows||0);
+      setAutoMonitorUi();
       renderPhase2Monitoring(o);
 
       const ctx='Context '+Number(o.groupsWithContext||0)+'/'+Number(o.activeGroups||0);
       const cycle='Cycle tối đa '+Number(o.dueCycleLimit||30)+' Group';
+      const last=auto.last||{};
+      const lastText=last.finishedAt
+        ? (' • last '+(last.ok===false?'ERROR':'OK')+' '+workerTimeAgo(last.finishedAt))
+        : '';
       document.getElementById('monitorState').textContent=
         'Runtime V'+o.version+' • '+ctx+' • '+cycle+
-        (autoMonitorEnabled?' • AUTO đang bật':' • AUTO đang tắt');
+        (autoMonitorEnabled
+          ? (' • AUTO V2 ON'+(auto.triggerInstalled?' • trigger '+Number(auto.everyMinutes||5)+'m':' • ⚠ trigger missing'))
+          : ' • AUTO V2 OFF')+
+        ' • Comment '+(ci.enabled===false?'OFF':'ON')+' queue '+Number(ci.queue||0)+
+        lastText;
 
       const due=(o.duePreview||[]);
       document.getElementById('duePreview').innerHTML=due.length
@@ -648,44 +668,111 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     function setAutoMonitorUi() {
       const btn=document.getElementById('autoMonitorBtn');
       if(btn){
-        btn.textContent=autoMonitorEnabled?'⚡ AUTO MONITOR ĐANG BẬT':'⚡ BẬT AUTO MONITOR';
+        btn.textContent=autoMonitorEnabled?'⚡ AUTO MONITOR V2 ĐANG BẬT':'⚡ BẬT AUTO MONITOR V2';
         btn.classList.toggle('monitorOn',autoMonitorEnabled);
       }
       if(typeof phase2SetText==='function') phase2SetText('p2AutoState',autoMonitorEnabled?'ON':'OFF');
     }
 
     function scheduleNextAutoMonitor(delayMs) {
-      if(autoMonitorTimer) clearTimeout(autoMonitorTimer);
-      if(!autoMonitorEnabled) return;
-      autoMonitorTimer=setTimeout(()=>runDueGroups(true),Math.max(5000,Number(delayMs||20000)));
+      // V1.10: backend time trigger owns scheduling. Kept as compatibility no-op.
+      return Number(delayMs||0);
     }
 
     function startAutoMonitor() {
-      autoMonitorEnabled=true;
-      setAutoMonitorUi();
-      pollMonitoring();
-      runDueGroups(true);
+      setStatus('Đang bật AUTO MONITOR V2 + kiểm tra/repair registry...');
+      command({__command:'SET_AUTO_MONITOR_V2',enabled:true,commentEnabled:true},r=>{
+        autoMonitorEnabled=!!(r&&r.enabled);
+        setAutoMonitorUi();
+        const acc=r&&r.acceptance;
+        setStatus(
+          (r&&r.message||'AUTO MONITOR V2 đã bật.')+
+          (acc?('\nAcceptance: '+(acc.pass?'PASS':'CẦN KIỂM TRA')+
+            ' • duplicate repaired '+Number(acc.repairs&&acc.repairs.duplicates&&acc.repairs.duplicates.repaired||0)+
+            ' • stale running recovered '+Number(acc.repairs&&acc.repairs.staleRunning&&acc.repairs.staleRunning.repaired||0)):'')+
+          '\nĐang chạy tick đầu tiên...'
+        );
+        pollMonitoring();
+        runAutoMonitorNow();
+      },e=>setStatus('Không bật được AUTO MONITOR V2: '+(e.message||e)));
     }
 
     function stopAutoMonitor() {
-      autoMonitorEnabled=false;
-      if(autoMonitorTimer) clearTimeout(autoMonitorTimer);
-      autoMonitorTimer=null;
-      setAutoMonitorUi();
-
-      const runId=String(activeScanRunId||'');
-      if(runId){
-        command({__command:'STOP_SCAN_RUN',runId}, r=>{
-          document.getElementById('monitorState').textContent=
-            'AUTO MONITOR đã tạm dừng • đang dừng cycle '+runId+'.';
-        }, ()=>{
-          document.getElementById('monitorState').textContent='AUTO MONITOR đã tạm dừng.';
-        });
-      } else {
-        document.getElementById('monitorState').textContent='AUTO MONITOR đã tạm dừng.';
-      }
-      pollMonitoring();
+      setStatus('Đang tắt AUTO MONITOR V2...');
+      command({__command:'SET_AUTO_MONITOR_V2',enabled:false},r=>{
+        autoMonitorEnabled=false;
+        setAutoMonitorUi();
+        const runId=String(activeScanRunId||'');
+        if(runId){
+          command({__command:'STOP_SCAN_RUN',runId},()=>{},()=>{});
+        }
+        setStatus((r&&r.message)||'AUTO MONITOR V2 đã tắt.');
+        pollMonitoring();
+      },e=>setStatus('Không tắt được AUTO MONITOR V2: '+(e.message||e)));
     }
+
+    function runAutoMonitorNow() {
+      setStatus('AUTO MONITOR V2: đang chạy backend tick...');
+      command({__command:'RUN_AUTO_MONITOR_TICK'},r=>{
+        const c=r&&r.commentCycle||{};
+        setStatus(
+          '✅ AUTO TICK '+(r&&r.ok===false?'CÓ LỖI':'XONG')+
+          '\nGroup planned/processed: '+Number(r&&r.planned||0)+'/'+Number(r&&r.processed||0)+
+          '\nXong/Thiếu/Lỗi: '+Number(r&&r.passed||0)+'/'+Number(r&&r.incomplete||0)+'/'+Number(r&&r.failed||0)+
+          '\nComment posts/read/new: '+Number(c.processedPosts||0)+'/'+Number(c.commentsRead||0)+'/'+Number(c.commentsNew||0)+
+          '\nComment queue còn: '+Number(c.queueRemaining||0)+
+          (r&&r.error?('\nLỗi: '+r.error):'')
+        );
+        pollMonitoring();
+        pollGroupScanState();
+      },e=>setStatus('AUTO tick lỗi: '+(e.message||e)));
+    }
+
+    function runCommentIntelligenceNow() {
+      setStatus('Comment Intelligence: đang lấy comment delta...');
+      command({__command:'RUN_COMMENT_INTELLIGENCE',limit:6,budgetMs:90000},r=>{
+        const ids=(r&&r.newSourceIds)||[];
+        const base=
+          '💬 COMMENT INTELLIGENCE XONG'+
+          '\nPost xử lý: '+Number(r&&r.processedPosts||0)+
+          '\nComment đọc: '+Number(r&&r.commentsRead||0)+
+          '\nComment mới: '+Number(r&&r.commentsNew||0)+
+          '\nPartial: '+Number(r&&r.partialPosts||0)+
+          '\nQueue còn: '+Number(r&&r.queueRemaining||0)+
+          ((r&&r.errors||[]).length?('\nLỗi: '+r.errors.slice(0,3).join(' | ')):'');
+        if(ids.length){
+          command({__command:'GET_AI_CONFIG'},cfg=>{
+            if(cfg&&cfg.configured&&cfg.analysisMode==='auto_scan'){
+              analyzeSourceIdsSequential(ids,base,()=>pollMonitoring());
+            } else {
+              setStatus(base+'\nAI đang ở manual; comment mới đã vào CƠ HỘI.');
+              pollMonitoring();
+            }
+          },()=>{setStatus(base);pollMonitoring();});
+        } else {
+          setStatus(base);
+          pollMonitoring();
+        }
+      },e=>setStatus('Comment Intelligence lỗi: '+(e.message||e)));
+    }
+
+    function runProductionAcceptance() {
+      setStatus('Đang chạy Production Acceptance + safe auto-repair...');
+      command({__command:'RUN_PRODUCTION_ACCEPTANCE',repair:true},r=>{
+        const checks=(r&&r.checks)||[];
+        const lines=checks.map(x=>(x.pass?'✅ ':'❌ ')+x.id+' — '+x.detail);
+        setStatus(
+          (r&&r.pass?'✅ PRODUCTION ACCEPTANCE PASS':'⚠️ PRODUCTION ACCEPTANCE CÒN GATE FAIL')+
+          ' - V'+String(r&&r.version||'')+
+          '\n'+lines.join('\n')+
+          '\nRepairs: duplicate='+Number(r&&r.repairs&&r.repairs.duplicates&&r.repairs.duplicates.repaired||0)+
+          ', stale-running='+Number(r&&r.repairs&&r.repairs.staleRunning&&r.repairs.staleRunning.repaired||0)
+        );
+        pollMonitoring();
+        pollGroupScanState();
+      },e=>setStatus('Acceptance lỗi: '+(e.message||e)));
+    }
+
     function runDueGroups(fromAuto) {
       if(monitorBusy) {
         if(!fromAuto) setStatus('Monitoring đang xử lý một cycle khác.');
@@ -698,26 +785,16 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           monitorBusy=false;
           setStatus('Due Queue hiện không có Group cần quét.');
           pollMonitoring();
-          if(fromAuto) scheduleNextAutoMonitor(60000);
           return;
         }
         runWorkerPlan(plan,false,result=>{
           monitorBusy=false;
           pollMonitoring();
-          if(fromAuto && autoMonitorEnabled){
-            if(result&&result.pauseAuto){
-              autoMonitorEnabled=false;
-              setAutoMonitorUi();
-              setStatus((result.message||'AUTO MONITOR tạm dừng do có exception cần xử lý.'));
-            } else {
-              scheduleNextAutoMonitor(20000);
-            }
-          }
+          // Backend trigger owns AUTO V2 scheduling. Manual Due Queue never mutates persistent AUTO state.
         });
       },e=>{
         monitorBusy=false;
         setStatus('Không tạo được Due Queue: '+(e.message||e));
-        if(fromAuto) scheduleNextAutoMonitor(60000);
       });
     }
 
@@ -1096,6 +1173,9 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           .filter(Boolean))];
 
         command({__command:'FINALIZE_WORKER_BATCH',sourceIds:batchSourceIds,runId},fin=>{
+          const effectiveSourceIds=[...new Set(((fin&&fin.sourceIds)||batchSourceIds)
+            .map(x=>String(x||'').trim()).filter(Boolean))];
+          const commentCycle=fin&&fin.commentCycle||{};
           const summary=summarizePoolResults(ctx);
           const elapsed=Date.now()-ctx.started;
           const newPosts=ctx.results.reduce((sum,r)=>
@@ -1119,6 +1199,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
             '\nBận/skip: '+(summary.busy+summary.skipped)+
             '\nDừng: '+summary.stopped+
             '\nPost mới: '+newPosts+
+            '\nComment đọc/mới: '+Number(commentCycle.commentsRead||0)+'/'+Number(commentCycle.commentsNew||0)+
+            '\nComment queue còn: '+Number(commentCycle.queueRemaining||0)+
             '\nTổng thời gian: '+Math.round(elapsed/100)/10+'s'+
             '\nKH PASS hiện có: '+((fin.refresh&&fin.refresh.leads)||0)+
             (exceptionCount>0
@@ -1140,8 +1222,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
             return;
           }
 
-          if(fin.autoAnalyzeRequested && newPosts>0){
-            analyzeSourceIdsSequential(batchSourceIds,baseStatus,r=>{
+          if(fin.autoAnalyzeRequested && effectiveSourceIds.length>0){
+            analyzeSourceIdsSequential(effectiveSourceIds,baseStatus,r=>{
               finish(r&&r.pauseAuto
                 ? {pauseAuto:true,message:baseStatus+'\nAUTO MONITOR tạm dừng vì AI lỗi.'}
                 : {ok:true,newPosts,processed:summary.processed,exceptions:exceptionCount});
@@ -1149,8 +1231,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
             return;
           }
 
-          if(newPosts>0 && fin.analysisMode==='manual'){
-            setStatus(baseStatus+'\nAI: THỦ CÔNG — dữ liệu mới đã sẵn sàng.');
+          if(effectiveSourceIds.length>0 && fin.analysisMode==='manual'){
+            setStatus(baseStatus+'\nAI: THỦ CÔNG — post/comment mới đã sẵn sàng.');
           }
           finish({ok:true,newPosts,processed:summary.processed,exceptions:exceptionCount});
         },e=>{
@@ -1375,7 +1457,9 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       phase2SetText('p2TodoExceptions',exceptions);
       phase2SetText('p2TodoAi',backlog);
       phase2SetText('p2Cycle',Number(o.dueCycleLimit||30)+' Group');
-      phase2SetText('p2AutoState',autoMonitorEnabled?'ON':'OFF');
+      phase2SetText('p2AutoState',o.autoMonitorV2&&o.autoMonitorV2.enabled
+        ? ('ON • '+(o.autoMonitorV2.triggerInstalled?'trigger OK':'TRIGGER MISSING'))
+        : 'OFF');
       phase2SetText('sigNew',fresh);
       phase2SetText('sigBacklog',backlog);
       phase2SetText('sigPass',pass);
@@ -1393,6 +1477,9 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       phase2SetText('opsFreshSources',Number(ai.freshSources2h||0));
       phase2SetText('opsFreshCandidates',Number(ai.freshCandidates2h||0));
       phase2SetText('opsFreshPass',Number(ai.freshPass2h||0));
+      const ci=o.commentIntelligence||{};
+      phase2SetText('opsCommentQueue',Number(ci.queue||0));
+      phase2SetText('opsCommentRows',Number(ci.storedRows||0));
       phase2SetText('opsScanned24',Number(sla.scanned24h||0));
       phase2SetText('opsStale24',Number(sla.stale24h||0));
       phase2SetText('opsContextCoverage',Number(health.contextCoveragePct||0)+'%');
