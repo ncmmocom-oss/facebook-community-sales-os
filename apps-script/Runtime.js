@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.2-control-center-ia',
+    VERSION: '1.9.3-operations-dashboard',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -29,6 +29,13 @@ const RemoteApp = (() => {
     AUTO_AI_SOURCE_CHUNK: 150,
     SIGNAL_FEED_DAYS: 7,
     SIGNAL_FEED_MAX_SOURCE_ROWS: 20000,
+    OPS_DUE_SOON_MS: 60 * 60 * 1000,
+    OPS_OVERDUE_WARN_MS: 2 * 60 * 60 * 1000,
+    OPS_OVERDUE_CRITICAL_MS: 6 * 60 * 60 * 1000,
+    OPS_OVERDUE_SEVERE_MS: 24 * 60 * 60 * 1000,
+    OPS_COVERAGE_WINDOW_MS: 24 * 60 * 60 * 1000,
+    OPS_FRESH_SIGNAL_MS: 2 * 60 * 60 * 1000,
+    OPS_AI_STALE_MS: 2 * 60 * 60 * 1000,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
@@ -56,6 +63,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.3 Operations Dashboard: SLA quét + overdue/coverage + exception queue + fresh signal/AI aging + operational health score cho pilot 200 Group.\n' +
       'V1.9.2 Control Center IA: sidebar 7 khu vực + Overview/System Health; tách Group, Signal/Lead, AI/Offer, Worker/API, Data, Runtime/Logs mà không đổi business logic.\n' +
       'V1.9.1-HF4 Run Scope: bỏ STOP_ALL khỏi worker engine; mỗi batch/cycle có runId + cancellation riêng, không thể nhiễm state giữa các run.\nV1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
@@ -3660,45 +3668,277 @@ const RemoteApp = (() => {
     return {backlog,pass,total};
   }
 
+  function opsDateMs_(value) {
+    if(value instanceof Date && !isNaN(value.getTime())) return value.getTime();
+    if(typeof value==='number' && isFinite(value)){
+      // Google Sheets serial dates can surface as numbers in a few edge paths.
+      if(value>30000 && value<100000) return Math.round((value-25569)*86400000);
+      if(value>100000000000) return value;
+    }
+    const parsed=Date.parse(String(value||''));
+    return Number.isFinite(parsed)?parsed:0;
+  }
+
+  function getAiOperationsStats_(nowMs) {
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
+    const empty={
+      backlog:0,pass:0,total:0,watch:0,review:0,fail:0,
+      backlogOver2h:0,backlogOver6h:0,oldestBacklogAgeMs:0,
+      freshSources2h:0,freshCandidates2h:0,freshPass2h:0,
+      backlogPreview:[]
+    };
+    if(!sh || sh.getLastRow()<2) return empty;
+
+    const now=Number(nowMs||Date.now());
+    const n=sh.getLastRow()-1;
+    const rows=sh.getRange(2,1,n,26).getValues();
+    const out=Object.assign({},empty,{backlogPreview:[]});
+
+    rows.forEach((r,i)=>{
+      const sourceId=String(r[1]||'').trim();
+      if(!sourceId) return;
+      out.total++;
+
+      const gate=String(r[24]||'').trim().toUpperCase();
+      const sourceMs=opsDateMs_(r[0]);
+      const ageMs=sourceMs?Math.max(0,now-sourceMs):0;
+      const fresh=sourceMs && ageMs<=CFG.OPS_FRESH_SIGNAL_MS;
+
+      if(fresh) out.freshSources2h++;
+      if(gate==='PASS') {
+        out.pass++;
+        if(fresh) {
+          out.freshCandidates2h++;
+          out.freshPass2h++;
+        }
+      } else if(gate==='WATCH') {
+        out.watch++;
+        if(fresh) out.freshCandidates2h++;
+      } else if(gate==='REVIEW') {
+        out.review++;
+        if(fresh) out.freshCandidates2h++;
+      } else if(gate==='FAIL') {
+        out.fail++;
+      } else {
+        out.backlog++;
+        if(sourceMs){
+          out.oldestBacklogAgeMs=Math.max(out.oldestBacklogAgeMs,ageMs);
+          if(ageMs>CFG.OPS_AI_STALE_MS) out.backlogOver2h++;
+          if(ageMs>CFG.OPS_OVERDUE_CRITICAL_MS) out.backlogOver6h++;
+        }
+        out.backlogPreview.push({
+          row:i+2,
+          sourceId,
+          group:String(r[4]||'').trim()||'Group không rõ',
+          person:String(r[5]||'').trim()||'Ẩn danh',
+          score:Number(r[10]||0),
+          ageMs,
+          url:String(r[2]||'').trim()
+        });
+      }
+    });
+
+    out.backlogPreview.sort((a,b)=>(b.ageMs||0)-(a.ageMs||0));
+    out.backlogPreview=out.backlogPreview.slice(0,8);
+    return out;
+  }
+
+  function computeOperationalHealth_(input) {
+    const data=input||{};
+    const workers=data.workers||{};
+    const sla=data.sla||{};
+    const ai=data.ai||{};
+    const active=Math.max(0,Number(data.activeGroups||0));
+    const context=Math.max(0,Number(data.groupsWithContext||0));
+    const exceptions=Math.max(0,Number(data.exceptions||0));
+    const coverage=Number(sla.coverage24hPct||0);
+    const contextPct=active?Math.round(context*1000/active)/10:100;
+    let score=100;
+    const reasons=[];
+
+    const penalize=(points,code,message,severity)=>{
+      const p=Math.max(0,Math.min(40,Number(points||0)));
+      if(!p) return;
+      score-=p;
+      reasons.push({code,message,severity:severity||'WARN',penalty:p});
+    };
+
+    if(Number(workers.configuredCount||0)===0){
+      penalize(30,'NO_WORKER','Chưa có Worker được cấu hình.','ERROR');
+    } else if(Number(workers.onlineCount||0)===0 && Number(workers.offlineCount||0)>0){
+      penalize(30,'WORKER_OFFLINE','Không có Worker ONLINE và có Worker OFFLINE.','ERROR');
+    } else if(Number(workers.onlineCount||0)===0 && Number(workers.staleCount||0)>0){
+      penalize(15,'WORKER_STALE','Worker evidence đã STALE; cần TEST/scan xác nhận lại.','WARN');
+    } else if(Number(workers.onlineCount||0)<Number(workers.configuredCount||0)){
+      penalize(6,'WORKER_PARTIAL','Một phần Worker chưa có evidence ONLINE.','WARN');
+    }
+
+    if(Number(sla.overdue6h||0)>0){
+      penalize(Math.min(25,5+Number(sla.overdue6h||0)*3),'SLA_6H',Number(sla.overdue6h||0)+' Group quá hạn trên 6 giờ.','ERROR');
+    } else if(Number(sla.overdue2h||0)>0){
+      penalize(Math.min(12,2+Number(sla.overdue2h||0)*2),'SLA_2H',Number(sla.overdue2h||0)+' Group quá hạn trên 2 giờ.','WARN');
+    }
+
+    if(exceptions>0){
+      penalize(Math.min(20,exceptions*3),'EXCEPTIONS',exceptions+' Group đang LỖI/THIẾU/DỪNG.','ERROR');
+    }
+
+    if(Number(ai.backlogOver2h||0)>0){
+      penalize(Math.min(15,3+Math.ceil(Number(ai.backlogOver2h||0)/25)*3),'AI_STALE',Number(ai.backlogOver2h||0)+' nguồn chưa Gate và đã cũ trên 2 giờ.','WARN');
+    }
+
+    if(active>0 && coverage<90){
+      penalize(Math.min(15,Math.max(5,Math.ceil((90-coverage)/10)*5)),'COVERAGE_24H','Coverage quét 24h chỉ '+coverage+'%.','WARN');
+    }
+
+    if(active>0 && contextPct<80){
+      penalize(5,'CONTEXT_COVERAGE','AI Context/Offer mới phủ '+contextPct+'% Group hoạt động.','WARN');
+    }
+
+    score=Math.max(0,Math.round(score));
+    const status=score>=90?'GREEN':(score>=70?'AMBER':'RED');
+    return {
+      score,
+      status,
+      label:status==='GREEN'?'ỔN ĐỊNH':(status==='AMBER'?'CẦN CHÚ Ý':'CẦN XỬ LÝ'),
+      reasons:reasons.slice(0,8),
+      contextCoveragePct:contextPct
+    };
+  }
+
   function getMonitoringOverview_() {
     ensureV16Sheets_(false);
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
     const last=sh.getLastRow();
+    const now=Date.now();
     const counts={
       active:0,running:0,error:0,incomplete:0,stopped:0,
-      newPostsToday:0,scanUpdatesToday:0,withContext:0
+      newPostsToday:0,scanUpdatesToday:0,withContext:0,
+      neverScanned:0,scanned24h:0,stale24h:0,dueSoon1h:0,
+      overdueAll:0,overdue2h:0,overdue6h:0,overdue24h:0
     };
+    const exceptionPreview=[];
+    const overduePreview=[];
 
     if(last>=2){
       const rows=sh.getRange(2,1,last-1,27).getValues();
-      rows.forEach(r=>{
-        if(String(r[0]||'').trim()==='Có') counts.active++;
-        const st=String(r[23]||'').trim();
-        if(st==='ĐANG QUÉT') counts.running++;
-        else if(st==='LỖI') counts.error++;
-        else if(st==='THIẾU') counts.incomplete++;
-        else if(/^DỪNG/.test(st)) counts.stopped++;
+      rows.forEach((r,i)=>{
+        const active=String(r[0]||'').trim()==='Có';
+        if(!active) return;
+        counts.active++;
+
+        const row=i+2;
+        const name=String(r[2]||'').trim() || ('Group '+String(r[4]||row));
+        const lifecycle=String(r[6]||'').trim();
+        const runtimeStatus=String(r[23]||'').trim();
+        const lastAt=opsDateMs_(r[9]);
+        const nextAtRaw=opsDateMs_(r[10]);
+        const scansPerDay=Math.max(1,Number(r[7]||1));
+        const expectedIntervalMs=24*60*60*1000/scansPerDay;
+        const nextAt=nextAtRaw || (lastAt ? lastAt+expectedIntervalMs : 0);
+        const dueText=String(r[11]||'').trim();
+        const due=!lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=now;
+        const overdueMs=!lastAt
+          ? CFG.OPS_OVERDUE_SEVERE_MS+1
+          : (due ? Math.max(0,now-nextAt) : 0);
+
+        if(!lastAt) counts.neverScanned++;
+        else if(now-lastAt<=CFG.OPS_COVERAGE_WINDOW_MS) counts.scanned24h++;
+        else counts.stale24h++;
+
+        if(!due && nextAt && nextAt-now<=CFG.OPS_DUE_SOON_MS) counts.dueSoon1h++;
+        if(due){
+          counts.overdueAll++;
+          if(overdueMs>CFG.OPS_OVERDUE_WARN_MS) counts.overdue2h++;
+          if(overdueMs>CFG.OPS_OVERDUE_CRITICAL_MS) counts.overdue6h++;
+          if(overdueMs>CFG.OPS_OVERDUE_SEVERE_MS) counts.overdue24h++;
+
+          overduePreview.push({
+            row,name,lifecycle,
+            status:runtimeStatus||'CHỜ',
+            targetCount:normalizeGroupTarget_(r[8]||25),
+            overdueMs,
+            nextAtMs:nextAt,
+            lastAtMs:lastAt,
+            exception:runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)
+          });
+        }
+
+        if(runtimeStatus==='ĐANG QUÉT') counts.running++;
+        else if(runtimeStatus==='LỖI') counts.error++;
+        else if(runtimeStatus==='THIẾU') counts.incomplete++;
+        else if(/^DỪNG/.test(runtimeStatus)) counts.stopped++;
+
+        if(runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)){
+          exceptionPreview.push({
+            row,name,status:runtimeStatus,lifecycle,
+            lastAtMs:lastAt,
+            ageMs:lastAt?Math.max(0,now-lastAt):0,
+            progress:String(r[24]||'').trim(),
+            error:String(r[25]||'').trim()
+          });
+        }
+
         counts.scanUpdatesToday+=Number(r[16]||0);
         counts.newPostsToday+=Number(r[19]||0);
         if(String(r[26]||'').trim()) counts.withContext++;
       });
     }
 
+    overduePreview.sort((a,b)=>{
+      if(!!a.exception!==!!b.exception) return a.exception? -1:1;
+      if((b.overdueMs||0)!==(a.overdueMs||0)) return (b.overdueMs||0)-(a.overdueMs||0);
+      return groupPriorityRank_(a.lifecycle)-groupPriorityRank_(b.lifecycle);
+    });
+
+    const exceptionRank={LỖI:0,THIẾU:1,DỪNG:2};
+    exceptionPreview.sort((a,b)=>{
+      const ra=Object.prototype.hasOwnProperty.call(exceptionRank,a.status)?exceptionRank[a.status]:3;
+      const rb=Object.prototype.hasOwnProperty.call(exceptionRank,b.status)?exceptionRank[b.status]:3;
+      if(ra!==rb) return ra-rb;
+      return (b.ageMs||0)-(a.ageMs||0);
+    });
+
     const dueAll=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT);
-    const ai=countAiBacklogAndPass_();
+    const ai=getAiOperationsStats_(now);
     const workers=getWorkerPoolPublic_();
+    const coverage24hPct=counts.active
+      ? Math.round(counts.scanned24h*1000/counts.active)/10
+      : 100;
+
+    const sla={
+      dueSoon1h:counts.dueSoon1h,
+      overdueAll:counts.overdueAll,
+      overdue2h:counts.overdue2h,
+      overdue6h:counts.overdue6h,
+      overdue24h:counts.overdue24h,
+      neverScanned:counts.neverScanned,
+      scanned24h:counts.scanned24h,
+      stale24h:counts.stale24h,
+      coverage24hPct
+    };
+
+    const exceptions=counts.error+counts.incomplete+counts.stopped;
+    const operationalHealth=computeOperationalHealth_({
+      workers,sla,ai,
+      activeGroups:counts.active,
+      groupsWithContext:counts.withContext,
+      exceptions
+    });
 
     return {
       version:CFG.VERSION,
+      generatedAt:new Date().toISOString(),
       pilotGroupLimit:CFG.PILOT_GROUP_LIMIT,
       dueCycleLimit:CFG.DUE_CYCLE_LIMIT,
       activeGroups:counts.active,
       dueNow:dueAll.length,
       running:counts.running,
-      exceptions:counts.error+counts.incomplete+counts.stopped,
+      exceptions,
       errors:counts.error,
       incomplete:counts.incomplete,
+      stopped:counts.stopped,
       newPostsToday:counts.newPostsToday,
       scanUpdatesToday:counts.scanUpdatesToday,
       groupsWithContext:counts.withContext,
@@ -3706,9 +3946,15 @@ const RemoteApp = (() => {
       passLeads:ai.pass,
       opportunityTotal:ai.total,
       workers,
+      sla,
+      aiOps:ai,
+      operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
-        row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle
-      }))
+        row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
+        overdueMs:x.nextAtMs?Math.max(0,now-x.nextAtMs):0
+      })),
+      overduePreview:overduePreview.slice(0,10),
+      exceptionPreview:exceptionPreview.slice(0,10)
     };
   }
 
