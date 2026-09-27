@@ -668,18 +668,26 @@ const RemoteApp = (() => {
     const rawRows=ids.map(id=>rowMap[id]&&rowMap[id].rawRow).filter(Boolean);
     if(rawRows.length){
       const min=Math.min(...rawRows), max=Math.max(...rawRows);
-      const vals=rawSheet.getRange(min,10,max-min+1,7).getValues(); // J:P
+      const vals=rawSheet.getRange(min,10,max-min+1,11).getValues(); // J:T
       ids.forEach(id=>{
         const meta=rowMap[id]; if(!meta||!meta.rawRow)return;
         const u=uniq[id], r=vals[meta.rawRow-min];
-        r[0]=u.commentsCount||0; r[1]=u.reactions||0; r[2]=u.shares||0;
+        const nextCommentCount=Number(u.commentsCount||0);
+        r[0]=nextCommentCount; r[1]=u.reactions||0; r[2]=u.shares||0;
         if ((u.mediaUrls||[]).length) {
           r[3]=u.mediaUrls.length;
           r[5]=u.mediaUrls.join('\n');
           r[6]=u.mediaUrls.length;
         }
+        const handled=Number(r[7]||0); // Q
+        if(handled>nextCommentCount){
+          r[7]=nextCommentCount;
+          r[8]=new Date(); // R
+          r[9]='COUNT_RESET • Facebook total comment giảm từ '+handled+' xuống '+nextCommentCount; // S
+          r[10]=''; // T cursor
+        }
       });
-      rawSheet.getRange(min,10,vals.length,7).setValues(vals);
+      rawSheet.getRange(min,10,vals.length,11).setValues(vals);
     }
 
     const oppRows=ids.map(id=>rowMap[id]&&rowMap[id].oppRow).filter(Boolean);
@@ -2860,7 +2868,7 @@ const RemoteApp = (() => {
     if(lifecycle && lifecycle!=='Loại') score+=8;
     if(runtime==='XONG' || runtime==='CHỜ' || !runtime) score+=6;
     if(runtime==='LỖI' || runtime==='THIẾU' || /^DỪNG/.test(runtime)) score-=8;
-    if(lastAt) score+=Math.min(6,Math.floor(lastAt/86400000)%7);
+    if(lastAt) score+=4+Math.min(0.9,lastAt/1e13);
     return score;
   }
 
@@ -3776,26 +3784,27 @@ const RemoteApp = (() => {
 
     const now=Number(nowMs||Date.now());
     const n=sh.getLastRow()-1;
-    const rows=sh.getRange(2,1,n,26).getValues();
+    // Hot monitoring path: read only fields used by dashboard, not A:Z.
+    const base=sh.getRange(2,1,n,6).getValues();   // A:F
+    const scores=sh.getRange(2,11,n,1).getValues(); // K
+    const gates=sh.getRange(2,25,n,1).getValues();  // Y
     const out=Object.assign({},empty,{backlogPreview:[]});
 
-    rows.forEach((r,i)=>{
+    for(let i=0;i<n;i++){
+      const r=base[i];
       const sourceId=String(r[1]||'').trim();
-      if(!sourceId) return;
+      if(!sourceId) continue;
       out.total++;
 
-      const gate=String(r[24]||'').trim().toUpperCase();
+      const gate=String(gates[i][0]||'').trim().toUpperCase();
       const sourceMs=opsDateMs_(r[0]);
       const ageMs=sourceMs?Math.max(0,now-sourceMs):0;
-      const fresh=sourceMs && ageMs<=CFG.OPS_FRESH_SIGNAL_MS;
+      const fresh=!!(sourceMs && ageMs<=CFG.OPS_FRESH_SIGNAL_MS);
 
       if(fresh) out.freshSources2h++;
       if(gate==='PASS') {
         out.pass++;
-        if(fresh) {
-          out.freshCandidates2h++;
-          out.freshPass2h++;
-        }
+        if(fresh){ out.freshCandidates2h++; out.freshPass2h++; }
       } else if(gate==='WATCH') {
         out.watch++;
         if(fresh) out.freshCandidates2h++;
@@ -3816,17 +3825,18 @@ const RemoteApp = (() => {
           sourceId,
           group:String(r[4]||'').trim()||'Group không rõ',
           person:String(r[5]||'').trim()||'Ẩn danh',
-          score:Number(r[10]||0),
+          score:Number(scores[i][0]||0),
           ageMs,
           url:String(r[2]||'').trim()
         });
       }
-    });
+    }
 
     out.backlogPreview.sort((a,b)=>(b.ageMs||0)-(a.ageMs||0));
     out.backlogPreview=out.backlogPreview.slice(0,8);
     return out;
   }
+
 
   function computeOperationalHealth_(input) {
     const data=input||{};
@@ -4035,11 +4045,11 @@ const RemoteApp = (() => {
       aiOps:ai,
       operationalHealth,
       autoMonitorV2:getAutoMonitorV2State_(),
-      commentIntelligence:{
-        enabled:getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true),
-        queue:getCommentFetchCandidates_(CFG.PILOT_GROUP_LIMIT).length,
-        storedRows:Math.max(0,(ss.getSheetByName(CFG.COMMENT_SHEET)||{getLastRow:()=>1}).getLastRow()-1)
-      },
+      commentIntelligence:Object.assign(
+        {enabled:getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true),
+         storedRows:Math.max(0,(ss.getSheetByName(CFG.COMMENT_SHEET)||{getLastRow:()=>1}).getLastRow()-1)},
+        getCommentQueueStats_()
+      ),
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
         overdueMs:x.nextAtMs?Math.max(0,now-x.nextAtMs):0
@@ -4475,45 +4485,75 @@ const RemoteApp = (() => {
     };
   }
 
+  function getCommentQueueStats_() {
+    const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
+    if(!raw || raw.getLastRow()<5) return {queue:0,partial:0,errorCooldown:0};
+    const n=raw.getLastRow()-4;
+    const totals=raw.getRange(5,10,n,1).getValues(); // J
+    const state=raw.getRange(5,17,n,4).getValues();  // Q:T
+    const now=Date.now();
+    let queue=0,partial=0,errorCooldown=0;
+    for(let i=0;i<n;i++){
+      const total=Math.max(0,Number(totals[i][0]||0));
+      const handled=Math.max(0,Number(state[i][0]||0));
+      const checkedAt=opsDateMs_(state[i][1]);
+      const status=String(state[i][2]||'').trim();
+      const cursor=String(state[i][3]||'').trim();
+      const isPartial=!!cursor || /^PARTIAL/i.test(status);
+      if(total<=0) continue;
+      if(/^ERROR/i.test(status) && checkedAt && now-checkedAt<CFG.COMMENT_RETRY_COOLDOWN_MS){
+        errorCooldown++;
+        continue;
+      }
+      if(isPartial || total>handled){
+        queue++;
+        if(isPartial) partial++;
+      }
+    }
+    return {queue,partial,errorCooldown};
+  }
+
   function getCommentFetchCandidates_(limit) {
-    const ss=SpreadsheetApp.getActiveSpreadsheet();
-    const raw=ss.getSheetByName(CFG.RAW_SHEET);
+    const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
     if(!raw || raw.getLastRow()<5) return [];
-    const cols=Math.max(20,raw.getMaxColumns());
-    const rows=raw.getRange(5,1,raw.getLastRow()-4,Math.min(20,cols)).getValues();
+    const n=raw.getLastRow()-4;
+    const imported=raw.getRange(5,1,n,1).getValues(); // A
+    const identity=raw.getRange(5,3,n,4).getValues(); // C:F
+    const totals=raw.getRange(5,10,n,1).getValues(); // J
+    const state=raw.getRange(5,17,n,4).getValues();  // Q:T
     const now=Date.now();
     const out=[];
 
-    rows.forEach((r,i)=>{
-      const postId=String(r[4]||'').trim();
-      const postUrl=String(r[5]||'').trim();
-      const total=Math.max(0,Number(r[9]||0));
-      const handled=Math.max(0,Number(r[16]||0));
-      const checkedAt=opsDateMs_(r[17]);
-      const status=String(r[18]||'').trim();
-      const cursor=String(r[19]||'').trim();
-      if(!postId || !postUrl || total<=0) return;
+    for(let i=0;i<n;i++){
+      const postId=String(identity[i][2]||'').trim();
+      const postUrl=String(identity[i][3]||'').trim();
+      const total=Math.max(0,Number(totals[i][0]||0));
+      const handled=Math.max(0,Number(state[i][0]||0));
+      const checkedAt=opsDateMs_(state[i][1]);
+      const status=String(state[i][2]||'').trim();
+      const cursor=String(state[i][3]||'').trim();
+      if(!postId || !postUrl || total<=0) continue;
 
       const partial=!!cursor || /^PARTIAL/i.test(status);
       const delta=Math.max(0,total-handled);
-      if(!partial && delta<=0) return;
-      if(/^ERROR/i.test(status) && checkedAt && now-checkedAt<CFG.COMMENT_RETRY_COOLDOWN_MS) return;
+      if(!partial && delta<=0) continue;
+      if(/^ERROR/i.test(status) && checkedAt && now-checkedAt<CFG.COMMENT_RETRY_COOLDOWN_MS) continue;
 
       out.push({
         rawRow:i+5,
         postId,
         postUrl,
-        groupName:String(r[2]||'').trim(),
-        groupKey:String(r[3]||'').trim().toLowerCase(),
+        groupName:String(identity[i][0]||'').trim(),
+        groupKey:String(identity[i][1]||'').trim().toLowerCase(),
         totalCount:total,
         handledCount:handled,
         delta:partial?Math.max(1,total-handled):delta,
         cursor,
         partial,
-        importedAtMs:opsDateMs_(r[0]),
+        importedAtMs:opsDateMs_(imported[i][0]),
         checkedAtMs:checkedAt
       });
-    });
+    }
 
     out.sort((a,b)=>{
       if(a.partial!==b.partial) return a.partial?-1:1;
@@ -4523,6 +4563,7 @@ const RemoteApp = (() => {
     });
     return out.slice(0,Math.max(1,Number(limit||CFG.COMMENT_POSTS_PER_CYCLE)));
   }
+
 
   function updateCommentFetchState_(candidate,patch) {
     const raw=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.RAW_SHEET);
