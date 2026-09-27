@@ -40,8 +40,8 @@ const RemoteApp = (() => {
     AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
     AUTO_MONITOR_TRIGGER_MINUTES: 5,
-    AUTO_MONITOR_MAX_GROUPS_PER_TICK: 5,
-    AUTO_MONITOR_BUDGET_MS: 250 * 1000,
+    AUTO_MONITOR_MAX_GROUPS_PER_TICK: 4,
+    AUTO_MONITOR_BUDGET_MS: 230 * 1000,
     AUTO_RETRY_PREFIX: 'SOCIAL_AIO_AUTO_RETRY_',
     AUTO_RETRY_MAX_ATTEMPTS: 5,
     AUTO_RETRY_DELAYS_MS: [2*60*1000,10*60*1000,30*60*1000,2*60*60*1000,6*60*60*1000],
@@ -49,7 +49,7 @@ const RemoteApp = (() => {
     COMMENT_MAX_POSTS_PER_TICK: 4,
     COMMENT_MAX_PAGES_PER_POST: 3,
     COMMENT_MAX_RECORDS_PER_POST: 100,
-    COMMENT_CYCLE_BUDGET_MS: 65 * 1000,
+    COMMENT_CYCLE_BUDGET_MS: 45 * 1000,
     COMMENT_EMPTY_RETRY_MAX: 3,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
@@ -3609,6 +3609,7 @@ const RemoteApp = (() => {
     const text=String(note||'');
     if(/DUPLICATE_IDENTITY|URL_INVALID|HARD_QUARANTINE/i.test(text)) return 'STRUCTURAL';
     if(/không còn cursor|no cursor/i.test(text) && String(status||'')==='THIẾU') return 'EXHAUSTED';
+    if(/relay tạm lỗi|HTTP\s*(429|502|503|504)|gateway timeout|service unavailable|timed?\s*out|timeout/i.test(text)) return 'TRANSIENT';
     return classifyScanError_(new Error(text));
   }
 
@@ -3892,7 +3893,7 @@ const RemoteApp = (() => {
       summary.newSourceIds=[...new Set(summary.newSourceIds.map(x=>String(x||'').trim()).filter(Boolean))];
 
       const aiCfg=getAiConfig_();
-      if(aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-35000){
+      if(aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<150000){
         try{
           const ar=analyzeNewPosts_({
             silent:true,
@@ -4471,6 +4472,8 @@ const RemoteApp = (() => {
     const workers=data.workers||{};
     const sla=data.sla||{};
     const ai=data.ai||{};
+    const comments=data.comments||{};
+    const auto=data.auto||{};
     const active=Math.max(0,Number(data.activeGroups||0));
     const context=Math.max(0,Number(data.groupsWithContext||0));
     const exceptions=Math.max(0,Number(data.exceptions||0));
@@ -4508,6 +4511,14 @@ const RemoteApp = (() => {
 
     if(Number(ai.backlogOver2h||0)>0){
       penalize(Math.min(15,3+Math.ceil(Number(ai.backlogOver2h||0)/25)*3),'AI_STALE',Number(ai.backlogOver2h||0)+' nguồn chưa Gate và đã cũ trên 2 giờ.','WARN');
+    }
+
+    if(auto.enabled && !auto.triggerInstalled){
+      penalize(30,'AUTO_TRIGGER_MISSING','AUTO Monitor đang bật nhưng backend trigger không tồn tại.','ERROR');
+    }
+
+    if(Number(comments.hardErrors||0)>0){
+      penalize(Math.min(12,3+Number(comments.hardErrors||0)*2),'COMMENT_HARD',Number(comments.hardErrors||0)+' post comment đang HARD error.','WARN');
     }
 
     if(active>0 && coverage<90){
@@ -4643,8 +4654,10 @@ const RemoteApp = (() => {
     };
 
     const exceptions=counts.error+counts.incomplete+counts.stopped;
+    const autoMonitor=getAutoMonitorV2State_(false);
+    const commentIntel=getCommentIntelligenceStats_();
     const operationalHealth=computeOperationalHealth_({
-      workers,sla,ai,
+      workers,sla,ai,auto:autoMonitor,comments:commentIntel,
       activeGroups:counts.active,
       groupsWithContext:counts.withContext,
       exceptions
@@ -4671,8 +4684,8 @@ const RemoteApp = (() => {
       workers,
       sla,
       aiOps:ai,
-      autoMonitor:getAutoMonitorV2State_(false),
-      commentIntel:getCommentIntelligenceStats_(),
+      autoMonitor,
+      commentIntel,
       operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
