@@ -1,9 +1,14 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.1-hf1-monitor-safety",
+  "version": "1.9.1-hf2-raw-pagination",
   "channel": "pilot",
   "updated_at": "2026-09-27",
   "notes": [
+    "V1.9.1-HF2 Raw Pagination: production Group scanner now parses the raw relay wrapper directly, matching the API diagnostic path instead of parsing the already-unwrapped response.",
+    "HTTP 200 empty/partial pages are retried up to 3 times on the same cursor before the scanner declares the page exhausted; first-page false empties are classified as transient instead of generic no-post errors.",
+    "Long numeric Facebook Group IDs are derived from the URL first so scientific-notation display in Google Sheets cannot corrupt lease/diagnostic/group-key semantics.",
+    "HF1 transient HTTP retry, per-Group lease, stale Due Queue guard and AUTO fault isolation remain active.",
+    "Pagination/cursor, Group identity normalization, Worker health, exact-batch AI, Signal Feed and Lead Qualification Hard Gate semantics remain protected.",
     "V1.9.1-HF1 Monitor Safety: fixes false-positive pagination diagnostics now that the production scanner already reads cursor from the raw wrapper.",
     "Scanner retries transient relay errors (429/502/503/504, timeout/network class) up to 3 attempts with backoff; if a later page still fails, already collected posts are preserved and the Group is marked THIEU for retry.",
     "Adds a cross-execution per-Group lease in Document Properties so AUTO, manual scan, retry, or a second Control Center cannot scan and overwrite the same Group concurrently.",
