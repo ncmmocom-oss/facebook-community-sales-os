@@ -42,7 +42,7 @@ const RemoteApp = (() => {
     EMPTY_PAGE_RETRY_ATTEMPTS: 3,
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
     AUTO_MONITOR_LAST_STATE_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST',
-    AUTO_MONITOR_RETRY_STATE_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_RETRY',
+    AUTO_MONITOR_RETRY_PREFIX: 'SOCIAL_AIO_AUTO_RETRY_V2_',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
     AUTO_MONITOR_TRIGGER_MINUTES: 5,
     AUTO_MONITOR_MAX_GROUPS_PER_TICK: 6,
@@ -4124,16 +4124,45 @@ const RemoteApp = (() => {
     });
   }
 
-  function loadAutoRetryState_() {
-    const raw=PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_MONITOR_RETRY_STATE_KEY)||'{}';
-    try { return JSON.parse(raw)||{}; } catch(_){ return {}; }
+  function autoRetryPropKey_(stateKey) {
+    const id=stableId_('auto-retry|'+String(stateKey||''));
+    return CFG.AUTO_MONITOR_RETRY_PREFIX+String(id||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,40);
   }
 
-  function saveAutoRetryState_(state) {
+  function getAutoRetryEntry_(stateKey) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(autoRetryPropKey_(stateKey));
+    if(!raw) return {};
+    try {
+      const item=JSON.parse(raw)||{};
+      return String(item.stateKey||'')===String(stateKey||'') ? item : {};
+    } catch(_) { return {}; }
+  }
+
+  function setAutoRetryEntry_(stateKey,entry) {
+    const item=Object.assign({},entry||{},{stateKey:String(stateKey||'')});
     PropertiesService.getDocumentProperties().setProperty(
-      CFG.AUTO_MONITOR_RETRY_STATE_KEY,
-      JSON.stringify(state||{}).slice(0,50000)
+      autoRetryPropKey_(stateKey),
+      JSON.stringify(item).slice(0,8000)
     );
+    return item;
+  }
+
+  function deleteAutoRetryEntry_(stateKey) {
+    PropertiesService.getDocumentProperties().deleteProperty(autoRetryPropKey_(stateKey));
+  }
+
+  function loadAutoRetryState_() {
+    const props=PropertiesService.getDocumentProperties().getProperties();
+    const out={};
+    Object.keys(props).forEach(k=>{
+      if(k.indexOf(CFG.AUTO_MONITOR_RETRY_PREFIX)!==0) return;
+      try{
+        const item=JSON.parse(props[k]||'{}')||{};
+        const stateKey=String(item.stateKey||'');
+        if(stateKey) out[stateKey]=item;
+      }catch(_){}
+    });
+    return out;
   }
 
   function classifyStoredScanError_(status,note) {
@@ -4259,10 +4288,10 @@ const RemoteApp = (() => {
 
       const key=exactGroupKeyFromRow_(url,r[4]);
       if(duplicateRows.has(row)) {
-        retryState[key+'|row:'+row]={
+        setAutoRetryEntry_(key+'|row:'+row,{
           attempts:0,nextAt:0,errorClass:'STRUCTURAL',hard:true,
           lastError:'IDENTITY_DUPLICATE',updatedAt:now
-        };
+        });
         return;
       }
 
@@ -4272,7 +4301,7 @@ const RemoteApp = (() => {
       const attempts=Math.max(0,Number(existing.attempts||0));
       const policy=retryPolicyForClass_(errorClass,attempts);
       if(policy.hard){
-        retryState[stateKey]=Object.assign({},existing,{errorClass,hard:true,updatedAt:now});
+        setAutoRetryEntry_(stateKey,Object.assign({},existing,{errorClass,hard:true,updatedAt:now}));
         return;
       }
       const nextAt=Number(existing.nextAt||0);
@@ -4297,7 +4326,6 @@ const RemoteApp = (() => {
       });
     });
 
-    saveAutoRetryState_(retryState);
     out.sort((a,b)=>{
       const sev={CONNECTION:3,UNKNOWN:2,NO_POSTS:1,TRANSIENT:0,SHEET_BUSY:0};
       const sa=sev[a.errorClass]===undefined?2:sev[a.errorClass];
@@ -4310,11 +4338,9 @@ const RemoteApp = (() => {
 
   function updateAutoRetryAfterResult_(job,result) {
     if(!job || !job.retryStateKey) return;
-    const state=loadAutoRetryState_();
     const key=job.retryStateKey;
     if(result && result.ok && result.status==='XONG'){
-      delete state[key];
-      saveAutoRetryState_(state);
+      deleteAutoRetryEntry_(key);
       return;
     }
 
@@ -4322,20 +4348,20 @@ const RemoteApp = (() => {
       result&&result.errorClass ||
       classifyStoredScanError_(result&&result.status,result&&result.error||result&&result.note)
     ).toUpperCase();
-    const prev=state[key]||{};
+    const prev=getAutoRetryEntry_(key)||{};
     const attempts=Math.max(Number(prev.attempts||0),Number(job.retryAttempts||0));
     const nextAttempt=errorClass==='CONNECTION' ? attempts : attempts+1;
     const policy=retryPolicyForClass_(errorClass,nextAttempt);
-    state[key]={
+    setAutoRetryEntry_(key,{
       attempts:nextAttempt,
       nextAt:Date.now()+Number(policy.delayMs||0),
       errorClass,
       hard:!!policy.hard,
       lastError:String(result&&result.error||result&&result.note||'').slice(0,800),
       updatedAt:Date.now()
-    };
-    saveAutoRetryState_(state);
+    });
   }
+
 
   function callCommentsRawOnce_(clientId,params) {
     const id=String(clientId||'').trim();
