@@ -1,9 +1,16 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.1-hf3-stop-state",
+  "version": "1.9.1-hf4-run-scope",
   "channel": "pilot",
   "updated_at": "2026-09-27",
   "notes": [
+    "V1.9.1-HF4 Run Scope: replaces sticky global STOP_ALL behavior in the V1.9 worker engine with per-run cancellation tokens keyed by runId.",
+    "Every selected/retry/due worker plan gets a unique runId; every job carries that runId; STOP and Pause Auto only cancel that run, never a future run.",
+    "The production scanner no longer reads the legacy STOP_ALL property. Legacy STOP_ALL is cleanup-only and cannot poison new scans.",
+    "Run cancellation is TTL-bound and cleaned at batch finalization. Unstarted jobs return SKIP_STOPPED_RUN without being mislabeled as API failures.",
+    "Mid-run cancellation records stopScope=RUN and leaves the Group reusable for later cycles instead of creating a sticky stopped state.",
+    "Selected/retry Group keys now derive from the Facebook URL first, protecting long numeric IDs from Google Sheets scientific notation.",
+    "HF2 raw-wrapper parsing and empty-page retry, HF1 transient retry/lease/fault-isolation, identity, worker health, exact-batch AI, Signal Feed and Lead Hard Gate remain protected.",
     "V1.9.1-HF3 Stop State: clears stale global STOP_ALL whenever a new selected/retry/due scan plan starts, so a previous Stop action cannot poison later scans.",
     "If STOP is observed before any post is fetched, the scanner now returns a structured STOPPED result instead of misreporting 'API returned no posts'.",
     "Direct active-row and legacy retry runs also clear stale STOP_ALL before starting.",
