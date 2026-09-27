@@ -1,0 +1,42 @@
+name: V1.10 Production Gate
+
+on:
+  push:
+    branches:
+      - release/v1.10.0-pilot-200
+    paths:
+      - 'apps-script/**'
+      - 'bootstrap/**'
+      - 'tests/v1_10_runtime_contract.test.js'
+      - '.github/workflows/v1-10-production-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps-script/**'
+      - 'bootstrap/**'
+      - 'tests/v1_10_runtime_contract.test.js'
+
+permissions:
+  contents: read
+
+jobs:
+  production-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Runtime contract tests
+        run: node tests/v1_10_runtime_contract.test.js
+      - name: Bootstrap trigger contract
+        run: |
+          grep -q "function autoMonitorTick()" bootstrap/Code.gs
+          grep -q "2.2-auto-monitor-v2" bootstrap/Code.gs
+      - name: No protected-flow regression markers
+        run: |
+          grep -q "function scanGroupApiBridge_" apps-script/Runtime.js
+          grep -q "function fetchGroupPostsPageRaw_" apps-script/Runtime.js
+          grep -q "function analyzeByScope_" apps-script/Runtime.js
+          grep -q "Lead Gate" apps-script/Runtime.js
