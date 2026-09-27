@@ -8,6 +8,7 @@
     nextDelayMs: 0,
     lastConnectedAt: 0,
     lastReconnectAt: 0,
+    connectPendingUntil: 0,
     lastError: '',
     lastAction: '',
     timer: null,
@@ -162,6 +163,7 @@
       connect.click();
       STATE.reconnectCount++;
       STATE.lastReconnectAt = Date.now();
+      STATE.connectPendingUntil = Date.now() + 7000;
       STATE.lastAction = source || 'connect-click';
       setTimeout(checkHealth, 1200);
       return {ok:true,clicked:true};
@@ -180,6 +182,7 @@
     STATE.clientId = st.clientId || STATE.clientId;
     STATE.consecutiveFailures = 0;
     STATE.lastError = '';
+    STATE.connectPendingUntil = 0;
     STATE.lastAction = source || STATE.lastAction;
     if (!wasConnected || !STATE.lastConnectedAt) STATE.lastConnectedAt = Date.now();
     clearReconnectTimer();
@@ -189,6 +192,12 @@
   function onDisconnected(st, reason) {
     STATE.connected = false;
     STATE.clientId = st.clientId || STATE.clientId;
+    if (STATE.connectPendingUntil && Date.now() < STATE.connectPendingUntil) {
+      STATE.lastAction = 'Waiting for WebSocket handshake';
+      heartbeat({status:'CONNECTING'});
+      return;
+    }
+    STATE.connectPendingUntil = 0;
     STATE.consecutiveFailures = Math.max(1, STATE.consecutiveFailures + 1);
     if (st.wsError) STATE.lastError = 'WebSocket error';
     else STATE.lastError = reason || 'Disconnected';
