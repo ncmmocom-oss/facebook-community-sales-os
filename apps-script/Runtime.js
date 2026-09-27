@@ -1978,6 +1978,17 @@ const RemoteApp = (() => {
     return {version:CFG.VERSION,sheet:sh.getName()};
   }
 
+  function openSignalFeed() {
+    ensureV16Sheets_(false);
+    refreshSignalFeed_({silent:true});
+    return openOperationalSheet_(CFG.SIGNAL_FEED_SHEET);
+  }
+
+  function openLeadInbox() {
+    ensureV16Sheets_(false);
+    return openOperationalSheet_(CFG.LEAD_SHEET);
+  }
+
   function signalFeedDate_(value) {
     if(value instanceof Date && !isNaN(value.getTime())) return value;
     const text=String(value||'').trim();
@@ -5383,6 +5394,8 @@ const RemoteApp = (() => {
     onOpen,
     showRuntimeInfo,
     showControlCenter,
+    openSignalFeed,
+    openLeadInbox,
     showImportDialog,
     importJsonFiles,
     refreshCurrentData,
