@@ -51,6 +51,8 @@ const RemoteApp = (() => {
     COMMENT_MAX_RECORDS_PER_POST: 100,
     COMMENT_CYCLE_BUDGET_MS: 45 * 1000,
     COMMENT_EMPTY_RETRY_MAX: 3,
+    COMMENT_HOT_WATCH_MS: 24 * 60 * 60 * 1000,
+    COMMENT_HOT_RECHECK_MS: 30 * 60 * 1000,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
@@ -3328,26 +3330,60 @@ const RemoteApp = (() => {
     return out;
   }
 
+  function loadCommentWatchMap_() {
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
+    const out={};
+    if(!sh || sh.getLastRow()<2) return out;
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getValues();
+    rows.forEach(r=>{
+      const sourceId=String(r[1]||'').trim();
+      const type=String(r[3]||'').trim();
+      if(!sourceId || type==='Bình luận' || sourceId.indexOf('C:')===0) return;
+      const score=Number(r[10]||0);
+      const classification=String(r[11]||'').trim();
+      const gate=String(r[24]||'').trim().toUpperCase();
+      const watch=
+        gate==='PASS'||gate==='WATCH'||gate==='REVIEW'||gate==='REVIEW_REQUIRED'||
+        classification==='Nguồn hội thoại'||score>=40;
+      if(watch) out[sourceId]={score,classification,gate};
+    });
+    return out;
+  }
+
   function getCommentBacklog_(limit) {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const raw=mustSheet_(ss,CFG.RAW_SHEET);
     if(raw.getLastRow()<5) return [];
     if(raw.getMaxColumns()<20) ensureV16Sheets_(true);
     const existing=loadExistingCommentCountByPost_();
+    const watchMap=loadCommentWatchMap_();
     const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
+    const now=Date.now();
     const jobs=[];
     rows.forEach((r,i)=>{
       const postId=String(r[4]||'').trim();
       const url=String(r[5]||'').trim();
+      if(!postId || !url) return;
+
       const expected=Math.max(0,toNumber_(r[9]));
-      if(!postId || !url || expected<=0) return;
       const stored=Math.max(0,toNumber_(r[16]));
       const imported=Math.max(0,Number(existing[postId]||0));
       const fetched=Math.max(stored,imported);
       const cursor=String(r[17]||'').trim();
       const status=String(r[19]||'').trim();
       if(/^HARD:/i.test(status)) return;
-      if(!cursor && fetched>=expected) return;
+
+      const importedAtMs=opsDateMs_(r[0]);
+      const lastScanMs=opsDateMs_(r[18]);
+      const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
+      const hotDue=
+        hotRecent &&
+        !!watchMap[postId] &&
+        (!lastScanMs || now-lastScanMs>=CFG.COMMENT_HOT_RECHECK_MS);
+
+      const deltaPending=cursor || fetched<expected;
+      if(!deltaPending && !hotDue) return;
+
       jobs.push({
         rawRow:i+5,
         postId,
@@ -3359,13 +3395,19 @@ const RemoteApp = (() => {
         cursor,
         status,
         retryCount:commentRetryCount_(status),
-        importedAtMs:opsDateMs_(r[0]),
-        delta:Math.max(0,expected-fetched)
+        importedAtMs,
+        lastScanMs,
+        delta:Math.max(0,expected-fetched),
+        hotWatch:hotDue,
+        watch:watchMap[postId]||null
       });
     });
+
     jobs.sort((a,b)=>{
-      // Finish an existing cursor chain first, then newest/highest delta.
-      if(!!a.cursor!==!!b.cursor) return a.cursor ? -1 : 1;
+      // New delta first, then hot watch, with cursor continuation kept in the mix.
+      const rank=x=>x.delta>0?0:(x.hotWatch?1:(x.cursor?2:3));
+      const ra=rank(a),rb=rank(b);
+      if(ra!==rb) return ra-rb;
       if((b.importedAtMs||0)!==(a.importedAtMs||0)) return (b.importedAtMs||0)-(a.importedAtMs||0);
       return (b.delta||0)-(a.delta||0);
     });
@@ -3379,14 +3421,20 @@ const RemoteApp = (() => {
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
     const comment=ss.getSheetByName(CFG.COMMENT_SHEET);
     const enabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
-    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0;
+    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,hotWatchDue=0;
     if(raw && raw.getLastRow()>=5){
       const existing=loadExistingCommentCountByPost_();
+      const watchMap=loadCommentWatchMap_();
       const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
+      const now=Date.now();
       rows.forEach(r=>{
         const postId=String(r[4]||'').trim();
         if(!postId) return;
         const expected=Math.max(0,toNumber_(r[9]));
+        const importedAtMs=opsDateMs_(r[0]);
+        const lastScanMs=opsDateMs_(r[18]);
+        const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
+        if(hotRecent && watchMap[postId] && (!lastScanMs || now-lastScanMs>=CFG.COMMENT_HOT_RECHECK_MS)) hotWatchDue++;
         if(expected<=0) return;
         postsWithComments++;
         expectedComments+=expected;
@@ -3409,7 +3457,8 @@ const RemoteApp = (() => {
       coveragePct:expectedComments?Math.round(Math.min(expectedComments,fetchedComments)*1000/expectedComments)/10:100,
       storedComments:comment?Math.max(0,comment.getLastRow()-1):0,
       hardErrors:hard,
-      retryPosts:retry
+      retryPosts:retry,
+      hotWatchDue
     };
   }
 
@@ -3477,6 +3526,11 @@ const RemoteApp = (() => {
       next.lastScan||new Date(),
       String(next.status||'')
     ]]);
+    if(next.commentsCount!==undefined && next.commentsCount!==null){
+      const observed=Math.max(0,Number(next.commentsCount||0));
+      const current=Math.max(0,toNumber_(raw.getRange(job.rawRow,10).getValue()));
+      if(observed>current) raw.getRange(job.rawRow,10).setValue(observed);
+    }
   }
 
   function runSinglePostCommentIntelligence_(job,options) {
@@ -3493,6 +3547,19 @@ const RemoteApp = (() => {
     const comments=page.comments||[];
 
     if(!comments.length){
+      if(job.hotWatch && expected<=currentFetched){
+        updateRawCommentState_(job,{
+          fetched:currentFetched,
+          cursor:'',
+          lastScan:new Date(),
+          status:'WATCH_EMPTY '+currentFetched+'/'+expected
+        });
+        return {
+          ok:true,hotWatch:true,postId:job.postId,postUrl:job.url,
+          commentsRead:0,commentImported:0,newSourceIds:[],
+          status:'WATCH_EMPTY',durationMs:Date.now()-started
+        };
+      }
       const n=Math.max(0,Number(job.retryCount||0))+1;
       const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
       updateRawCommentState_(job,{
@@ -3521,13 +3588,14 @@ const RemoteApp = (() => {
     }]);
 
     const newCount=Math.max(0,Number(imported.commentImported||0));
-    const fetched=Math.min(expected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
+    const observedExpected=Math.max(expected,currentFetched+newCount);
+    const fetched=Math.min(observedExpected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
     const nextCursor=String(page.cursor||'');
     let status='';
     let cursor='';
 
-    if(fetched>=expected){
-      status='SYNCED '+fetched+'/'+expected;
+    if(fetched>=observedExpected){
+      status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
     } else if(nextCursor){
       status='BACKLOG '+fetched+'/'+expected;
       cursor=nextCursor;
@@ -3537,7 +3605,7 @@ const RemoteApp = (() => {
       status=(hard?'HARD: ':'RETRY '+n+': ')+'GAP '+fetched+'/'+expected+' no cursor';
     }
 
-    updateRawCommentState_(job,{fetched,cursor,lastScan:new Date(),status});
+    updateRawCommentState_(job,{fetched,cursor,lastScan:new Date(),status,commentsCount:observedExpected});
     return {
       ok:true,
       postId:job.postId,
@@ -3546,7 +3614,7 @@ const RemoteApp = (() => {
       commentImported:newCount,
       duplicates:Number(imported.duplicates||0),
       fetched,
-      expected,
+      expected:observedExpected,
       nextCursor:cursor,
       status,
       newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
