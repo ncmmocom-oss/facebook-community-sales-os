@@ -78,7 +78,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.9.4 Auto Monitor V2 + Comment Intelligence: backend trigger 5 phút, retry/backoff + hard quarantine, comment delta queue/pagination + AI Gate, production self-test/repair.\n' +
+      'V1.9.4 Auto Monitor V2 + Comment Intelligence: backend trigger 5 phút, retry/backoff + hard quarantine, comment delta queue/pagination + AI Gate, production self-test/repair; restore 4-condition Hard Gate và chặn feed identity spillover.\n' +
       'V1.9.3 Operations Dashboard: SLA quét + overdue/coverage + exception queue + fresh signal/AI aging + operational health score cho pilot 200 Group.\n' +
       'V1.9.2 Control Center IA: sidebar 7 khu vực + Overview/System Health; tách Group, Signal/Lead, AI/Offer, Worker/API, Data, Runtime/Logs mà không đổi business logic.\n' +
       'V1.9.1-HF4 Run Scope: bỏ STOP_ALL khỏi worker engine; mỗi batch/cycle có runId + cancellation riêng, không thể nhiễm state giữa các run.\nV1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
@@ -192,20 +192,24 @@ const RemoteApp = (() => {
         // Manual JSON import has no source-row metadata and keeps the legacy
         // ensureGroupRegistered_ fallback below.
         const resolvedScanGroupKey = fileGroupKey || sourceGroupKey;
-        if (sourceGroupRow && resolvedScanGroupKey) {
+        let sourceBoundInfo=null;
+        let sourceResolvedKey=resolvedScanGroupKey || sourceGroupKey;
+        if (sourceGroupRow && sourceResolvedKey) {
           const bound = bindCanonicalGroupToSourceRow_(groupSheet, {
             row: sourceGroupRow,
             sourceUrl: sourceGroupUrl,
             sourceKey: sourceGroupKey,
-            canonicalKey: resolvedScanGroupKey
+            canonicalKey: sourceResolvedKey
           });
-          if (bound) {
-            groupMap[resolvedScanGroupKey] = bound;
-            if (fileGroupKey) groupMap[fileGroupKey] = bound;
-            if (sourceGroupKey) groupMap[sourceGroupKey] = bound;
-            const sourceUrlKey = extractGroupKey_(sourceGroupUrl);
-            if (sourceUrlKey) groupMap[sourceUrlKey] = bound;
+          if (!bound) {
+            throw new Error('SCAN_SOURCE_ROW_MISMATCH: source row đã thay đổi trong lúc quét; fail-closed để tránh tạo Group rác.');
           }
+          sourceBoundInfo=bound;
+          groupMap[sourceResolvedKey] = bound;
+          if (fileGroupKey) groupMap[fileGroupKey] = bound;
+          if (sourceGroupKey) groupMap[sourceGroupKey] = bound;
+          const sourceUrlKey = extractGroupKey_(sourceGroupUrl);
+          if (sourceUrlKey) groupMap[sourceUrlKey] = bound;
         }
 
         posts.forEach(post => {
@@ -214,9 +218,18 @@ const RemoteApp = (() => {
           const postId = normalizePostId_(post.post_id || post.postId || post.id || '', url);
           if (!postId && !url) return;
 
-          const groupKey = extractGroupKey_(url) || String(post.group_id || post.groupId || '').trim().toLowerCase() || fileGroupKey;
-          if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
-          const groupInfo = groupMap[groupKey] || { name:`Group ${groupKey || 'không rõ'}`, row:null };
+          // API Group scan is authoritative about the monitored Group. A feed item
+          // may link to a shared/original post in another Group; never auto-register
+          // that linked Group as a new monitored Group.
+          let groupKey='',groupInfo=null;
+          if(sourceGroupRow && sourceBoundInfo){
+            groupKey=String(sourceResolvedKey||sourceGroupKey||'').trim().toLowerCase();
+            groupInfo=sourceBoundInfo;
+          } else {
+            groupKey=extractGroupKey_(url) || String(post.group_id || post.groupId || '').trim().toLowerCase() || fileGroupKey;
+            if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
+            groupInfo=groupMap[groupKey] || { name:`Group ${groupKey || 'không rõ'}`, row:null };
+          }
           const stat = touchGroupStat_(groupStats, groupKey, groupInfo, file.name || '');
           stat.postScanned += 1;
 
@@ -1790,9 +1803,27 @@ const RemoteApp = (() => {
         ? needScore+fitScore+actionScore+urgencyScore+reachScore+freshScore
         : clampScore_(a.score,0,100);
 
+      const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
+      const needEvidencePass=
+        !!evidence &&
+        !/^không có bằng chứng nhu cầu rõ$/i.test(evidence) &&
+        needScore>=10;
+      const nonActionIntent=new Set(['Chia sẻ','Thảo luận','Không ưu tiên']);
+      const actionIntentPass=
+        actionScore>=8 &&
+        !nonActionIntent.has(intent);
+
       let gate='WATCH';
-      if(buyerRole==='Không' || productFit==='Không') gate='FAIL';
-      else if(buyerRole==='Có' && productFit==='Có' && score>=65) gate='PASS';
+      if(buyerRole==='Không' || productFit==='Không') {
+        gate='FAIL';
+      } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
+        gate='REVIEW_REQUIRED';
+      } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass && score>=65) {
+        gate='PASS';
+      } else {
+        // Relevant need but no sufficiently strong action/solution intent.
+        gate='WATCH';
+      }
 
       let classification=suggestedClass;
       if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
@@ -1805,11 +1836,13 @@ const RemoteApp = (() => {
       if(gate==='PASS') status='Đang xử lý';
       if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
 
-      const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
       const gateReason=[
         'Buyer='+buyerRole,
         'Fit='+productFit,
         'Context='+(effectiveContext?'Có':'Thiếu'),
+        'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
+        'ActionIntent='+(actionIntentPass?'PASS':'NO'),
+        'Intent='+intent,
         'Need '+needScore+'/25',
         'Fit '+fitScore+'/25',
         'Action '+actionScore+'/20',
@@ -3643,6 +3676,49 @@ const RemoteApp = (() => {
     return out;
   }
 
+
+  function getGroupFeedSpillovers_() {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return [];
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getDisplayValues();
+    const byFile={};
+    rows.forEach((r,i)=>{
+      const file=String(r[12]||'').trim();
+      if(!/^api_posts_/i.test(file)) return;
+      (byFile[file]||(byFile[file]=[])).push({
+        row:i+2,
+        active:String(r[0]||'').trim(),
+        name:String(r[2]||'').trim(),
+        url:String(r[3]||'').trim(),
+        key:exactGroupKeyFromRow_(r[3],r[4]),
+        note:String(r[15]||'').trim(),
+        status:String(r[23]||'').trim()
+      });
+    });
+    const out=[];
+    Object.keys(byFile).forEach(file=>{
+      const list=byFile[file];
+      if(list.length<2) return;
+      const m=file.match(/^api_posts_(.+?)_\d{8}_\d{6}\.json$/i);
+      const sourceKey=m?String(m[1]||'').toLowerCase():'';
+      let source=list.find(x=>x.key===sourceKey);
+      if(!source){
+        source=list.find(x=>!/Tự thêm khi import JSON/i.test(x.note))||list[0];
+      }
+      list.forEach(x=>{
+        if(x.row===source.row) return;
+        if(!/Tự thêm khi import JSON/i.test(x.note)) return;
+        out.push(Object.assign({},x,{
+          sourceRow:source.row,
+          sourceName:source.name,
+          sourceKey:source.key,
+          file
+        }));
+      });
+    });
+    return out;
+  }
+
   function cleanupExpiredRuntimeState_(repair) {
     const props=PropertiesService.getDocumentProperties();
     const all=props.getProperties();
@@ -3690,6 +3766,19 @@ const RemoteApp = (() => {
       });
     }
 
+    const spillovers=getGroupFeedSpillovers_();
+    if(repair && spillovers.length){
+      spillovers.forEach(x=>{
+        if(x.status==='ĐANG QUÉT') return;
+        sh.getRange(x.row,1).setValue('Không');
+        setGroupRowStatus_(
+          sh,x.row,'DỪNG',
+          String(sh.getRange(x.row,25).getDisplayValue()||'').trim(),
+          'AUTO REPAIR: FEED_SPILLOVER từ source row '+x.sourceRow+' ('+x.sourceName+'). Giữ row để audit nhưng tắt monitoring.'
+        );
+      });
+    }
+
     const duplicates=getDuplicateGroupIdentityRows_();
     if(repair && duplicates.length){
       duplicates.forEach(d=>{
@@ -3707,7 +3796,7 @@ const RemoteApp = (() => {
     }
 
     SpreadsheetApp.flush();
-    return {expiredLeases,expiredRunStops,staleRunning,duplicates};
+    return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates};
   }
 
   function getAutoRetryJobs_(limit) {
@@ -3946,6 +4035,7 @@ const RemoteApp = (() => {
       {id:'AUTO_TRIGGER',severity:'P0',pass:!auto.enabled || (auto.triggerInstalled&&auto.triggerCount===1),detail:auto.enabled?('enabled • trigger '+auto.triggerCount):'disabled'},
       {id:'STALE_RUNNING',severity:'P0',pass:Number(fixes.staleRunning||0)===0 || repair!==false,detail:Number(fixes.staleRunning||0)+' stale runtime row'},
       {id:'GROUP_IDENTITY',severity:'P1',pass:duplicates.length===0,detail:duplicates.length+' duplicate active identity row(s)'+(duplicates.length&&repair!==false?' quarantined':'')},
+      {id:'FEED_SPILLOVER',severity:'P1',pass:(fixes.spillovers||[]).length===0 || repair!==false,detail:Number((fixes.spillovers||[]).length)+' auto-registered spillover row(s)'+((fixes.spillovers||[]).length&&repair!==false?' disabled':'')},
       {id:'DATA_CONSISTENCY',severity:'P1',pass:!!audit.ok,detail:'raw/opportunity/comment integrity'},
       {id:'AI_CONFIG',severity:'P1',pass:!!ai.configured,detail:ai.provider+' / '+ai.model},
       {id:'COMMENT_PIPELINE',severity:'P1',pass:comments.hardErrors===0,detail:comments.backlogPosts+' backlog • '+comments.storedComments+' stored • '+comments.hardErrors+' hard'},
