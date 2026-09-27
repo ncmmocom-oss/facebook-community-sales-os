@@ -18,6 +18,9 @@ new Function(bootstrap);
 assert(runtime.includes("VERSION: '1.10.0-pilot-200'"),'runtime version mismatch');
 assert(bootstrap.includes("BOOTSTRAP_VERSION = '2.2-auto-monitor-v2'"),'bootstrap version mismatch');
 assert(bootstrap.includes('function autoMonitorTick()'),'global autoMonitorTick trigger entrypoint missing');
+assert(bootstrap.includes("SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1"),'bootstrap trigger spreadsheet binding key missing');
+assert(bootstrap.includes('SpreadsheetApp.openById(id)'),'bootstrap time trigger must explicitly open target spreadsheet');
+assert(bootstrap.includes('SpreadsheetApp.setActiveSpreadsheet(ss)'),'bootstrap time trigger must establish active spreadsheet context');
 
 const requiredRuntime=[
   'function autoMonitorTick_',
@@ -46,6 +49,8 @@ assert(runtime.includes("CONSUMER_OR_UNKNOWN"),'unknown Apps Script account clas
 assert(runtime.includes('TRIGGER_RUNTIME_BUDGET_GUARD'),'trigger runtime quota guard missing');
 assert(runtime.includes("id:'AUTO_RUNTIME_CAPACITY'"),'acceptance runtime-capacity gate missing');
 assert(runtime.includes('function readGroupLease_'),'stale-running recovery calls a missing lease reader');
+assert(runtime.includes('function bindAutoMonitorSpreadsheet_'),'runtime trigger spreadsheet bind helper missing');
+assert(runtime.includes("id:'AUTO_SPREADSHEET_BINDING'"),'acceptance spreadsheet-binding gate missing');
 assert(runtime.includes("status!=='LỖI' && status!=='THIẾU'"),'auto due stale-plan validation must fail closed on exception state');
 assert(runtime.includes('CROSS_SOURCE_REGISTRY_CONTAMINATION'),'cross-source registry quarantine missing');
 assert(runtime.includes("id:'SOURCE_ATTRIBUTION'"),'source attribution acceptance gate missing');
