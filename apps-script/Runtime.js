@@ -47,6 +47,10 @@ const RemoteApp = (() => {
     AUTO_MONITOR_TRIGGER_MINUTES: 5,
     AUTO_MONITOR_MAX_GROUPS_PER_TICK: 6,
     AUTO_MONITOR_TICK_BUDGET_MS: 240 * 1000,
+    AUTO_MONITOR_RUNTIME_DAY_KEY: 'SOCIAL_AIO_AUTO_RUNTIME_DAY_V1',
+    AUTO_MONITOR_RUNTIME_MS_KEY: 'SOCIAL_AIO_AUTO_RUNTIME_MS_V1',
+    AUTO_MONITOR_CONSUMER_BUDGET_MS: 70 * 60 * 1000,
+    AUTO_MONITOR_WORKSPACE_BUDGET_MS: 330 * 60 * 1000,
     AUTO_MONITOR_RETRY_DELAYS_MS: [2*60*1000,10*60*1000,30*60*1000,2*60*60*1000],
     COMMENT_INTELLIGENCE_ENABLED_KEY: 'SOCIAL_AIO_COMMENT_INTEL_ENABLED_V1',
     COMMENT_POSTS_PER_CYCLE: 6,
@@ -4066,6 +4070,74 @@ const RemoteApp = (() => {
     return String(raw).toLowerCase()==='true';
   }
 
+  function getAutoRuntimeBudget_() {
+    let email='';
+    try { email=String(Session.getEffectiveUser().getEmail()||Session.getActiveUser().getEmail()||'').trim().toLowerCase(); } catch(_){}
+    const consumer=/@gmail\.com$/i.test(email);
+    return {
+      accountClass:consumer?'CONSUMER':'WORKSPACE_OR_UNKNOWN',
+      budgetMs:consumer?CFG.AUTO_MONITOR_CONSUMER_BUDGET_MS:CFG.AUTO_MONITOR_WORKSPACE_BUDGET_MS
+    };
+  }
+
+  function getAutoRuntimeUsage_() {
+    const props=PropertiesService.getDocumentProperties();
+    const day=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+    const budget=getAutoRuntimeBudget_();
+    const storedDay=props.getProperty(CFG.AUTO_MONITOR_RUNTIME_DAY_KEY)||'';
+    let used=Number(props.getProperty(CFG.AUTO_MONITOR_RUNTIME_MS_KEY)||0);
+    if(storedDay!==day){
+      used=0;
+      props.setProperty(CFG.AUTO_MONITOR_RUNTIME_DAY_KEY,day);
+      props.setProperty(CFG.AUTO_MONITOR_RUNTIME_MS_KEY,'0');
+    }
+    return {
+      day,
+      accountClass:budget.accountClass,
+      budgetMs:budget.budgetMs,
+      usedMs:Math.max(0,used),
+      remainingMs:Math.max(0,budget.budgetMs-Math.max(0,used)),
+      usedPct:budget.budgetMs?Math.round(Math.max(0,used)*1000/budget.budgetMs)/10:0
+    };
+  }
+
+  function recordAutoRuntimeUsage_(durationMs) {
+    const usage=getAutoRuntimeUsage_();
+    const next=Math.max(0,usage.usedMs+Math.max(0,Number(durationMs||0)));
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_MONITOR_RUNTIME_MS_KEY,String(next));
+    return Object.assign({},usage,{
+      usedMs:next,
+      remainingMs:Math.max(0,usage.budgetMs-next),
+      usedPct:usage.budgetMs?Math.round(next*1000/usage.budgetMs)/10:0
+    });
+  }
+
+  function estimateAutoRuntimeNeed_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return {activeGroups:0,scansPerDay:0,avgScanSec:27,estimatedDailyMs:0};
+    const rows=sheet.getRange(2,1,last-1,25).getDisplayValues();
+    let active=0,scans=0;
+    const samples=[];
+    rows.forEach(r=>{
+      if(String(r[0]||'').trim()!=='Có' || String(r[6]||'').trim()==='Loại') return;
+      active++;
+      scans+=Math.max(1,Number(r[7]||1));
+      const m=String(r[24]||'').match(/([0-9]+(?:\.[0-9]+)?)s\s*$/i);
+      if(m) samples.push(Number(m[1]));
+    });
+    const avg=samples.length
+      ? samples.reduce((a,b)=>a+b,0)/samples.length
+      : 27;
+    return {
+      activeGroups:active,
+      scansPerDay:scans,
+      avgScanSec:Math.round(avg*10)/10,
+      sampleCount:samples.length,
+      estimatedDailyMs:Math.round(scans*avg*1000*1.15)
+    };
+  }
+
   function getAutoMonitorV2State_() {
     const props=PropertiesService.getDocumentProperties();
     const enabled=getBooleanDocumentProp_(CFG.AUTO_MONITOR_ENABLED_KEY,false);
@@ -4086,6 +4158,8 @@ const RemoteApp = (() => {
       maxGroupsPerTick:CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,
       retryWaiting:retryEntries.filter(x=>!x.hard&&Number(x.nextAt||0)>Date.now()).length,
       hardQuarantine:retryEntries.filter(x=>!!x.hard).length,
+      runtimeUsage:getAutoRuntimeUsage_(),
+      runtimeEstimate:estimateAutoRuntimeNeed_(),
       last
     };
   }
@@ -4539,6 +4613,7 @@ const RemoteApp = (() => {
       if(!partial && delta<=0) continue;
       if(/^ERROR/i.test(status) && checkedAt && now-checkedAt<CFG.COMMENT_RETRY_COOLDOWN_MS) continue;
 
+      const importedAtMs=opsDateMs_(imported[i][0]);
       out.push({
         rawRow:i+5,
         postId,
@@ -4550,12 +4625,18 @@ const RemoteApp = (() => {
         delta:partial?Math.max(1,total-handled):delta,
         cursor,
         partial,
-        importedAtMs:opsDateMs_(imported[i][0]),
+        incremental:!partial && handled>0 && delta>0,
+        fresh:!!(importedAtMs && now-importedAtMs<=24*60*60*1000),
+        importedAtMs,
         checkedAtMs:checkedAt
       });
     }
 
     out.sort((a,b)=>{
+      // Fresh delta always wins over historical backfill: this is the core
+      // "detect new demand early" policy.
+      if(a.incremental!==b.incremental) return a.incremental?-1:1;
+      if(a.fresh!==b.fresh) return a.fresh?-1:1;
       if(a.partial!==b.partial) return a.partial?-1:1;
       if(b.delta!==a.delta) return b.delta-a.delta;
       if(b.importedAtMs!==a.importedAtMs) return b.importedAtMs-a.importedAtMs;
@@ -4752,6 +4833,9 @@ const RemoteApp = (() => {
       {id:'GROUP_IDENTITY',pass:duplicateAfter.length===0,detail:duplicateAfter.length+' duplicate canonical key'},
       {id:'CONSISTENCY',pass:!!consistency.ok,detail:consistency.ok?'PASS':'Có chênh lệch dữ liệu'},
       {id:'AUTO_TRIGGER',pass:!auto.enabled||auto.triggerInstalled,detail:auto.enabled?(auto.triggerInstalled?'installed':'MISSING'):'AUTO OFF'},
+      {id:'AUTO_RUNTIME_CAPACITY',
+       pass:auto.runtimeEstimate.estimatedDailyMs<=auto.runtimeUsage.budgetMs,
+       detail:'estimate='+Math.round(auto.runtimeEstimate.estimatedDailyMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • '+auto.runtimeUsage.accountClass},
       {id:'NO_MANUAL_SELECTION_REQUIRED',pass:true,detail:'Auto queue dùng Quét tiếp theo/CẦN QUÉT; checkbox chỉ manual override. Selected hiện tại='+selected},
       {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=20,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
       {id:'COMMENT_PIPELINE',pass:rawPostsWithComments===0 || commentRows>0 || commentQueue.length>0,detail:'posts có comment='+rawPostsWithComments+', comment rows='+commentRows+', queue='+commentQueue.length},
@@ -4786,9 +4870,18 @@ const RemoteApp = (() => {
     const lock=LockService.getScriptLock();
     if(!lock.tryLock(1500)) return saveAutoMonitorLastState_({ok:false,skipped:true,reason:'TICK_BUSY'});
     const started=Date.now();
+    let recordRuntime=false;
     try{
       const state=getAutoMonitorV2State_();
       if(!state.enabled) return saveAutoMonitorLastState_({ok:true,enabled:false,reason:'AUTO_OFF'});
+      recordRuntime=true;
+      const runtimeUsage=getAutoRuntimeUsage_();
+      if(runtimeUsage.remainingMs<5*60*1000){
+        return saveAutoMonitorLastState_({
+          ok:false,enabled:true,skipped:true,reason:'TRIGGER_RUNTIME_BUDGET_GUARD',
+          runtimeUsage
+        });
+      }
 
       repairStaleRunningRows_();
       const duplicates=getDuplicateGroupRegistry_();
@@ -4871,6 +4964,9 @@ const RemoteApp = (() => {
     }catch(err){
       return saveAutoMonitorLastState_({ok:false,error:String(err&&err.message||err),durationMs:Date.now()-started});
     }finally{
+      if(recordRuntime){
+        try{recordAutoRuntimeUsage_(Date.now()-started);}catch(_){}
+      }
       try{lock.releaseLock();}catch(_){}
     }
   }
