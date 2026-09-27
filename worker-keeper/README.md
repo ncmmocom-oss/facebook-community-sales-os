@@ -1,54 +1,70 @@
-# Social AIO Worker Keeper — P1.5
+# Social AIO Worker Keeper — P1.5 V1.1.0
 
-Purpose: keep one Social AIO `https://fbaio.org/#/apis` browser tab healthy for the W1 pilot without changing the Community Sales OS business logic.
+## Mục tiêu
 
-## What it does
+Giữ một tab Social AIO APIs làm Worker W1, tự reconnect khi rớt WebSocket và cho phép gán URL/tab thủ công nếu extension chưa bắt được tab đã mở.
 
-- Elects one `/apis` tab as the primary Worker tab.
-- Detects `Connected` / `Disconnect` / `Connect` state.
-- After F5 or a transient WebSocket drop, retries the visible **Connect** button with backoff.
-- Can dismiss the **WebSocket error** modal automatically before retrying.
-- Publishes local heartbeat/status to the extension popup.
-- Does **not** reload the page automatically.
-- Does **not** close duplicate tabs. Only one tab is primary; duplicate tabs remain passive.
-- Does **not** store or transmit the full Client ID. The popup only receives a masked form.
+## Điểm mới V1.1.0
 
-## Install in W1 browser profile
+- Thêm ô **Worker URL**.
+- Nút **MỞ & BẮT**: mở URL, lưu URL cho W1 và gán tab đó làm primary.
+- Nút **BẮT TAB HIỆN TẠI**: dùng khi tab APIs đã mở nhưng popup vẫn báo NO_TAB.
+- Background query toàn bộ tab rồi tự kiểm tra hash route `#/apis`.
+- Thêm quyền `scripting` để inject `content.js` vào tab đã mở trước khi extension được cài.
+- Có ping guard để không inject script trùng.
+- Không tự reload trang, không tự đóng tab.
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. Click **Load unpacked**.
-4. Select the `worker-keeper` folder.
-5. Pin **Social AIO Worker Keeper** to the toolbar.
-6. Open `https://fbaio.org/#/apis` and connect once if the site requires an initial authorization.
-7. Open the extension popup and confirm:
-   - **Worker = ONLINE**
-   - **Tự reconnect khi rớt = ON**
-   - **Tự đóng popup WebSocket error = ON**
+## Cài / cập nhật
 
-## Acceptance test
+1. Giải nén ZIP vào một thư mục cố định.
+2. Mở `chrome://extensions`.
+3. Developer mode = ON.
+4. Nếu đang dùng V1.0.0:
+   - Remove extension cũ hoặc chọn đúng folder mới rồi **Reload** extension.
+5. **Load unpacked** → chọn folder chứa `manifest.json`.
+6. Mở popup Keeper.
 
-### A. Normal state
-- Social AIO page shows Connected.
-- Popup shows `ONLINE`.
-- Reconnect count stays unchanged.
+## Nếu popup báo NO_TAB
 
-### B. F5 recovery
-1. F5 only the `fbaio.org/#/apis` tab.
-2. Do not click Connect manually.
-3. Within roughly 2–15 seconds the extension should click Connect if required.
-4. Popup returns to `ONLINE`.
+### Cách 1 — khuyến nghị
 
-### C. WebSocket error recovery
-- If the WebSocket error modal appears, the extension dismisses it.
-- It retries Connect with backoff: about 2s → 4s → 8s → 16s → max 30s.
-- It never reloads the page in a loop.
+- Worker URL = `https://fbaio.org/#/apis`
+- Bấm **MỞ & BẮT**.
+- Chờ trang load.
+- Mở popup lại sau 2–5 giây.
 
-### D. Duplicate API tabs
-- Open a second `/apis` tab.
-- Only one tab should actively reconnect.
-- The second tab remains passive and is not auto-closed.
+### Cách 2 — tab APIs đang mở sẵn
 
-## Safety boundary
+- Đứng tại tab `fbaio.org/#/apis`.
+- Bấm icon extension.
+- Bấm **BẮT TAB HIỆN TẠI**.
+- Không cần F5.
 
-This extension is only a browser connection keeper. It does not scrape Facebook, does not call the Community Sales OS backend, and does not alter scan/pagination/AI/Lead Gate logic.
+## Acceptance
+
+### A. Bind
+- Trang Social AIO đang Connected.
+- Bấm **BẮT TAB HIỆN TẠI**.
+- Popup phải chuyển NO_TAB → ONLINE.
+
+### B. URL Open
+- Đóng tab APIs.
+- Nhập `https://fbaio.org/#/apis`.
+- Bấm **MỞ & BẮT**.
+- Extension mở tab mới và sau vài giây popup = ONLINE.
+
+### C. F5 Recovery
+- Khi ONLINE, F5 tab APIs.
+- Không bấm Connect.
+- Keeper tự reconnect và trở lại ONLINE.
+
+### D. WebSocket Error
+- Nếu popup WebSocket error xuất hiện, Keeper tự đóng OK và retry Connect.
+
+### E. Duplicate tab
+- Mở thêm một tab APIs.
+- Chỉ primary tab được phép reconnect chủ động.
+
+## Safety
+
+Keeper chỉ quản lý trạng thái browser connection. Không scrape Facebook, không thay scanner, pagination, AI hay Lead Gate.
