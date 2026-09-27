@@ -33,7 +33,11 @@ function buildLocalMenu_() {
     .addSubMenu(
       ui.createMenu('HỆ THỐNG')
         .addItem('🔄 Cập nhật runtime từ GitHub', 'githubForceUpdate')
+        .addSeparator()
+        .addItem('⚡ Cấp quyền & BẬT AUTO V2', 'enableAutoMonitorV2Menu')
+        .addItem('Ⅱ TẮT AUTO V2', 'disableAutoMonitorV2Menu')
         .addItem('🧪 Nghiệm thu Production', 'runProductionAcceptanceMenu')
+        .addSeparator()
         .addItem('ℹ Thông tin phiên bản', 'showRuntimeInfo')
     )
     .addToUi();
@@ -76,6 +80,23 @@ function autoMonitorTick() {
   const ss = SpreadsheetApp.openById(id);
   SpreadsheetApp.setActiveSpreadsheet(ss);
   return callRemote_('autoMonitorTick', []);
+}
+
+function enableAutoMonitorV2Menu() {
+  const result = callRemote_('setAutoMonitorV2Enabled_', [true, {commentEnabled:true}]);
+  SpreadsheetApp.getUi().alert(
+    'AUTO MONITOR V2: ' + (result && result.enabled ? 'ON' : 'OFF') +
+    '\nTrigger: ' + (result && result.triggerInstalled ? 'OK' : 'MISSING') +
+    '\nComment Intelligence: ' + (result && result.commentEnabled ? 'ON' : 'OFF') +
+    '\n\n' + String(result && result.message || '')
+  );
+  return result;
+}
+
+function disableAutoMonitorV2Menu() {
+  const result = callRemote_('setAutoMonitorV2Enabled_', [false, {commentEnabled:true}]);
+  SpreadsheetApp.getUi().alert('AUTO MONITOR V2 đã tắt. Manual scan vẫn dùng bình thường.');
+  return result;
 }
 
 function runProductionAcceptanceMenu() {
