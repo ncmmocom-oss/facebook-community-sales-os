@@ -34,13 +34,27 @@ assert(runtime.includes('source-row identity is authoritative'),'source-group id
 assert(runtime.includes('A comment refresh is not a Group post scan'),'comment scan scheduling guard missing');
 assert(runtime.includes("jobMode:String(job.jobMode||mode||'selected')"),'job mode preservation missing');
 assert(runtime.includes("['due','auto_due'].includes"),'auto due stale-plan recheck missing');
-assert(runtime.includes("'Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái','Comment cursor'"),'comment state schema missing');
+assert(runtime.includes("'Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái'"),'comment state schema missing');
+assert(runtime.includes("'Comment backfill cursor','Comment total đã quan sát','Comment delta cursor','Comment delta target','Comment delta base','Comment delta fetched'"),'dual-watermark comment schema missing');
+assert(runtime.includes('RAW_COMMENT_DELTA_FETCHED_COL: 25'),'comment delta state must extend through column 25');
+assert(runtime.includes("mode='delta_resume'"),'delta cursor resume mode missing');
+assert(runtime.includes('DELTA_PARTIAL'),'large fresh-delta continuation missing');
+assert(runtime.includes('Fresh/new delta always wins over historical backfill.'),'fresh comment priority invariant missing');
+assert(runtime.includes('importJsonFiles(pending.map(x=>x.file))'),'comment imports must be batched');
+assert(runtime.includes('A comment refresh is not a Group post scan'),'comment refresh must not move Group scan SLA');
+assert(runtime.includes("CONSUMER_OR_UNKNOWN"),'unknown Apps Script account class must use conservative runtime budget');
+assert(runtime.includes('TRIGGER_RUNTIME_BUDGET_GUARD'),'trigger runtime quota guard missing');
+assert(runtime.includes("id:'AUTO_RUNTIME_CAPACITY'"),'acceptance runtime-capacity gate missing');
 
 assert(!html.includes('AUTO MONITOR chỉ chạy khi cửa sổ Control Center này đang mở'),'legacy window-only auto monitor copy remains');
 for(const cmd of ['SET_AUTO_MONITOR_V2','RUN_AUTO_MONITOR_TICK','RUN_COMMENT_INTELLIGENCE','RUN_PRODUCTION_ACCEPTANCE']){
   assert(html.includes(cmd),'UI command missing '+cmd);
 }
 assert(html.includes('effectiveSourceIds'),'manual scan does not merge comment Source IDs into Auto AI');
+assert(html.includes('AUTO MONITOR V2 chạy bằng backend trigger'),'UI must explain backend scheduler');
+assert(html.includes('RUN AUTO NGAY'),'manual backend tick control missing');
+assert(html.includes('QUÉT COMMENT NGAY'),'comment intelligence control missing');
+assert(html.includes('NGHIỆM THU + AUTO REPAIR'),'production acceptance control missing');
 
 // Pure-policy regression tests through RemoteApp.__test.
 const context={};
