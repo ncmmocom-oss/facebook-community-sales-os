@@ -17,21 +17,128 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 .box{border:1px solid #d7dee8;background:#fff;border-radius:12px;padding:15px;margin-bottom:12px}.ai{border-color:#a7f3d0;background:#fcfffd}.bridge{border-color:#fde68a;background:#fffdf8}.scanctl{border-color:#ddd6fe;background:#fdfcff}.opbar{border-color:#bfdbfe;background:#fbfdff}.monitorbox{border-color:#99f6e4;background:#fbfffe}.monitorMetrics{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:9px 0 11px}.monitorMetric{background:#fff;border:1px solid #ccfbf1;border-radius:9px;padding:8px;text-align:center}.monitorMetric b{display:block;font-size:18px;margin-top:2px}.monitorMetric small,.metric small{color:var(--muted);font-size:11px}.monitorActions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.duepreview{max-height:105px;overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px;margin-top:9px;font-size:11px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:9px 0 11px}.metric{background:#fff;border:1px solid #dbeafe;border-radius:9px;padding:9px;text-align:center}.metric b{display:block;font-size:18px;margin-top:2px}.targetRow{display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:end}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.scanlist{max-height:145px;overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px;margin-top:8px;font-size:12px}.scanitem{padding:4px 0;border-bottom:1px dashed #e5e7eb}.scanitem:last-child{border-bottom:0}details.advanced{margin-top:10px}details.advanced>summary{cursor:pointer;font-weight:800;padding:8px 0;color:#475569}.workergrid{display:grid;gap:8px;margin-top:8px}.workercard{display:grid;grid-template-columns:36px 86px 1fr;gap:8px;align-items:center;background:#fff;border:1px solid #fed7aa;border-radius:9px;padding:9px}.workerstate{grid-column:2/4;font-size:11px;color:var(--muted)}.workerbadge{font-weight:800;text-align:center;color:#7c2d12}.poolstate{margin-top:8px;font-size:12px;font-weight:700}.progress{margin-top:10px;background:#dbeafe;border-radius:999px;height:12px;overflow:hidden}.progress>div{height:100%;width:0%;background:#2563eb;transition:width .25s ease}#progressText{margin-top:6px;font-size:11px;font-weight:700;color:#1e3a8a}
 #legacyRoot{display:none}#advancedPanel{display:none!important}.statusDock{position:fixed;left:216px;right:0;bottom:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);padding:9px 20px 11px;z-index:25}.statusDockHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:5px}.statusDockHead b{font-size:11px}#statusHeadline{font-size:11px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:68%}#status{white-space:pre-wrap;max-height:72px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:8px;padding:8px 10px;font:11px/1.42 Consolas,monospace;margin:0}.systemGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.logSource{padding:8px 10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:7px}.emptyNote{padding:12px;border:1px dashed #cbd5e1;border-radius:9px;color:#64748b;background:#f8fafc}
 @media(max-width:820px){.appShell{grid-template-columns:74px minmax(0,1fr)}.sideNav{padding:14px 8px}.brandTitle,.brandSub,.navBtn span:not(.navIcon),.sideFoot{display:none}.navBtn{justify-content:center;padding:10px 6px}.statusDock{left:74px}.kpiGrid{grid-template-columns:repeat(2,1fr)}.opsGrid,.quickCards,.systemGrid{grid-template-columns:1fr}}
+
+.opsHeroMeta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
+.opsScore{display:inline-flex;align-items:center;gap:8px;padding:8px 11px;border-radius:999px;font-weight:800;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25)}
+.opsScore b{font-size:18px}.opsScore.green{background:rgba(16,185,129,.2)}.opsScore.amber{background:rgba(245,158,11,.2)}.opsScore.red{background:rgba(239,68,68,.2)}
+.opsGrid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px}.opsGrid2{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
+.opsQueue{display:grid;gap:7px;max-height:260px;overflow:auto}.opsQueueItem{padding:9px 10px;border:1px solid #e5e7eb;border-radius:9px;background:#f8fafc}.opsQueueItem.error{border-color:#fecaca;background:#fef2f2}.opsQueueItem.warn{border-color:#fde68a;background:#fffbeb}.opsQueueTitle{font-weight:800;font-size:12px;display:flex;justify-content:space-between;gap:8px}.opsQueueMeta{font-size:10px;color:#64748b;margin-top:4px}.opsQueueNote{font-size:10px;color:#475569;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.opsMetricRows{display:grid;gap:8px}.opsMetricRow{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;padding-bottom:7px;border-bottom:1px dashed #e5e7eb}.opsMetricRow:last-child{border-bottom:0}.opsMetricRow b{font-size:14px}
+.healthReason{padding:8px 9px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;margin-top:6px;font-size:11px}.healthReason.error{background:#fef2f2;border-color:#fecaca}.healthReason.warn{background:#fffbeb;border-color:#fde68a}
+.metricCritical{color:#b91c1c}.metricWarn{color:#b45309}.metricGood{color:#047857}
+@media(max-width:900px){.opsGrid3,.opsGrid2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
-<div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">Phase 2 • Control Center IA</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
+<div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">Phase 3 • Operations Dashboard</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
 <main class="mainPane"><header class="topbar"><div><div id="topViewTitle" class="topTitle">Tổng quan vận hành</div><div id="topViewSub" class="topSub">Theo dõi Group → Signal → AI → Lead trên một luồng.</div></div><div class="topActions"><span id="systemHealthPill" class="healthPill">ĐANG ĐỌC HỆ THỐNG</span><span id="runtimeVersionPill" class="runtimePill">Runtime —</span></div></header>
 <div class="viewStack">
-<section id="view-overview" class="view"><div class="heroCard"><div class="sectionLabel" style="color:#bfdbfe">OPERATIONS HOME</div><h2>Facebook Community Signal Control Center</h2><p>Ưu tiên Group đến hạn, exception, AI backlog và Lead mới. Dữ liệu chi tiết vẫn nằm trong Google Sheets; Control Center là lớp vận hành.</p><div class="heroActions"><button onclick="runDueGroups(false)">▶ QUÉT GROUP ĐẾN HẠN</button><button class="ghost" onclick="openSignalFeed()">📡 MỞ TÍN HIỆU</button><button class="ghost" onclick="openLeadInbox()">🎯 MỞ LEAD INBOX</button><button class="ghost" data-goto="groups">QUẢN LÝ 200 GROUP</button></div></div>
-<div class="kpiGrid"><div class="kpi"><span>Group hoạt động</span><b id="p2Active">0</b><small>Pilot capacity 200</small></div><div class="kpi"><span>Đến hạn</span><b id="p2Due">0</b><small>Due Queue hiện tại</small></div><div class="kpi"><span>Post mới hôm nay</span><b id="p2New">0</b><small>Source mới</small></div><div class="kpi"><span>Lead PASS</span><b id="p2Pass">0</b><small>Hard Gate PASS</small></div><div class="kpi"><span>Exception</span><b id="p2Exceptions">0</b><small>Lỗi + Thiếu</small></div><div class="kpi"><span>AI backlog</span><b id="p2AiBacklog">0</b><small>Chưa qua Gate</small></div><div class="kpi"><span>Worker online</span><b id="p2Workers">0/0</b><small>Evidence health</small></div><div class="kpi"><span>Group có Context</span><b id="p2Context">0/0</b><small>Offer coverage</small></div></div>
-<div class="opsGrid"><div class="panel"><div class="panelTitle">Việc cần xử lý</div><div class="todoList"><div class="todoItem"><span>Group đến hạn</span><b id="p2TodoDue">0</b></div><div class="todoItem"><span>Lỗi / Thiếu quarantine</span><b id="p2TodoExceptions">0</b></div><div class="todoItem"><span>Nguồn chờ AI</span><b id="p2TodoAi">0</b></div></div><div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap"><button class="primary" data-goto="groups">MỞ VẬN HÀNH GROUP</button><button class="secondary" data-goto="ai">MỞ AI QUEUE</button></div></div><div class="panel"><div class="panelTitle">System Health</div><div class="healthRows"><div class="healthRow"><span>Worker Pool</span><b id="p2WorkerHealth">Đang đọc...</b></div><div class="healthRow"><span>AUTO Monitor</span><b id="p2AutoState">OFF</b></div><div class="healthRow"><span>Monitoring cycle</span><b id="p2Cycle">30 Group</b></div><div class="healthRow"><span>Data flow</span><b>Scan → AI → Lead</b></div></div></div></div></section>
+<section id="view-overview" class="view">
+  <div class="heroCard">
+    <div class="sectionLabel" style="color:#bfdbfe">OPERATIONS DASHBOARD • 200 GROUP PILOT</div>
+    <h2>Facebook Community Signal Control Center</h2>
+    <p>Mục tiêu vận hành: không bỏ sót Group đến hạn, không để exception treo, và rút ngắn thời gian từ bài mới → AI Gate → Lead.</p>
+    <div class="opsHeroMeta">
+      <span id="opsHealthScorePill" class="opsScore"><b id="opsHealthScore">—</b><span id="opsHealthLabel">ĐANG ĐỌC</span></span>
+      <span class="opsScore"><span>Coverage 24h</span><b id="opsCoverageHero">—</b></span>
+      <span class="opsScore"><span>Fresh &lt;2h</span><b id="opsFreshHero">—</b></span>
+    </div>
+    <div class="heroActions" style="margin-top:13px">
+      <button onclick="runDueGroups(false)">▶ QUÉT DUE QUEUE</button>
+      <button class="ghost" onclick="retryFailedGroups()">↻ RETRY EXCEPTION</button>
+      <button class="ghost" onclick="openSignalFeed()">📡 TÍN HIỆU</button>
+      <button class="ghost" data-goto="ai">✦ AI QUEUE</button>
+    </div>
+  </div>
+
+  <div class="kpiGrid">
+    <div class="kpi"><span>Group hoạt động</span><b id="p2Active">0</b><small>Pilot capacity 200</small></div>
+    <div class="kpi"><span>Due Queue chạy được</span><b id="p2Due">0</b><small>Không gồm quarantine</small></div>
+    <div class="kpi"><span>SLA quá hạn &gt;2h</span><b id="opsOverdue2h">0</b><small>Ưu tiên xử lý</small></div>
+    <div class="kpi"><span>Exception</span><b id="p2Exceptions">0</b><small>Lỗi + Thiếu + Dừng</small></div>
+    <div class="kpi"><span>Nguồn mới &lt;2h</span><b id="opsFresh2h">0</b><small>Fresh source</small></div>
+    <div class="kpi"><span>AI backlog &gt;2h</span><b id="opsAiStale2h">0</b><small>Source age</small></div>
+    <div class="kpi"><span>Coverage 24h</span><b id="opsCoverage24h">0%</b><small>Active Group đã quét</small></div>
+    <div class="kpi"><span>Lead PASS</span><b id="p2Pass">0</b><small>Hard Gate PASS</small></div>
+  </div>
+
+  <div class="opsGrid3">
+    <div class="panel">
+      <div class="panelTitle">SLA quét</div>
+      <div class="opsMetricRows">
+        <div class="opsMetricRow"><span>Sắp đến hạn &lt;1h</span><b id="opsDueSoon">0</b></div>
+        <div class="opsMetricRow"><span>Quá hạn &gt;2h</span><b id="opsOver2" class="metricWarn">0</b></div>
+        <div class="opsMetricRow"><span>Quá hạn &gt;6h</span><b id="opsOver6" class="metricCritical">0</b></div>
+        <div class="opsMetricRow"><span>Quá hạn &gt;24h</span><b id="opsOver24" class="metricCritical">0</b></div>
+        <div class="opsMetricRow"><span>Chưa từng quét</span><b id="opsNeverScanned">0</b></div>
+      </div>
+      <div style="margin-top:10px"><button class="primary" data-goto="groups">MỞ 200 GROUP</button></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">Detection Pipeline</div>
+      <div class="opsMetricRows">
+        <div class="opsMetricRow"><span>Post mới hôm nay</span><b id="p2New">0</b></div>
+        <div class="opsMetricRow"><span>Nguồn fresh &lt;2h</span><b id="opsFreshSources">0</b></div>
+        <div class="opsMetricRow"><span>Candidate fresh &lt;2h</span><b id="opsFreshCandidates">0</b></div>
+        <div class="opsMetricRow"><span>PASS fresh &lt;2h</span><b id="opsFreshPass">0</b></div>
+        <div class="opsMetricRow"><span>AI backlog tổng</span><b id="p2AiBacklog">0</b></div>
+      </div>
+      <div style="margin-top:10px"><button class="secondary" onclick="openSignalFeed()">MỞ TÍN HIỆU</button></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">System Health</div>
+      <div class="healthRows">
+        <div class="healthRow"><span>Worker Pool</span><b id="p2WorkerHealth">Đang đọc...</b></div>
+        <div class="healthRow"><span>AUTO Monitor</span><b id="p2AutoState">OFF</b></div>
+        <div class="healthRow"><span>Cycle</span><b id="p2Cycle">30 Group</b></div>
+        <div class="healthRow"><span>Context coverage</span><b id="p2Context">0/0</b></div>
+      </div>
+      <div id="opsHealthReasons" style="margin-top:9px"><div class="muted">Đang tính health...</div></div>
+    </div>
+  </div>
+
+  <div class="opsGrid2">
+    <div class="panel">
+      <div class="panelTitle">Exception Queue — cần xử lý trước</div>
+      <div id="opsExceptionQueue" class="opsQueue"><div class="muted">Đang đọc...</div></div>
+      <div style="margin-top:10px;display:flex;gap:6px"><button class="retry" onclick="retryFailedGroups()">RETRY LỖI / THIẾU</button><button class="secondary" data-goto="groups">XEM GROUP</button></div>
+    </div>
+    <div class="panel">
+      <div class="panelTitle">Overdue Queue — nguy cơ bỏ sót</div>
+      <div id="opsOverdueQueue" class="opsQueue"><div class="muted">Đang đọc...</div></div>
+      <div style="margin-top:10px"><button class="primary" onclick="runDueGroups(false)">QUÉT GROUP ĐẾN HẠN</button></div>
+    </div>
+  </div>
+
+  <div class="opsGrid2">
+    <div class="panel">
+      <div class="panelTitle">Coverage</div>
+      <div class="opsMetricRows">
+        <div class="opsMetricRow"><span>Đã quét trong 24h</span><b id="opsScanned24">0</b></div>
+        <div class="opsMetricRow"><span>Không quét &gt;24h</span><b id="opsStale24">0</b></div>
+        <div class="opsMetricRow"><span>Group có AI Context</span><b id="opsContextCoverage">0%</b></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panelTitle">AI backlog aging</div>
+      <div class="opsMetricRows">
+        <div class="opsMetricRow"><span>Backlog tổng</span><b id="opsBacklogTotal">0</b></div>
+        <div class="opsMetricRow"><span>Backlog &gt;2h</span><b id="opsBacklog2h" class="metricWarn">0</b></div>
+        <div class="opsMetricRow"><span>Backlog &gt;6h</span><b id="opsBacklog6h" class="metricCritical">0</b></div>
+        <div class="opsMetricRow"><span>Nguồn backlog cũ nhất</span><b id="opsBacklogOldest">—</b></div>
+      </div>
+      <div style="margin-top:10px"><button class="secondary" data-goto="ai">MỞ AI QUEUE</button></div>
+    </div>
+  </div>
+</section>
 <section id="view-groups" class="view"><div class="viewHead"><div><div class="sectionLabel">MONITORING</div><h2>200 Group / Due Queue / Exceptions</h2><p>Vận hành Group theo lịch; quét tay chỉ dùng khi cần can thiệp.</p></div></div><div id="mount-groups"></div></section>
 <section id="view-signals" class="view"><div class="viewHead"><div><div class="sectionLabel">INTELLIGENCE</div><h2>Tín hiệu & Lead Inbox</h2><p>Mở đúng bảng drill-down khi cần phân tích hoặc xử lý lead.</p></div></div><div class="quickCards"><div class="quickCard"><div class="bigIcon">📡</div><h3>TÍN HIỆU 7 NGÀY</h3><p>Gộp theo Group/ngày, ưu tiên PASS / WATCH / REVIEW.</p><button class="primary" onclick="openSignalFeed()">MỞ TÍN HIỆU</button></div><div class="quickCard"><div class="bigIcon">🎯</div><h3>LEAD INBOX</h3><p>Chỉ chứa khách hàng vượt Hard Gate.</p><button class="dark" onclick="openLeadInbox()">MỞ LEAD INBOX</button></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Snapshot hiện tại</div><div class="kpiGrid" style="margin-bottom:0"><div class="kpi"><span>Post mới hôm nay</span><b id="sigNew">0</b></div><div class="kpi"><span>AI backlog</span><b id="sigBacklog">0</b></div><div class="kpi"><span>Lead PASS</span><b id="sigPass">0</b></div><div class="kpi"><span>Exception</span><b id="sigExceptions">0</b></div></div></div></section>
 <section id="view-ai" class="view"><div class="viewHead"><div><div class="sectionLabel">QUALIFICATION</div><h2>AI / Offer Context / Lead Gate</h2><p>Manual và Auto dùng cùng business logic; chỉ khác cách đưa source vào queue.</p></div></div><div id="mount-ai"></div></section>
 <section id="view-workers" class="view"><div class="viewHead"><div><div class="sectionLabel">INFRASTRUCTURE</div><h2>Worker Pool & API Diagnostic</h2><p>Worker Keeper giữ browser online; Control Center giữ registry, health và phân job.</p></div></div><div id="mount-workers"></div></section>
 <section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>Import / Sync / Consistency</h2><p>JSON là fallback; production ưu tiên API scan → import nội bộ → sync.</p></div></div><div id="mount-data"></div></section>
-<section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource"><b>NHẬT KÝ API</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource"><b>NHẬT KÝ IMPORT</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource"><b>NHẬT KÝ AI</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="emptyNote">Phase 2 chỉ tổ chức lại Control Center. Không đổi scanner, pagination, identity, AI Gate hay worker scheduler.</div></div></section>
+<section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource"><b>NHẬT KÝ API</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource"><b>NHẬT KÝ IMPORT</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource"><b>NHẬT KÝ AI</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="emptyNote">Phase 3 bổ sung SLA/aging/health aggregate trên dữ liệu hiện có. Không đổi scanner, pagination, identity, AI Gate hay worker scheduler.</div></div></section>
 </div><div class="statusDock"><div class="statusDockHead"><b>LIVE ACTIVITY</b><span id="statusHeadline">Sẵn sàng.</span></div><div id="status">Sẵn sàng.</div></div></main></div><div id="legacyRoot">
 
   <div class="box monitorbox" id="monitorBox">
@@ -1175,7 +1282,151 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     function phase2MoveLegacyBlocks(){const groups=document.getElementById('mount-groups'),ai=document.getElementById('mount-ai'),workers=document.getElementById('mount-workers'),data=document.getElementById('mount-data');const monitor=document.getElementById('monitorBox'),scan=document.getElementById('scanBox'),aiRun=document.getElementById('aiRunBox'),advanced=document.getElementById('advancedPanel');if(groups&&monitor)groups.appendChild(monitor);if(groups&&scan)groups.appendChild(scan);if(ai&&aiRun)ai.appendChild(aiRun);if(advanced){const inner=[...advanced.children].find(x=>x.tagName==='DIV');if(inner){const direct=[...inner.children].filter(x=>x.classList&&x.classList.contains('box'));const aiSettings=document.getElementById('aiSettingsBox'),bridge=direct.find(x=>x.classList.contains('bridge')),importBox=direct.find(x=>x!==aiSettings&&x!==bridge);if(ai&&aiSettings)ai.appendChild(aiSettings);if(workers&&bridge)workers.appendChild(bridge);if(data&&importBox)data.appendChild(importBox);}advanced.style.display='none';}const legacy=document.getElementById('legacyRoot');if(legacy)legacy.style.display='none';}
     function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}window.scrollTo({top:0,behavior:'auto'});}
     function setPhase2RuntimeVersion(version){const v=String(version||'').trim();if(!v)return;phase2SetText('runtimeVersionPill','Runtime V'+v);phase2SetText('sysRuntime','V'+v);}
-    function renderPhase2Monitoring(o){if(!o)return;const w=o.workers||{},active=Number(o.activeGroups||0),due=Number(o.dueNow||0),exceptions=Number(o.exceptions||0),fresh=Number(o.newPostsToday||0),backlog=Number(o.aiBacklog||0),pass=Number(o.passLeads||0),online=Number(w.onlineCount||0),configured=Number(w.configuredCount||0),context=Number(o.groupsWithContext||0);phase2SetText('p2Active',active);phase2SetText('p2Due',due);phase2SetText('p2New',fresh);phase2SetText('p2Pass',pass);phase2SetText('p2Exceptions',exceptions);phase2SetText('p2AiBacklog',backlog);phase2SetText('p2Workers',online+'/'+configured);phase2SetText('p2Context',context+'/'+active);phase2SetText('p2TodoDue',due);phase2SetText('p2TodoExceptions',exceptions);phase2SetText('p2TodoAi',backlog);phase2SetText('p2Cycle',Number(o.dueCycleLimit||30)+' Group');phase2SetText('p2AutoState',autoMonitorEnabled?'ON':'OFF');phase2SetText('sigNew',fresh);phase2SetText('sigBacklog',backlog);phase2SetText('sigPass',pass);phase2SetText('sigExceptions',exceptions);setPhase2RuntimeVersion(o.version);const pill=document.getElementById('systemHealthPill');if(pill){let text='ỔN ĐỊNH',cls='good';if(configured>0&&online===0){text='WORKER OFFLINE';cls='bad';}else if(exceptions>0){text=exceptions+' EXCEPTION';cls='warn';}else if(configured===0){text='CHƯA CÓ WORKER';cls='warn';}pill.textContent=text;pill.className='healthPill '+cls;}}
+    function opsAgeText(ms){
+      const n=Number(ms||0);
+      if(!n) return '—';
+      const min=Math.floor(n/60000);
+      if(min<60) return min+'p';
+      const h=Math.floor(min/60);
+      if(h<48) return h+'h '+(min%60)+'p';
+      return Math.floor(h/24)+'d '+(h%24)+'h';
+    }
+
+    function renderOpsQueue(id,items,type){
+      const el=document.getElementById(id);
+      if(!el) return;
+      const list=Array.isArray(items)?items:[];
+      el.innerHTML='';
+      if(!list.length){
+        const empty=document.createElement('div');
+        empty.className='emptyNote';
+        empty.textContent=type==='exception'?'Không có exception.':'Không có Group quá hạn.';
+        el.appendChild(empty);
+        return;
+      }
+      list.forEach(x=>{
+        const row=document.createElement('div');
+        const severe=type==='exception' || Number(x.overdueMs||0)>6*60*60*1000;
+        row.className='opsQueueItem '+(severe?'error':'warn');
+        const title=document.createElement('div');
+        title.className='opsQueueTitle';
+        const left=document.createElement('span');
+        left.textContent='Dòng '+Number(x.row||0)+' — '+String(x.name||'');
+        const right=document.createElement('span');
+        right.textContent=type==='exception'
+          ? String(x.status||'')
+          : ('trễ '+opsAgeText(x.overdueMs));
+        title.appendChild(left);title.appendChild(right);
+        row.appendChild(title);
+
+        const meta=document.createElement('div');
+        meta.className='opsQueueMeta';
+        meta.textContent=type==='exception'
+          ? ('Age '+opsAgeText(x.ageMs)+(x.lifecycle?' • '+x.lifecycle:''))
+          : ((x.lifecycle||'')+' • '+Number(x.targetCount||25)+' bài'+(x.exception?' • QUARANTINE':''));
+        row.appendChild(meta);
+
+        const note=String(x.error||x.progress||'').trim();
+        if(note){
+          const n=document.createElement('div');
+          n.className='opsQueueNote';
+          n.textContent=note;
+          n.title=note;
+          row.appendChild(n);
+        }
+        el.appendChild(row);
+      });
+    }
+
+    function renderOpsHealthReasons(health){
+      const el=document.getElementById('opsHealthReasons');
+      if(!el) return;
+      el.innerHTML='';
+      const reasons=(health&&health.reasons)||[];
+      if(!reasons.length){
+        const ok=document.createElement('div');
+        ok.className='healthReason';
+        ok.textContent='✅ Không có P0/P1 operational breach.';
+        el.appendChild(ok);
+        return;
+      }
+      reasons.slice(0,5).forEach(r=>{
+        const div=document.createElement('div');
+        div.className='healthReason '+(String(r.severity||'').toUpperCase()==='ERROR'?'error':'warn');
+        div.textContent=(r.severity==='ERROR'?'❌ ':'⚠ ')+String(r.message||r.code||'')+' (-'+Number(r.penalty||0)+')';
+        el.appendChild(div);
+      });
+    }
+
+    function renderPhase2Monitoring(o){
+      if(!o) return;
+      const w=o.workers||{},sla=o.sla||{},ai=o.aiOps||{},health=o.operationalHealth||{};
+      const active=Number(o.activeGroups||0),due=Number(o.dueNow||0),exceptions=Number(o.exceptions||0),fresh=Number(o.newPostsToday||0),backlog=Number(o.aiBacklog||0),pass=Number(o.passLeads||0),online=Number(w.onlineCount||0),configured=Number(w.configuredCount||0),context=Number(o.groupsWithContext||0);
+
+      phase2SetText('p2Active',active);
+      phase2SetText('p2Due',due);
+      phase2SetText('p2New',fresh);
+      phase2SetText('p2Pass',pass);
+      phase2SetText('p2Exceptions',exceptions);
+      phase2SetText('p2AiBacklog',backlog);
+      phase2SetText('p2Workers',online+'/'+configured);
+      phase2SetText('p2Context',context+'/'+active);
+      phase2SetText('p2TodoDue',due);
+      phase2SetText('p2TodoExceptions',exceptions);
+      phase2SetText('p2TodoAi',backlog);
+      phase2SetText('p2Cycle',Number(o.dueCycleLimit||30)+' Group');
+      phase2SetText('p2AutoState',autoMonitorEnabled?'ON':'OFF');
+      phase2SetText('sigNew',fresh);
+      phase2SetText('sigBacklog',backlog);
+      phase2SetText('sigPass',pass);
+      phase2SetText('sigExceptions',exceptions);
+
+      phase2SetText('opsOverdue2h',Number(sla.overdue2h||0));
+      phase2SetText('opsFresh2h',Number(ai.freshSources2h||0));
+      phase2SetText('opsAiStale2h',Number(ai.backlogOver2h||0));
+      phase2SetText('opsCoverage24h',Number(sla.coverage24hPct||0)+'%');
+      phase2SetText('opsDueSoon',Number(sla.dueSoon1h||0));
+      phase2SetText('opsOver2',Number(sla.overdue2h||0));
+      phase2SetText('opsOver6',Number(sla.overdue6h||0));
+      phase2SetText('opsOver24',Number(sla.overdue24h||0));
+      phase2SetText('opsNeverScanned',Number(sla.neverScanned||0));
+      phase2SetText('opsFreshSources',Number(ai.freshSources2h||0));
+      phase2SetText('opsFreshCandidates',Number(ai.freshCandidates2h||0));
+      phase2SetText('opsFreshPass',Number(ai.freshPass2h||0));
+      phase2SetText('opsScanned24',Number(sla.scanned24h||0));
+      phase2SetText('opsStale24',Number(sla.stale24h||0));
+      phase2SetText('opsContextCoverage',Number(health.contextCoveragePct||0)+'%');
+      phase2SetText('opsBacklogTotal',Number(ai.backlog||0));
+      phase2SetText('opsBacklog2h',Number(ai.backlogOver2h||0));
+      phase2SetText('opsBacklog6h',Number(ai.backlogOver6h||0));
+      phase2SetText('opsBacklogOldest',opsAgeText(ai.oldestBacklogAgeMs));
+      phase2SetText('opsHealthScore',Number(health.score||0)+'/100');
+      phase2SetText('opsHealthLabel',String(health.label||'ĐANG ĐỌC'));
+      phase2SetText('opsCoverageHero',Number(sla.coverage24hPct||0)+'%');
+      phase2SetText('opsFreshHero',Number(ai.freshSources2h||0));
+
+      const scorePill=document.getElementById('opsHealthScorePill');
+      if(scorePill){
+        scorePill.className='opsScore '+String(health.status||'').toLowerCase();
+      }
+
+      renderOpsHealthReasons(health);
+      renderOpsQueue('opsExceptionQueue',o.exceptionPreview,'exception');
+      renderOpsQueue('opsOverdueQueue',o.overduePreview,'overdue');
+      setPhase2RuntimeVersion(o.version);
+
+      const pill=document.getElementById('systemHealthPill');
+      if(pill){
+        const status=String(health.status||'').toUpperCase();
+        let text=String(health.label||'ĐANG ĐỌC'),cls='warn';
+        if(status==='GREEN') cls='good';
+        else if(status==='RED') cls='bad';
+        else cls='warn';
+        pill.textContent=text+' • '+Number(health.score||0)+'/100';
+        pill.className='healthPill '+cls;
+      }
+    }
+
     function renderPhase2WorkerHealth(x){if(!x)return;phase2SetText('p2WorkerHealth',x.enabledCount?(x.online+'/'+x.enabledCount+' ONLINE'+(x.offline?' • '+x.offline+' OFFLINE':'')+(x.stale?' • '+x.stale+' STALE':'')):'CHƯA CẤU HÌNH');}
     function initPhase2Shell(){phase2MoveLegacyBlocks();document.querySelectorAll('[data-view]').forEach(btn=>btn.addEventListener('click',()=>showPhase2View(btn.dataset.view)));document.querySelectorAll('[data-goto]').forEach(btn=>btn.addEventListener('click',()=>showPhase2View(btn.dataset.goto)));const initial=(document.body.dataset.initialView||'scan').toLowerCase(),map={scan:'overview',overview:'overview',groups:'groups',signals:'signals',ai:'ai',settings:'ai',workers:'workers',data:'data',system:'system'};const target=map[initial]||'overview';showPhase2View(target);document.body.classList.add('p2-ready');}
     function activateInitialView(){return phase2CurrentView;}
