@@ -4064,6 +4064,8 @@ const RemoteApp = (() => {
     try { last=JSON.parse(props.getProperty(CFG.AUTO_MONITOR_LAST_STATE_KEY)||'{}')||{}; } catch(_){ last={}; }
     const triggerCount=ScriptApp.getProjectTriggers()
       .filter(t=>t.getHandlerFunction()===CFG.AUTO_MONITOR_TRIGGER_HANDLER).length;
+    const retryState=loadAutoRetryState_();
+    const retryEntries=Object.keys(retryState).map(k=>retryState[k]||{});
     return {
       version:CFG.VERSION,
       enabled,
@@ -4072,6 +4074,8 @@ const RemoteApp = (() => {
       triggerCount,
       everyMinutes:CFG.AUTO_MONITOR_TRIGGER_MINUTES,
       maxGroupsPerTick:CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,
+      retryWaiting:retryEntries.filter(x=>!x.hard&&Number(x.nextAt||0)>Date.now()).length,
+      hardQuarantine:retryEntries.filter(x=>!!x.hard).length,
       last
     };
   }
@@ -4825,7 +4829,7 @@ const RemoteApp = (() => {
 
     // A Due Queue plan can become stale while another Control Center finishes
     // the same Group. Re-check immediately before execution.
-    if(String(command.jobMode||'').toLowerCase()==='due' && !isDueJobStillValid_(sheet,row)){
+    if(['due','auto_due'].includes(String(command.jobMode||'').toLowerCase()) && !isDueJobStillValid_(sheet,row)){
       return {
         ok:false,skippedNotDue:true,row,name,groupKey,groupUrl,targetCount:target,
         status:'SKIP_NOT_DUE',workerSlot:worker.slot,workerHealth:workerHealthState_(worker)
@@ -6197,7 +6201,12 @@ const RemoteApp = (() => {
       const chosen=candidates[0];
       const weight=Math.max(1,Number(chosen.latencyMs||1500)/1000);
       loads[chosen.slot]+=target*weight;
-      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot,jobMode:mode||'selected',runId}));
+      assignments[chosen.slot].push(Object.assign({},job,{
+        targetCount:target,
+        workerSlot:chosen.slot,
+        jobMode:String(job.jobMode||mode||'selected'),
+        runId
+      }));
     });
 
     const workers=pool.map(w=>({
@@ -6481,5 +6490,11 @@ const RemoteApp = (() => {
     setAutoMonitorV2Enabled_,
     runCommentIntelligenceCycle_,
     runProductionAcceptance_,
+    __test: {
+      retryPolicyForClass_,
+      classifyStoredScanError_,
+      classifyScanError_,
+      getVersion
+    },
   };
 })();
