@@ -4,7 +4,7 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
-const BOOTSTRAP_VERSION = '2.1-menu-shell';
+const BOOTSTRAP_VERSION = '2.2-auto-monitor-v2';
 
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
@@ -33,6 +33,11 @@ function buildLocalMenu_() {
     .addSubMenu(
       ui.createMenu('HỆ THỐNG')
         .addItem('🔄 Cập nhật runtime từ GitHub', 'githubForceUpdate')
+        .addSeparator()
+        .addItem('⚡ Cấp quyền & BẬT AUTO V2', 'enableAutoMonitorV2Menu')
+        .addItem('Ⅱ TẮT AUTO V2', 'disableAutoMonitorV2Menu')
+        .addItem('🧪 Nghiệm thu Production', 'runProductionAcceptanceMenu')
+        .addSeparator()
         .addItem('ℹ Thông tin phiên bản', 'showRuntimeInfo')
     )
     .addToUi();
@@ -58,6 +63,59 @@ function apiBridgeTest() { return callRemote_('apiBridgeTest', []); }
 function apiBridgeScanSelectedGroup() { return callRemote_('apiBridgeScanSelectedGroup', []); }
 function apiBridgeFetchCommentsSelectedPost() { return callRemote_('apiBridgeFetchCommentsSelectedPost', []); }
 function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
+
+/**
+ * Installable time-trigger entrypoint for Auto Monitor V2.
+ * MUST stay global/local because Apps Script triggers cannot directly target
+ * a function that only exists inside the remotely-evaluated Runtime object.
+ */
+function autoMonitorTick() {
+  // Time-driven triggers have no guaranteed active spreadsheet context.
+  // Bind the exact Sheet captured when AUTO MONITOR V2 was enabled.
+  const id = String(
+    PropertiesService.getDocumentProperties()
+      .getProperty('SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1') || ''
+  ).trim();
+  if (!id) throw new Error('AUTO MONITOR V2 thiếu Spreadsheet ID binding. Hãy mở Sheet và bật AUTO lại.');
+  const ss = SpreadsheetApp.openById(id);
+  SpreadsheetApp.setActiveSpreadsheet(ss);
+  return callRemote_('autoMonitorTick', []);
+}
+
+function enableAutoMonitorV2Menu() {
+  const result = callRemote_('setAutoMonitorV2Enabled_', [true, {commentEnabled:true}]);
+  SpreadsheetApp.getUi().alert(
+    'AUTO MONITOR V2: ' + (result && result.enabled ? 'ON' : 'OFF') +
+    '\nTrigger: ' + (result && result.triggerInstalled ? 'OK' : 'MISSING') +
+    '\nComment Intelligence: ' + (result && result.commentEnabled ? 'ON' : 'OFF') +
+    '\n\n' + String(result && result.message || '')
+  );
+  return result;
+}
+
+function disableAutoMonitorV2Menu() {
+  const result = callRemote_('setAutoMonitorV2Enabled_', [false, {commentEnabled:true}]);
+  SpreadsheetApp.getUi().alert('AUTO MONITOR V2 đã tắt. Manual scan vẫn dùng bình thường.');
+  return result;
+}
+
+function runProductionAcceptanceMenu() {
+  const result = callRemote_('runProductionAcceptance_', [{repair:true}]);
+  const checks = (result && result.checks) || [];
+  const lines = checks.map(function(x) {
+    return (x.pass ? 'PASS ' : 'FAIL ') + x.id + ' - ' + x.detail;
+  });
+  SpreadsheetApp.getUi().alert(
+    (result && result.pass ? 'PRODUCTION ACCEPTANCE PASS' : 'PRODUCTION ACCEPTANCE CÒN GATE FAIL') +
+    '\nRuntime: ' + (result && result.version || 'unknown') +
+    '\n\n' + lines.join('\n') +
+    '\n\nRepairs: duplicate=' +
+      Number(result && result.repairs && result.repairs.duplicates && result.repairs.duplicates.repaired || 0) +
+    ', stale-running=' +
+      Number(result && result.repairs && result.repairs.staleRunning && result.repairs.staleRunning.repaired || 0)
+  );
+  return result;
+}
 
 function githubForceUpdate() {
   const cache = CacheService.getScriptCache();

@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.3-operations-dashboard',
+    VERSION: '1.10.0-pilot-200',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -40,6 +40,33 @@ const RemoteApp = (() => {
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
     EMPTY_PAGE_RETRY_ATTEMPTS: 3,
+    AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
+    AUTO_MONITOR_LAST_STATE_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST',
+    AUTO_MONITOR_RETRY_PREFIX: 'SOCIAL_AIO_AUTO_RETRY_V2_',
+    AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
+    AUTO_MONITOR_SPREADSHEET_ID_KEY: 'SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1',
+    AUTO_MONITOR_TRIGGER_MINUTES: 5,
+    AUTO_MONITOR_MAX_GROUPS_PER_TICK: 6,
+    AUTO_MONITOR_TICK_BUDGET_MS: 240 * 1000,
+    AUTO_MONITOR_RUNTIME_DAY_KEY: 'SOCIAL_AIO_AUTO_RUNTIME_DAY_V1',
+    AUTO_MONITOR_RUNTIME_MS_KEY: 'SOCIAL_AIO_AUTO_RUNTIME_MS_V1',
+    AUTO_MONITOR_CONSUMER_BUDGET_MS: 70 * 60 * 1000,
+    AUTO_MONITOR_WORKSPACE_BUDGET_MS: 330 * 60 * 1000,
+    AUTO_MONITOR_RETRY_DELAYS_MS: [2*60*1000,10*60*1000,30*60*1000,2*60*60*1000],
+    COMMENT_INTELLIGENCE_ENABLED_KEY: 'SOCIAL_AIO_COMMENT_INTEL_ENABLED_V1',
+    COMMENT_POSTS_PER_CYCLE: 6,
+    COMMENT_MAX_PER_POST_CYCLE: 120,
+    COMMENT_PAGE_BUDGET_MS: 30 * 1000,
+    COMMENT_RETRY_COOLDOWN_MS: 10 * 60 * 1000,
+    RAW_COMMENT_HANDLED_COL: 17,
+    RAW_COMMENT_CHECKED_COL: 18,
+    RAW_COMMENT_STATUS_COL: 19,
+    RAW_COMMENT_CURSOR_COL: 20,
+    RAW_COMMENT_OBSERVED_COL: 21,
+    RAW_COMMENT_DELTA_CURSOR_COL: 22,
+    RAW_COMMENT_DELTA_TARGET_COL: 23,
+    RAW_COMMENT_DELTA_BASE_COL: 24,
+    RAW_COMMENT_DELTA_FETCHED_COL: 25,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -63,6 +90,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.10.0 Pilot 200: Auto Monitor V2 backend trigger + retry/quarantine + Comment Intelligence incremental + identity hardening + Production Acceptance auto-repair.\n' +
       'V1.9.3 Operations Dashboard: SLA quét + overdue/coverage + exception queue + fresh signal/AI aging + operational health score cho pilot 200 Group.\n' +
       'V1.9.2 Control Center IA: sidebar 7 khu vực + Overview/System Health; tách Group, Signal/Lead, AI/Offer, Worker/API, Data, Runtime/Logs mà không đổi business logic.\n' +
       'V1.9.1-HF4 Run Scope: bỏ STOP_ALL khỏi worker engine; mỗi batch/cycle có runId + cancellation riêng, không thể nhiễm state giữa các run.\nV1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
@@ -145,8 +173,14 @@ const RemoteApp = (() => {
             errors.push(`${file.name}: nhận diện comment JSON nhưng không bóc được comment record.`);
             return;
           }
+          const commentFallback = file && file.__commentPostId ? {
+            postId:String(file.__commentPostId||'').trim(),
+            postUrl:String(file.__commentPostUrl||'').trim(),
+            groupKey:String(file.__commentGroupKey||'').trim().toLowerCase(),
+            groupName:String(file.__commentGroupName||'').trim()
+          } : null;
           comments.forEach(item => {
-            const x = ingestCommentRecord_(item, file.name || '', ctx);
+            const x = ingestCommentRecord_(item, file.name || '', ctx, commentFallback);
             commentScanned += x.scanned;
             commentImported += x.imported;
             duplicateCount += x.duplicate;
@@ -170,6 +204,8 @@ const RemoteApp = (() => {
         // Manual JSON import has no source-row metadata and keeps the legacy
         // ensureGroupRegistered_ fallback below.
         const resolvedScanGroupKey = fileGroupKey || sourceGroupKey;
+        let scanBoundGroupKey = '';
+        let scanBoundGroupInfo = null;
         if (sourceGroupRow && resolvedScanGroupKey) {
           const bound = bindCanonicalGroupToSourceRow_(groupSheet, {
             row: sourceGroupRow,
@@ -178,6 +214,8 @@ const RemoteApp = (() => {
             canonicalKey: resolvedScanGroupKey
           });
           if (bound) {
+            scanBoundGroupKey = resolvedScanGroupKey;
+            scanBoundGroupInfo = bound;
             groupMap[resolvedScanGroupKey] = bound;
             if (fileGroupKey) groupMap[fileGroupKey] = bound;
             if (sourceGroupKey) groupMap[sourceGroupKey] = bound;
@@ -192,9 +230,17 @@ const RemoteApp = (() => {
           const postId = normalizePostId_(post.post_id || post.postId || post.id || '', url);
           if (!postId && !url) return;
 
-          const groupKey = extractGroupKey_(url) || String(post.group_id || post.groupId || '').trim().toLowerCase() || fileGroupKey;
-          if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
-          const groupInfo = groupMap[groupKey] || { name:`Group ${groupKey || 'không rõ'}`, row:null };
+          // For an API Group scan, source-row identity is authoritative. A post
+          // permalink/cross-post may contain another Group key and must never
+          // create a new monitored Group row.
+          const groupKey = scanBoundGroupKey ||
+            extractGroupKey_(url) ||
+            String(post.group_id || post.groupId || '').trim().toLowerCase() ||
+            fileGroupKey;
+          if (!scanBoundGroupKey && groupKey && !groupMap[groupKey]) {
+            groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
+          }
+          const groupInfo = scanBoundGroupInfo || groupMap[groupKey] || { name:`Group ${groupKey || 'không rõ'}`, row:null };
           const stat = touchGroupStat_(groupStats, groupKey, groupInfo, file.name || '');
           stat.postScanned += 1;
 
@@ -632,18 +678,33 @@ const RemoteApp = (() => {
     const rawRows=ids.map(id=>rowMap[id]&&rowMap[id].rawRow).filter(Boolean);
     if(rawRows.length){
       const min=Math.min(...rawRows), max=Math.max(...rawRows);
-      const vals=rawSheet.getRange(min,10,max-min+1,7).getValues(); // J:P
+      const vals=rawSheet.getRange(min,10,max-min+1,16).getValues(); // J:Y
       ids.forEach(id=>{
         const meta=rowMap[id]; if(!meta||!meta.rawRow)return;
         const u=uniq[id], r=vals[meta.rawRow-min];
-        r[0]=u.commentsCount||0; r[1]=u.reactions||0; r[2]=u.shares||0;
+        const nextCommentCount=Number(u.commentsCount||0);
+        r[0]=nextCommentCount; r[1]=u.reactions||0; r[2]=u.shares||0;
         if ((u.mediaUrls||[]).length) {
           r[3]=u.mediaUrls.length;
           r[5]=u.mediaUrls.join('\n');
           r[6]=u.mediaUrls.length;
         }
+        const handled=Number(r[7]||0); // Q
+        const observed=Number(r[11]||0); // U
+        const deltaTarget=Number(r[13]||0); // W
+        if(handled>nextCommentCount || observed>nextCommentCount || deltaTarget>nextCommentCount){
+          r[7]=Math.min(handled,nextCommentCount);
+          r[8]=new Date(); // R
+          r[9]='COUNT_RESET • Facebook total comment giảm từ '+Math.max(handled,observed,deltaTarget)+' xuống '+nextCommentCount; // S
+          r[10]=''; // T backfill cursor
+          r[11]=nextCommentCount; // U observed baseline
+          r[12]=''; // V delta cursor
+          r[13]=0;  // W delta target
+          r[14]=0;  // X delta base
+          r[15]=0;  // Y delta fetched
+        }
       });
-      rawSheet.getRange(min,10,vals.length,7).setValues(vals);
+      rawSheet.getRange(min,10,vals.length,16).setValues(vals);
     }
 
     const oppRows=ids.map(id=>rowMap[id]&&rowMap[id].oppRow).filter(Boolean);
@@ -912,7 +973,13 @@ const RemoteApp = (() => {
     }
 
     const raw = ss.getSheetByName(CFG.RAW_SHEET);
-    if (raw && raw.getMaxColumns() >= 16) raw.getRange(4,15,1,2).setValues([['Media URL','Media count']]);
+    if (raw) {
+      if (raw.getMaxColumns() < 25) raw.insertColumnsAfter(raw.getMaxColumns(),25-raw.getMaxColumns());
+      raw.getRange(4,15,1,11).setValues([[
+        'Media URL','Media count','Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái',
+        'Comment backfill cursor','Comment total đã quan sát','Comment delta cursor','Comment delta target','Comment delta base','Comment delta fetched'
+      ]]);
+    }
 
     const opp = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
     if (opp) {
@@ -957,6 +1024,11 @@ const RemoteApp = (() => {
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
     if (name === 'TEST_BRIDGE') return testApiBridge_();
     if (name === 'GET_MONITORING_OVERVIEW') return getMonitoringOverview_();
+    if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_();
+    if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2Enabled_(!!command.enabled,{commentEnabled:command.commentEnabled});
+    if (name === 'RUN_AUTO_MONITOR_TICK') return autoMonitorTick_();
+    if (name === 'RUN_COMMENT_INTELLIGENCE') return runCommentIntelligenceCycle_({limit:command.limit||CFG.COMMENT_POSTS_PER_CYCLE,budgetMs:command.budgetMs||90000});
+    if (name === 'RUN_PRODUCTION_ACCEPTANCE') return runProductionAcceptance_({repair:command.repair!==false});
     if (name === 'REFRESH_SIGNAL_FEED') return refreshSignalFeed_();
     if (name === 'OPEN_SIGNAL_FEED') return openOperationalSheet_(CFG.SIGNAL_FEED_SHEET);
     if (name === 'OPEN_LEAD_INBOX') return openOperationalSheet_(CFG.LEAD_SHEET);
@@ -2263,7 +2335,7 @@ const RemoteApp = (() => {
 
     const registryStats = fast ? {rows:0} : repairScanRegistry_();
     const remapStats = fast ? {changed:0} : remapGroupNames_();
-    const rawFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:16, preferComplete:false });
+    const rawFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:25, preferComplete:false });
     const commentFix = fast ? {removed:0} : normalizeAndDedupeCommentSheet_(commentSheet);
     const oppFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeOpportunitySheet_(oppSheet);
 
@@ -2805,19 +2877,46 @@ const RemoteApp = (() => {
     return m ? m[1] : '';
   }
 
+  function groupRegistryRowScore_(r) {
+    const active=String(r[0]||'').trim()==='Có' ? 20 : 0;
+    const lifecycle=String(r[6]||'').trim();
+    const runtime=String(r[23]||'').trim();
+    const lastAt=opsDateMs_(r[9]);
+    let score=active;
+    if(lifecycle && lifecycle!=='Loại') score+=8;
+    if(runtime==='XONG' || runtime==='CHỜ' || !runtime) score+=6;
+    if(runtime==='LỖI' || runtime==='THIẾU' || /^DỪNG/.test(runtime)) score-=8;
+    if(lastAt) score+=4+Math.min(0.9,lastAt/1e13);
+    return score;
+  }
+
   function loadGroupMap_(sheet) {
     const map = {};
     const last = sheet.getLastRow();
     if (last < 2) return map;
-    const values = sheet.getRange(2, 1, last - 1, 16).getDisplayValues();
+    const values = sheet.getRange(2, 1, last - 1, Math.min(27,sheet.getMaxColumns())).getValues();
+
+    const put=(key,info,score)=>{
+      const k=String(key||'').trim().toLowerCase();
+      if(!k) return;
+      if(!map[k] || Number(score||0)>Number(map[k].__score||0)) {
+        map[k]=Object.assign({},info,{__score:Number(score||0)});
+      }
+    };
+
     values.forEach((r, i) => {
-      const active = r[0], name = r[2], url = r[3];
+      const active = String(r[0]||'').trim();
+      const name = String(r[2]||'').trim();
+      const url = String(r[3]||'').trim();
       const explicitId = String(r[4] || '').trim().toLowerCase();
       const urlKey = extractGroupKey_(url);
-      const info = { name: name || `Group ${explicitId || urlKey}`, row: i + 2, active };
-      if (explicitId) map[explicitId] = info;
-      if (urlKey) map[urlKey] = info;
+      const info = { name: name || ('Group '+(explicitId || urlKey)), row: i + 2, active };
+      const score=groupRegistryRowScore_(r);
+      put(explicitId,info,score);
+      put(urlKey,info,score);
     });
+
+    Object.keys(map).forEach(k=>{ try{ delete map[k].__score; }catch(_){} });
     return map;
   }
 
@@ -2884,6 +2983,11 @@ const RemoteApp = (() => {
     const key = String(groupKey || '').trim().toLowerCase();
     if (!key) return { name: 'Group không rõ', row: null };
 
+    // Re-check the live registry immediately before append. This closes the race
+    // where a stale groupMap or concurrent import would otherwise create a duplicate.
+    const live=loadGroupMap_(sheet);
+    if(live[key]) return live[key];
+
     const row = sheet.getLastRow() + 1;
     const name = 'Group ' + key;
     const url = 'https://www.facebook.com/groups/' + key + '/';
@@ -2896,16 +3000,23 @@ const RemoteApp = (() => {
     return { name, row, active: 'Có' };
   }
 
+
   function updateGroupScanStatus_(sheet, stats) {
     const now = new Date();
     Object.keys(stats).forEach(groupKey => {
-      const s = stats[groupKey];
-      if (!s.row) return;
-      sheet.getRange(s.row, 10).setValue(now);
-      sheet.getRange(s.row, 13).setValue(s.fileName);
-      sheet.getRange(s.row, 14).setValue(s.postNew !== undefined ? s.postNew : (s.newCount || 0));
+      const st = stats[groupKey];
+      if (!st.row) return;
+
+      // A comment refresh is not a Group post scan. Never move Lần quét gần nhất /
+      // Quét tiếp theo because that would hide an actually-due Group.
+      if (Number(st.postScanned||0) > 0) {
+        sheet.getRange(st.row, 10).setValue(now);
+        sheet.getRange(st.row, 13).setValue(st.fileName);
+        sheet.getRange(st.row, 14).setValue(st.postNew !== undefined ? st.postNew : (st.newCount || 0));
+      }
     });
   }
+
 
   function extractGroupKey_(url) {
     const m = String(url || '').match(/facebook\.com\/groups\/([^\/?#]+)/i);
@@ -3691,26 +3802,27 @@ const RemoteApp = (() => {
 
     const now=Number(nowMs||Date.now());
     const n=sh.getLastRow()-1;
-    const rows=sh.getRange(2,1,n,26).getValues();
+    // Hot monitoring path: read only fields used by dashboard, not A:Z.
+    const base=sh.getRange(2,1,n,6).getValues();   // A:F
+    const scores=sh.getRange(2,11,n,1).getValues(); // K
+    const gates=sh.getRange(2,25,n,1).getValues();  // Y
     const out=Object.assign({},empty,{backlogPreview:[]});
 
-    rows.forEach((r,i)=>{
+    for(let i=0;i<n;i++){
+      const r=base[i];
       const sourceId=String(r[1]||'').trim();
-      if(!sourceId) return;
+      if(!sourceId) continue;
       out.total++;
 
-      const gate=String(r[24]||'').trim().toUpperCase();
+      const gate=String(gates[i][0]||'').trim().toUpperCase();
       const sourceMs=opsDateMs_(r[0]);
       const ageMs=sourceMs?Math.max(0,now-sourceMs):0;
-      const fresh=sourceMs && ageMs<=CFG.OPS_FRESH_SIGNAL_MS;
+      const fresh=!!(sourceMs && ageMs<=CFG.OPS_FRESH_SIGNAL_MS);
 
       if(fresh) out.freshSources2h++;
       if(gate==='PASS') {
         out.pass++;
-        if(fresh) {
-          out.freshCandidates2h++;
-          out.freshPass2h++;
-        }
+        if(fresh){ out.freshCandidates2h++; out.freshPass2h++; }
       } else if(gate==='WATCH') {
         out.watch++;
         if(fresh) out.freshCandidates2h++;
@@ -3731,17 +3843,18 @@ const RemoteApp = (() => {
           sourceId,
           group:String(r[4]||'').trim()||'Group không rõ',
           person:String(r[5]||'').trim()||'Ẩn danh',
-          score:Number(r[10]||0),
+          score:Number(scores[i][0]||0),
           ageMs,
           url:String(r[2]||'').trim()
         });
       }
-    });
+    }
 
     out.backlogPreview.sort((a,b)=>(b.ageMs||0)-(a.ageMs||0));
     out.backlogPreview=out.backlogPreview.slice(0,8);
     return out;
   }
+
 
   function computeOperationalHealth_(input) {
     const data=input||{};
@@ -3949,6 +4062,12 @@ const RemoteApp = (() => {
       sla,
       aiOps:ai,
       operationalHealth,
+      autoMonitorV2:getAutoMonitorV2State_(),
+      commentIntelligence:Object.assign(
+        {enabled:getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true),
+         storedRows:Math.max(0,(ss.getSheetByName(CFG.COMMENT_SHEET)||{getLastRow:()=>1}).getLastRow()-1)},
+        getCommentQueueStats_()
+      ),
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
         overdueMs:x.nextAtMs?Math.max(0,now-x.nextAtMs):0
@@ -3956,6 +4075,1192 @@ const RemoteApp = (() => {
       overduePreview:overduePreview.slice(0,10),
       exceptionPreview:exceptionPreview.slice(0,10)
     };
+  }
+
+
+  function getBooleanDocumentProp_(key,defaultValue) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(key);
+    if(raw===null || raw===undefined || raw==='') return !!defaultValue;
+    return String(raw).toLowerCase()==='true';
+  }
+
+  function bindAutoMonitorSpreadsheet_() {
+    let ss=null;
+    try { ss=SpreadsheetApp.getActiveSpreadsheet(); } catch(_){}
+    if(ss) return ss;
+
+    const id=String(
+      PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_MONITOR_SPREADSHEET_ID_KEY)||''
+    ).trim();
+    if(!id) throw new Error('AUTO MONITOR V2 chưa có Spreadsheet ID binding. Hãy mở Sheet và bật AUTO lại một lần.');
+    ss=SpreadsheetApp.openById(id);
+    SpreadsheetApp.setActiveSpreadsheet(ss);
+    return ss;
+  }
+
+  function getAutoRuntimeBudget_() {
+    let email='';
+    try { email=String(Session.getEffectiveUser().getEmail()||Session.getActiveUser().getEmail()||'').trim().toLowerCase(); } catch(_){}
+    const workspace=!!email && !/@gmail\.com$/i.test(email);
+    return {
+      accountClass:workspace?'WORKSPACE':'CONSUMER_OR_UNKNOWN',
+      budgetMs:workspace?CFG.AUTO_MONITOR_WORKSPACE_BUDGET_MS:CFG.AUTO_MONITOR_CONSUMER_BUDGET_MS
+    };
+  }
+
+  function getAutoRuntimeUsage_() {
+    const props=PropertiesService.getDocumentProperties();
+    const day=Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyy-MM-dd');
+    const budget=getAutoRuntimeBudget_();
+    const storedDay=props.getProperty(CFG.AUTO_MONITOR_RUNTIME_DAY_KEY)||'';
+    let used=Number(props.getProperty(CFG.AUTO_MONITOR_RUNTIME_MS_KEY)||0);
+    if(storedDay!==day){
+      used=0;
+      props.setProperty(CFG.AUTO_MONITOR_RUNTIME_DAY_KEY,day);
+      props.setProperty(CFG.AUTO_MONITOR_RUNTIME_MS_KEY,'0');
+    }
+    return {
+      day,
+      accountClass:budget.accountClass,
+      budgetMs:budget.budgetMs,
+      usedMs:Math.max(0,used),
+      remainingMs:Math.max(0,budget.budgetMs-Math.max(0,used)),
+      usedPct:budget.budgetMs?Math.round(Math.max(0,used)*1000/budget.budgetMs)/10:0
+    };
+  }
+
+  function recordAutoRuntimeUsage_(durationMs) {
+    const usage=getAutoRuntimeUsage_();
+    const next=Math.max(0,usage.usedMs+Math.max(0,Number(durationMs||0)));
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_MONITOR_RUNTIME_MS_KEY,String(next));
+    return Object.assign({},usage,{
+      usedMs:next,
+      remainingMs:Math.max(0,usage.budgetMs-next),
+      usedPct:usage.budgetMs?Math.round(next*1000/usage.budgetMs)/10:0
+    });
+  }
+
+  function estimateAutoRuntimeNeed_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return {activeGroups:0,scansPerDay:0,avgScanSec:27,estimatedDailyMs:0};
+    const rows=sheet.getRange(2,1,last-1,25).getDisplayValues();
+    let active=0,scans=0;
+    const samples=[];
+    rows.forEach(r=>{
+      if(String(r[0]||'').trim()!=='Có' || String(r[6]||'').trim()==='Loại') return;
+      active++;
+      scans+=Math.max(1,Number(r[7]||1));
+      const m=String(r[24]||'').match(/([0-9]+(?:\.[0-9]+)?)s\s*$/i);
+      if(m) samples.push(Number(m[1]));
+    });
+    const avg=samples.length
+      ? samples.reduce((a,b)=>a+b,0)/samples.length
+      : 27;
+    const scanEstimatedDailyMs=Math.round(scans*avg*1000*1.15);
+    const budget=getAutoRuntimeBudget_();
+    const nonScanReserveMs=Math.max(15*60*1000,Math.round(budget.budgetMs*0.15));
+    const projectedTotalMs=scanEstimatedDailyMs+nonScanReserveMs;
+    const scansPerGroup=active ? scans/active : 0;
+    const maxScans=Math.max(0,Math.floor((budget.budgetMs-nonScanReserveMs)/(Math.max(1,avg)*1000*1.15)));
+    const estimatedMaxGroups=scansPerGroup ? Math.floor(maxScans/scansPerGroup) : 0;
+    return {
+      activeGroups:active,
+      scansPerDay:scans,
+      avgScanSec:Math.round(avg*10)/10,
+      sampleCount:samples.length,
+      scanEstimatedDailyMs,
+      nonScanReserveMs,
+      projectedTotalMs,
+      estimatedDailyMs:projectedTotalMs,
+      estimatedMaxGroups
+    };
+  }
+
+  function getAutoMonitorV2State_() {
+    const props=PropertiesService.getDocumentProperties();
+    const enabled=getBooleanDocumentProp_(CFG.AUTO_MONITOR_ENABLED_KEY,false);
+    const commentEnabled=getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true);
+    let last={};
+    try { last=JSON.parse(props.getProperty(CFG.AUTO_MONITOR_LAST_STATE_KEY)||'{}')||{}; } catch(_){ last={}; }
+    const triggerCount=ScriptApp.getProjectTriggers()
+      .filter(t=>t.getHandlerFunction()===CFG.AUTO_MONITOR_TRIGGER_HANDLER).length;
+    const retryState=loadAutoRetryState_();
+    const retryEntries=Object.keys(retryState).map(k=>retryState[k]||{});
+    return {
+      version:CFG.VERSION,
+      spreadsheetId:String(props.getProperty(CFG.AUTO_MONITOR_SPREADSHEET_ID_KEY)||''),
+      enabled,
+      commentEnabled,
+      triggerInstalled:triggerCount>0,
+      triggerCount,
+      everyMinutes:CFG.AUTO_MONITOR_TRIGGER_MINUTES,
+      maxGroupsPerTick:CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,
+      retryWaiting:retryEntries.filter(x=>!x.hard&&Number(x.nextAt||0)>Date.now()).length,
+      hardQuarantine:retryEntries.filter(x=>!!x.hard).length,
+      runtimeUsage:getAutoRuntimeUsage_(),
+      runtimeEstimate:estimateAutoRuntimeNeed_(),
+      last
+    };
+  }
+
+  function saveAutoMonitorLastState_(state) {
+    const input=state||{};
+    const cc=input.commentCycle||{};
+    const out=Object.assign({version:CFG.VERSION,finishedAt:new Date().toISOString()},input,{
+      error:String(input.error||'').slice(0,1200),
+      commentCycle:input.commentCycle ? {
+        enabled:cc.enabled!==false,
+        processedPosts:Number(cc.processedPosts||0),
+        commentsRead:Number(cc.commentsRead||0),
+        commentsNew:Number(cc.commentsNew||0),
+        partialPosts:Number(cc.partialPosts||0),
+        queueRemaining:Number(cc.queueRemaining||0),
+        errorCount:(cc.errors||[]).length,
+        errors:(cc.errors||[]).slice(0,2).map(x=>String(x||'').slice(0,500))
+      } : null
+    });
+    let text=JSON.stringify(out);
+    if(text.length>8000){
+      out.commentCycle=out.commentCycle ? Object.assign({},out.commentCycle,{errors:[]}) : null;
+      text=JSON.stringify(out);
+    }
+    if(text.length>8000){
+      text=JSON.stringify({
+        version:CFG.VERSION,finishedAt:out.finishedAt,ok:out.ok,enabled:out.enabled,
+        error:String(out.error||'').slice(0,1000),planned:Number(out.planned||0),
+        processed:Number(out.processed||0),passed:Number(out.passed||0),
+        incomplete:Number(out.incomplete||0),failed:Number(out.failed||0)
+      });
+    }
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_MONITOR_LAST_STATE_KEY,text);
+    return out;
+  }
+
+
+  function ensureAutoMonitorTrigger_(enabled) {
+    const triggers=ScriptApp.getProjectTriggers()
+      .filter(t=>t.getHandlerFunction()===CFG.AUTO_MONITOR_TRIGGER_HANDLER);
+    if(enabled){
+      if(!triggers.length){
+        ScriptApp.newTrigger(CFG.AUTO_MONITOR_TRIGGER_HANDLER)
+          .timeBased()
+          .everyMinutes(CFG.AUTO_MONITOR_TRIGGER_MINUTES)
+          .create();
+      } else if(triggers.length>1) {
+        triggers.slice(1).forEach(t=>ScriptApp.deleteTrigger(t));
+      }
+    } else {
+      triggers.forEach(t=>ScriptApp.deleteTrigger(t));
+    }
+  }
+
+  function setAutoMonitorV2Enabled_(enabled,options) {
+    ensureV16Sheets_(false);
+    const on=!!enabled;
+    const activeSs=SpreadsheetApp.getActiveSpreadsheet();
+    if(!activeSs) throw new Error('Không có active spreadsheet để bind AUTO MONITOR V2.');
+    const props=PropertiesService.getDocumentProperties();
+    props.setProperty(CFG.AUTO_MONITOR_SPREADSHEET_ID_KEY,activeSs.getId());
+    const acceptance=on ? runProductionAcceptance_({repair:true}) : null;
+    props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,String(on));
+    if(options && Object.prototype.hasOwnProperty.call(options,'commentEnabled')) {
+      props.setProperty(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,String(!!options.commentEnabled));
+    } else if(props.getProperty(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY)===null) {
+      props.setProperty(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,'true');
+    }
+    ensureAutoMonitorTrigger_(on);
+    const state=getAutoMonitorV2State_();
+    return Object.assign({},state,{acceptance,message:on
+      ? 'AUTO MONITOR V2 đã bật. Backend trigger sẽ tự quét Group đến hạn; không cần tick checkbox.'
+      : 'AUTO MONITOR V2 đã tắt. Manual scan vẫn hoạt động.'
+    });
+  }
+
+  function autoRetryPropKey_(stateKey) {
+    const id=stableId_('auto-retry|'+String(stateKey||''));
+    return CFG.AUTO_MONITOR_RETRY_PREFIX+String(id||'').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,40);
+  }
+
+  function getAutoRetryEntry_(stateKey) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(autoRetryPropKey_(stateKey));
+    if(!raw) return {};
+    try {
+      const item=JSON.parse(raw)||{};
+      return String(item.stateKey||'')===String(stateKey||'') ? item : {};
+    } catch(_) { return {}; }
+  }
+
+  function setAutoRetryEntry_(stateKey,entry) {
+    const item=Object.assign({},entry||{},{stateKey:String(stateKey||'')});
+    PropertiesService.getDocumentProperties().setProperty(
+      autoRetryPropKey_(stateKey),
+      JSON.stringify(item).slice(0,8000)
+    );
+    return item;
+  }
+
+  function deleteAutoRetryEntry_(stateKey) {
+    PropertiesService.getDocumentProperties().deleteProperty(autoRetryPropKey_(stateKey));
+  }
+
+  function loadAutoRetryState_() {
+    const props=PropertiesService.getDocumentProperties().getProperties();
+    const out={};
+    Object.keys(props).forEach(k=>{
+      if(k.indexOf(CFG.AUTO_MONITOR_RETRY_PREFIX)!==0) return;
+      try{
+        const item=JSON.parse(props[k]||'{}')||{};
+        const stateKey=String(item.stateKey||'');
+        if(stateKey) out[stateKey]=item;
+      }catch(_){}
+    });
+    return out;
+  }
+
+  function classifyStoredScanError_(status,note) {
+    const text=String(note||'');
+    if(/IDENTITY_DUPLICATE|URL_INVALID|INVALID_GROUP/i.test(text)) return 'STRUCTURAL';
+    if(isWorkerConnectionError_(text)) return 'CONNECTION';
+    if(isTransientSocialAioError_(text) || /page rỗng tạm thời|HTTP 200 nhưng page đầu rỗng/i.test(text)) return 'TRANSIENT';
+    if(/không tìm thấy post/i.test(text)) return 'NO_POSTS';
+    if(/Sheet đang bận/i.test(text)) return 'SHEET_BUSY';
+    if(String(status||'')==='THIẾU') return 'TRANSIENT';
+    return 'UNKNOWN';
+  }
+
+  function retryPolicyForClass_(errorClass,attempt) {
+    const cls=String(errorClass||'UNKNOWN').toUpperCase();
+    const n=Math.max(0,Number(attempt||0));
+    if(cls==='STRUCTURAL') return {retry:false,hard:true,delayMs:0,maxAttempts:0};
+    if(cls==='CONNECTION') return {retry:true,hard:false,delayMs:5*60*1000,maxAttempts:999};
+    if(cls==='NO_POSTS') {
+      const ds=[10*60*1000,30*60*1000];
+      return {retry:n<2,hard:n>=2,delayMs:ds[Math.min(n,ds.length-1)],maxAttempts:2};
+    }
+    if(cls==='UNKNOWN') {
+      return {retry:n<1,hard:n>=1,delayMs:30*60*1000,maxAttempts:1};
+    }
+    const delays=CFG.AUTO_MONITOR_RETRY_DELAYS_MS||[];
+    return {
+      retry:n<delays.length,
+      hard:n>=delays.length,
+      delayMs:delays[Math.min(n,Math.max(0,delays.length-1))]||10*60*1000,
+      maxAttempts:delays.length
+    };
+  }
+
+  function parseApiPostsSourceKey_(fileName) {
+    const m=String(fileName||'').trim().match(/^api_posts_(.+?)_\d{8}_\d{6}\.json$/i);
+    return m ? String(m[1]||'').trim().toLowerCase() : '';
+  }
+
+  function getCrossSourceRegistryContamination_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return [];
+    const rows=sheet.getRange(2,1,last-1,26).getDisplayValues();
+    const out=[];
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có' || String(r[6]||'').trim()==='Loại') return;
+      const row=i+2;
+      const groupKey=exactGroupKeyFromRow_(r[3],r[4]);
+      const file=String(r[12]||'').trim();
+      const sourceKey=parseApiPostsSourceKey_(file);
+      const note=String(r[15]||'').trim();
+      if(!groupKey || !sourceKey || groupKey===sourceKey) return;
+      if(/Canonical identity|identity merge|alias nguồn/i.test(note)) return;
+      if(!/Tự thêm khi import JSON/i.test(note)) return;
+      out.push({
+        row,groupKey,sourceKey,file,
+        name:String(r[2]||'').trim(),
+        note
+      });
+    });
+    return out;
+  }
+
+  function repairCrossSourceRegistryContamination_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const bad=getCrossSourceRegistryContamination_();
+    bad.forEach(x=>{
+      const current=String(sheet.getRange(x.row,26).getDisplayValue()||'').trim();
+      const trace='CROSS_SOURCE_REGISTRY_CONTAMINATION • source='+x.sourceKey+' • rowKey='+x.groupKey;
+      sheet.getRange(x.row,1).setValue('Không');
+      sheet.getRange(x.row,7).setValue('Loại');
+      setGroupRowStatus_(sheet,x.row,'DỪNG','Cross-source registry quarantined',current?current+' | '+trace:trace);
+      sheet.getRange(x.row,23).setValue(false);
+    });
+    if(bad.length) SpreadsheetApp.flush();
+    return {repaired:bad.length,rows:bad};
+  }
+
+  function getDuplicateGroupRegistry_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return [];
+    const values=sheet.getRange(2,1,last-1,Math.min(27,sheet.getMaxColumns())).getValues();
+    const buckets={};
+    values.forEach((r,i)=>{
+      const active=String(r[0]||'').trim();
+      const lifecycle=String(r[6]||'').trim();
+      if(active!=='Có' || lifecycle==='Loại') return;
+      const url=String(r[3]||'').trim();
+      const key=exactGroupKeyFromRow_(url,r[4]);
+      if(!key) return;
+      if(!buckets[key]) buckets[key]=[];
+      buckets[key].push({row:i+2,key,score:groupRegistryRowScore_(r),values:r});
+    });
+    const out=[];
+    Object.keys(buckets).forEach(key=>{
+      const list=buckets[key];
+      if(list.length<2) return;
+      list.sort((a,b)=>b.score-a.score || b.row-a.row);
+      const canonical=list[0];
+      list.slice(1).forEach(d=>out.push({
+        key,canonicalRow:canonical.row,duplicateRow:d.row,
+        canonicalName:String(canonical.values[2]||''),
+        duplicateName:String(d.values[2]||'')
+      }));
+    });
+    return out;
+  }
+
+  function repairDuplicateGroupRegistry_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const dup=getDuplicateGroupRegistry_();
+    dup.forEach(d=>{
+      const row=d.duplicateRow;
+      const currentNote=String(sheet.getRange(row,26).getDisplayValue()||'').trim();
+      const trace='IDENTITY_DUPLICATE → canonical row '+d.canonicalRow+' ('+d.key+')';
+      sheet.getRange(row,1).setValue('Không');
+      sheet.getRange(row,7).setValue('Loại');
+      setGroupRowStatus_(sheet,row,'DỪNG','Duplicate registry quarantined',currentNote?currentNote+' | '+trace:trace);
+      sheet.getRange(row,23).setValue(false);
+    });
+    if(dup.length) SpreadsheetApp.flush();
+    return {repaired:dup.length,duplicates:dup};
+  }
+
+  function repairStaleRunningRows_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return {repaired:0,rows:[]};
+    const rows=sheet.getRange(2,1,last-1,26).getValues();
+    const now=Date.now();
+    const repaired=[];
+    rows.forEach((r,i)=>{
+      if(String(r[23]||'').trim()!=='ĐANG QUÉT') return;
+      const lastAt=opsDateMs_(r[9]);
+      if(lastAt && now-lastAt<10*60*1000) return;
+      const row=i+2;
+      const key=exactGroupKeyFromRow_(r[3],r[4]);
+      const lease=readGroupLease_(key);
+      if(lease && Number(lease.expiresAt||0)>now) return;
+      setGroupRowStatus_(sheet,row,'THIẾU','Recovered stale RUNNING','RECOVERED_STALE_RUNNING: không còn lease hợp lệ; đưa vào retry queue.');
+      repaired.push(row);
+    });
+    if(repaired.length) SpreadsheetApp.flush();
+    return {repaired:repaired.length,rows:repaired};
+  }
+
+  function collectAutoRetryJobs_(limit) {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return [];
+    const values=sheet.getRange(2,1,last-1,26).getValues();
+    const duplicates=getDuplicateGroupRegistry_();
+    const duplicateRows=new Set(duplicates.map(x=>Number(x.duplicateRow)));
+    const retryState=loadAutoRetryState_();
+    const now=Date.now();
+    const out=[];
+
+    values.forEach((r,i)=>{
+      const row=i+2;
+      const active=String(r[0]||'').trim();
+      const lifecycle=String(r[6]||'').trim();
+      const status=String(r[23]||'').trim();
+      const url=String(r[3]||'').trim();
+      if(active!=='Có' || lifecycle==='Loại' || !url) return;
+      if(status!=='LỖI' && status!=='THIẾU') return;
+
+      const key=exactGroupKeyFromRow_(url,r[4]);
+      if(duplicateRows.has(row)) {
+        setAutoRetryEntry_(key+'|row:'+row,{
+          attempts:0,nextAt:0,errorClass:'STRUCTURAL',hard:true,
+          lastError:'IDENTITY_DUPLICATE',updatedAt:now
+        });
+        return;
+      }
+
+      const stateKey=key+'|row:'+row;
+      const existing=retryState[stateKey]||{};
+      const errorClass=classifyStoredScanError_(status,r[25]);
+      const attempts=Math.max(0,Number(existing.attempts||0));
+      const policy=retryPolicyForClass_(errorClass,attempts);
+      if(policy.hard){
+        setAutoRetryEntry_(stateKey,Object.assign({},existing,{errorClass,hard:true,updatedAt:now}));
+        return;
+      }
+      const nextAt=Number(existing.nextAt||0);
+      if(nextAt && nextAt>now) return;
+
+      out.push({
+        row,
+        name:String(r[2]||'').trim()||('Group '+String(r[4]||'')),
+        profile:String(r[1]||'').trim()||'AUTO',
+        url,
+        groupKey:key,
+        targetCount:normalizeGroupTarget_(r[8]||25),
+        status,
+        lifecycle,
+        errorClass,
+        retryStateKey:stateKey,
+        retryAttempts:attempts,
+        priorityRank:groupPriorityRank_(lifecycle),
+        nextAtMs:opsDateMs_(r[10]),
+        lastAtMs:opsDateMs_(r[9]),
+        jobMode:'auto_retry'
+      });
+    });
+
+    out.sort((a,b)=>{
+      const sev={CONNECTION:3,UNKNOWN:2,NO_POSTS:1,TRANSIENT:0,SHEET_BUSY:0};
+      const sa=sev[a.errorClass]===undefined?2:sev[a.errorClass];
+      const sb=sev[b.errorClass]===undefined?2:sev[b.errorClass];
+      if(sa!==sb) return sa-sb;
+      return (a.nextAtMs||0)-(b.nextAtMs||0);
+    });
+    return out.slice(0,Math.max(1,Number(limit||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK)));
+  }
+
+  function updateAutoRetryAfterResult_(job,result) {
+    if(!job || !job.retryStateKey) return;
+    const key=job.retryStateKey;
+    if(result && result.ok && result.status==='XONG'){
+      deleteAutoRetryEntry_(key);
+      return;
+    }
+
+    const errorClass=String(
+      result&&result.errorClass ||
+      classifyStoredScanError_(result&&result.status,result&&result.error||result&&result.note)
+    ).toUpperCase();
+    const prev=getAutoRetryEntry_(key)||{};
+    const attempts=Math.max(Number(prev.attempts||0),Number(job.retryAttempts||0));
+    const nextAttempt=errorClass==='CONNECTION' ? attempts : attempts+1;
+    const policy=retryPolicyForClass_(errorClass,nextAttempt);
+    setAutoRetryEntry_(key,{
+      attempts:nextAttempt,
+      nextAt:Date.now()+Number(policy.delayMs||0),
+      errorClass,
+      hard:!!policy.hard,
+      lastError:String(result&&result.error||result&&result.note||'').slice(0,800),
+      updatedAt:Date.now()
+    });
+  }
+
+
+  function callCommentsRawOnce_(clientId,params) {
+    const id=String(clientId||'').trim();
+    if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
+    const url=CFG.BRIDGE_SERVER.replace(/\/$/,'')+'/call';
+    const res=UrlFetchApp.fetch(url,{
+      method:'post',
+      contentType:'application/json',
+      payload:JSON.stringify({
+        id,
+        apiname:'get_list_fb_comment',
+        apiparams:params||{}
+      }),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    const code=res.getResponseCode();
+    const text=res.getContentText('UTF-8');
+    if(code<200 || code>=300) throw new Error('Social AIO relay HTTP '+code+': '+text.slice(0,700));
+    let parsed=text;
+    try { parsed=JSON.parse(text); } catch(_){}
+    const err=findBridgeError_(parsed);
+    if(err){
+      if(/not\s+connected/i.test(err)) throw new Error('Social AIO báo Client not connected: '+err);
+      throw new Error('Social AIO Comment API lỗi: '+err);
+    }
+    return {code,raw:parsed,bytes:Utilities.newBlob(text||'').getBytes().length};
+  }
+
+  function fetchPostCommentsRaw_(clientId,candidate) {
+    const started=Date.now();
+    const seen={};
+    const comments=[];
+    let cursor=String(candidate.cursor||'');
+    let nextCursor=cursor;
+    let pages=0;
+    let exhausted=false;
+    let transientRetries=0;
+    let transientError='';
+    const target=Math.max(1,Math.min(
+      CFG.COMMENT_MAX_PER_POST_CYCLE,
+      Number(candidate.targetCount||candidate.totalCount||25)
+    ));
+
+    while(comments.length<target && pages<20 && Date.now()-started<CFG.COMMENT_PAGE_BUDGET_MS){
+      let res;
+      try{
+        res=callCommentsRawOnce_(clientId,{url:candidate.postUrl,type:'Newest',cursor:cursor||''});
+      }catch(err){
+        if(isTransientSocialAioError_(err) && comments.length){
+          transientRetries++;
+          transientError=String(err.message||err);
+          break;
+        }
+        throw err;
+      }
+      pages++;
+      const pageComments=findBridgeArray_(res.raw,['comments'])||[];
+      pageComments.forEach(c=>{
+        if(comments.length>=target) return;
+        const id=String(pickPath_(c,['comment_id','commentId','id'])||'').trim();
+        const url=String(pickPath_(c,['comment_url','url','permalink_url'])||'').trim();
+        const key=id?('ID|'+id):('URL|'+normalizeUrl_(url));
+        if(!key || seen[key]) return;
+        seen[key]=true;
+        comments.push(c);
+      });
+
+      nextCursor=findBridgeCursor_(res.raw)||'';
+      if(!pageComments.length || !nextCursor || nextCursor===cursor){
+        exhausted=true;
+        break;
+      }
+      cursor=nextCursor;
+    }
+
+    return {
+      comments,
+      commentsRead:comments.length,
+      pages,
+      nextCursor:exhausted?'':nextCursor,
+      exhausted,
+      transientRetries,
+      transientError,
+      durationMs:Date.now()-started
+    };
+  }
+
+  function commentCooldownMs_(status) {
+    const st=String(status||'').trim();
+    if(/^(ACCESS_UNAVAILABLE|ACCESS_GAP)/i.test(st)) return 6*60*60*1000;
+    if(/^(EMPTY_RETRY|DELTA_GAP)/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
+    if(/^ERROR/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
+    return 0;
+  }
+
+  function getCommentQueueStats_() {
+    const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
+    if(!raw || raw.getLastRow()<5) return {queue:0,ready:0,partial:0,cooldown:0,accessUnavailable:0,deltaPending:0};
+    const n=raw.getLastRow()-4;
+    const totals=raw.getRange(5,10,n,1).getValues(); // J
+    const state=raw.getRange(5,17,n,9).getValues();  // Q:Y
+    const now=Date.now();
+    let queue=0,ready=0,partial=0,cooldown=0,accessUnavailable=0,deltaPending=0;
+
+    for(let i=0;i<n;i++){
+      const total=Math.max(0,Number(totals[i][0]||0));
+      const handled=Math.max(0,Number(state[i][0]||0));
+      const checkedAt=opsDateMs_(state[i][1]);
+      const status=String(state[i][2]||'').trim();
+      const backfillCursor=String(state[i][3]||'').trim();
+      const observed=Math.max(0,Number(state[i][4]||0));
+      const deltaCursor=String(state[i][5]||'').trim();
+      const deltaTarget=Math.max(0,Number(state[i][6]||0));
+      if(total<=0) continue;
+
+      const hasDeltaState=deltaTarget>observed || !!deltaCursor;
+      const hasFreshDelta=!hasDeltaState && observed>0 && total>observed;
+      const initial=observed===0 && !hasDeltaState;
+      const hasBackfill=!hasDeltaState && !hasFreshDelta && !initial && (!!backfillCursor || observed>handled);
+      if(!initial && !hasDeltaState && !hasFreshDelta && !hasBackfill) continue;
+
+      queue++;
+      if(hasDeltaState || hasFreshDelta) deltaPending++;
+      if(backfillCursor) partial++;
+      if(/^ACCESS_UNAVAILABLE/i.test(status)) accessUnavailable++;
+      const cooldownMs=commentCooldownMs_(status);
+      if(cooldownMs && checkedAt && now-checkedAt<cooldownMs) cooldown++;
+      else ready++;
+    }
+    return {queue,ready,partial,cooldown,accessUnavailable,deltaPending};
+  }
+
+  function getCommentFetchCandidates_(limit) {
+    const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
+    if(!raw || raw.getLastRow()<5) return [];
+    const n=raw.getLastRow()-4;
+    const imported=raw.getRange(5,1,n,1).getValues(); // A
+    const identity=raw.getRange(5,3,n,4).getValues(); // C:F
+    const totals=raw.getRange(5,10,n,1).getValues(); // J
+    const state=raw.getRange(5,17,n,9).getValues();  // Q:Y
+    const now=Date.now();
+    const out=[];
+
+    for(let i=0;i<n;i++){
+      const postId=String(identity[i][2]||'').trim();
+      const postUrl=String(identity[i][3]||'').trim();
+      const total=Math.max(0,Number(totals[i][0]||0));
+      const handled=Math.max(0,Number(state[i][0]||0));
+      const checkedAt=opsDateMs_(state[i][1]);
+      const status=String(state[i][2]||'').trim();
+      const backfillCursor=String(state[i][3]||'').trim();
+      const observed=Math.max(0,Number(state[i][4]||0));
+      const deltaCursor=String(state[i][5]||'').trim();
+      const storedDeltaTarget=Math.max(0,Number(state[i][6]||0));
+      const storedDeltaBase=Math.max(0,Number(state[i][7]||0));
+      const storedDeltaFetched=Math.max(0,Number(state[i][8]||0));
+      if(!postId || !postUrl || total<=0) continue;
+
+      const cooldownMs=commentCooldownMs_(status);
+      if(cooldownMs && checkedAt && now-checkedAt<cooldownMs) continue;
+
+      const importedAtMs=opsDateMs_(imported[i][0]);
+      const deltaInProgress=storedDeltaTarget>observed || !!deltaCursor;
+      const initial=observed===0 && !deltaInProgress;
+      const freshDelta=!deltaInProgress && observed>0 && total>observed;
+      const backfill=!deltaInProgress && !freshDelta && !initial && (!!backfillCursor || observed>handled);
+      if(!initial && !freshDelta && !backfill && !deltaInProgress) continue;
+
+      let mode='initial';
+      let cursor='';
+      let targetCount=total;
+      let deltaTargetTotal=0,deltaBaseTotal=0,deltaFetched=0;
+
+      if(deltaInProgress){
+        mode='delta_resume';
+        cursor=deltaCursor;
+        deltaTargetTotal=storedDeltaTarget;
+        deltaBaseTotal=storedDeltaBase;
+        deltaFetched=storedDeltaFetched;
+        targetCount=Math.max(1,deltaTargetTotal-deltaBaseTotal-deltaFetched);
+      } else if(freshDelta){
+        mode='delta';
+        cursor='';
+        deltaTargetTotal=total;
+        deltaBaseTotal=observed;
+        deltaFetched=0;
+        targetCount=Math.max(1,total-observed);
+      } else if(backfill){
+        mode='backfill';
+        cursor=backfillCursor;
+        targetCount=Math.max(1,observed-handled);
+      }
+
+      out.push({
+        rawRow:i+5,
+        postId,
+        postUrl,
+        groupName:String(identity[i][0]||'').trim(),
+        groupKey:String(identity[i][1]||'').trim().toLowerCase(),
+        totalCount:total,
+        observedCount:observed,
+        handledCount:handled,
+        targetCount,
+        mode,
+        cursor,
+        backfillCursor,
+        deltaCursor,
+        deltaTargetTotal,
+        deltaBaseTotal,
+        deltaFetched,
+        partial:mode==='backfill' && !!backfillCursor,
+        incremental:mode==='delta' || mode==='delta_resume',
+        fresh:!!(importedAtMs && now-importedAtMs<=24*60*60*1000),
+        importedAtMs,
+        checkedAtMs:checkedAt,
+        previousStatus:status
+      });
+    }
+
+    out.sort((a,b)=>{
+      // Fresh/new delta always wins over historical backfill.
+      if(a.incremental!==b.incremental) return a.incremental?-1:1;
+      if(a.fresh!==b.fresh) return a.fresh?-1:1;
+      if(a.mode!==b.mode){
+        const rank={delta_resume:0,delta:1,initial:2,backfill:3};
+        return (rank[a.mode]===undefined?9:rank[a.mode])-(rank[b.mode]===undefined?9:rank[b.mode]);
+      }
+      if(b.targetCount!==a.targetCount) return b.targetCount-a.targetCount;
+      if(b.importedAtMs!==a.importedAtMs) return b.importedAtMs-a.importedAtMs;
+      return a.checkedAtMs-b.checkedAtMs;
+    });
+    return out.slice(0,Math.max(1,Number(limit||CFG.COMMENT_POSTS_PER_CYCLE)));
+  }
+
+
+  function updateCommentFetchState_(candidate,patch) {
+    const raw=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.RAW_SHEET);
+    const row=Number(candidate.rawRow||0);
+    if(row<5 || row>raw.getLastRow()) return;
+    if(Object.prototype.hasOwnProperty.call(patch,'handledCount')) raw.getRange(row,CFG.RAW_COMMENT_HANDLED_COL).setValue(Number(patch.handledCount||0));
+    raw.getRange(row,CFG.RAW_COMMENT_CHECKED_COL).setValue(new Date());
+    raw.getRange(row,CFG.RAW_COMMENT_STATUS_COL).setValue(String(patch.status||'').slice(0,500));
+    raw.getRange(row,CFG.RAW_COMMENT_CURSOR_COL).setValue(String(patch.cursor||''));
+    if(Object.prototype.hasOwnProperty.call(patch,'observedCount')) raw.getRange(row,CFG.RAW_COMMENT_OBSERVED_COL).setValue(Number(patch.observedCount||0));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaCursor')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_CURSOR_COL).setValue(String(patch.deltaCursor||''));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaTargetTotal')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_TARGET_COL).setValue(Number(patch.deltaTargetTotal||0));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaBaseTotal')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_BASE_COL).setValue(Number(patch.deltaBaseTotal||0));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaFetched')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_FETCHED_COL).setValue(Number(patch.deltaFetched||0));
+  }
+
+  function runCommentIntelligenceCycle_(options) {
+    options=options||{};
+    if(!getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true)){
+      return {enabled:false,processedPosts:0,commentsRead:0,commentsNew:0,newSourceIds:[],errors:[]};
+    }
+    ensureV16Sheets_(false);
+    const candidates=getCommentFetchCandidates_(options.limit||CFG.COMMENT_POSTS_PER_CYCLE);
+    if(!candidates.length){
+      return {enabled:true,processedPosts:0,commentsRead:0,commentsNew:0,newSourceIds:[],errors:[],queueRemaining:0};
+    }
+
+    const configured=getWorkerPoolRaw_()
+      .filter(w=>w.enabled&&w.clientId)
+      .map(w=>Object.assign({},w,{health:workerHealthState_(w)}))
+      .filter(w=>w.health!=='OFFLINE');
+    if(!configured.length){
+      return {enabled:true,processedPosts:0,commentsRead:0,commentsNew:0,newSourceIds:[],errors:['Không có Worker khả dụng cho Comment Intelligence.'],queueRemaining:candidates.length};
+    }
+    configured.sort((a,b)=>{
+      const rank={ONLINE:0,UNKNOWN:1,STALE:2};
+      const ra=rank[a.health]===undefined?9:rank[a.health], rb=rank[b.health]===undefined?9:rank[b.health];
+      if(ra!==rb) return ra-rb;
+      return Number(a.latencyMs||999999)-Number(b.latencyMs||999999);
+    });
+
+    const started=Date.now();
+    const errors=[];
+    const pending=[];
+    let commentsRead=0,processed=0,partial=0,zeroAccessible=0;
+    const budget=Math.min(100000,Math.max(15000,Number(options.budgetMs||100000)));
+
+    for(let i=0;i<candidates.length;i++){
+      if(Date.now()-started>budget-10000) break;
+      const c=candidates[i];
+      const worker=configured[i%configured.length];
+      try{
+        const fetched=fetchPostCommentsRaw_(worker.clientId,c);
+        commentsRead+=Number(fetched.commentsRead||0);
+
+        if(!fetched.comments.length){
+          zeroAccessible++;
+          const prev=String(c.previousStatus||'');
+          const m=prev.match(/(?:EMPTY_RETRY|ACCESS_UNAVAILABLE).*?(\d+)/i);
+          const attempts=(m?Number(m[1]):0)+1;
+          updateCommentFetchState_(c,{
+            handledCount:c.handledCount,
+            observedCount:c.observedCount,
+            cursor:c.backfillCursor,
+            deltaCursor:c.deltaCursor,
+            deltaTargetTotal:c.deltaTargetTotal,
+            deltaBaseTotal:c.deltaBaseTotal,
+            deltaFetched:c.deltaFetched,
+            status:attempts>=3
+              ? ('ACCESS_UNAVAILABLE • '+attempts+' empty fetch • total='+c.totalCount)
+              : ('EMPTY_RETRY '+attempts+' • total='+c.totalCount)
+          });
+          processed++;
+          continue;
+        }
+
+        const complete=
+          fetched.exhausted ||
+          !fetched.nextCursor ||
+          ((c.mode==='delta' || c.mode==='delta_resume') && fetched.commentsRead>=Math.max(1,c.targetCount)) ||
+          (c.mode==='initial' && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE && fetched.commentsRead>=Math.max(1,c.totalCount)) ||
+          (c.mode==='backfill' && fetched.commentsRead>=Math.max(1,c.targetCount));
+
+        pending.push({
+          candidate:c,
+          fetched,
+          complete,
+          file:{
+            name:'api_comments_'+c.postId+'_'+
+              Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json',
+            text:JSON.stringify(fetched.comments),
+            __workerFast:true,
+            __commentPostId:c.postId,
+            __commentPostUrl:c.postUrl,
+            __commentGroupKey:c.groupKey,
+            __commentGroupName:c.groupName
+          }
+        });
+      }catch(err){
+        const msg=String(err&&err.message||err);
+        errors.push('Post '+c.postId+': '+msg);
+        updateCommentFetchState_(c,{
+          handledCount:c.handledCount,
+          observedCount:c.observedCount,
+          cursor:c.backfillCursor,
+          deltaCursor:c.deltaCursor,
+          deltaTargetTotal:c.deltaTargetTotal,
+          deltaBaseTotal:c.deltaBaseTotal,
+          deltaFetched:c.deltaFetched,
+          status:'ERROR • '+classifyScanError_(err)+' • '+msg.slice(0,300)
+        });
+      }
+    }
+
+    let imported={commentImported:0,newSourceIds:[],errors:[]};
+    if(pending.length){
+      try{
+        imported=importJsonFiles(pending.map(x=>x.file));
+        pending.forEach(x=>{
+          const c=x.candidate;
+          const read=Number(x.fetched.commentsRead||0);
+
+          if(c.mode==='delta' || c.mode==='delta_resume'){
+            const base=c.mode==='delta' ? c.deltaBaseTotal : c.deltaBaseTotal;
+            const target=c.mode==='delta' ? c.deltaTargetTotal : c.deltaTargetTotal;
+            const fetchedBefore=Number(c.deltaFetched||0);
+            const fetchedTotal=fetchedBefore+read;
+            const expected=Math.max(1,target-base);
+            const deltaComplete=fetchedTotal>=expected;
+
+            if(!deltaComplete && x.fetched.nextCursor){
+              partial++;
+              updateCommentFetchState_(c,{
+                handledCount:c.handledCount,
+                observedCount:c.observedCount,
+                cursor:c.backfillCursor,
+                deltaCursor:x.fetched.nextCursor,
+                deltaTargetTotal:target,
+                deltaBaseTotal:base,
+                deltaFetched:fetchedTotal,
+                status:'DELTA_PARTIAL • '+fetchedTotal+'/'+expected
+              });
+            } else if(!deltaComplete) {
+              // API declared no further cursor before the Facebook total delta was
+              // satisfied. Fail open for future retry; never advance observed total.
+              updateCommentFetchState_(c,{
+                handledCount:c.handledCount,
+                observedCount:c.observedCount,
+                cursor:c.backfillCursor,
+                deltaCursor:'',
+                deltaTargetTotal:0,
+                deltaBaseTotal:0,
+                deltaFetched:0,
+                status:'DELTA_GAP • read='+fetchedTotal+'/'+expected+' • sẽ retry'
+              });
+            } else {
+              const historicalBackfillPending=!!c.backfillCursor || c.handledCount<c.observedCount;
+              updateCommentFetchState_(c,{
+                handledCount:historicalBackfillPending
+                  ? c.handledCount
+                  : Math.max(c.handledCount,target),
+                observedCount:target,
+                cursor:c.backfillCursor,
+                deltaCursor:'',
+                deltaTargetTotal:0,
+                deltaBaseTotal:0,
+                deltaFetched:0,
+                status:historicalBackfillPending
+                  ? ('DELTA_OK + BACKFILL_PENDING • '+fetchedTotal+'/'+expected)
+                  : ('DELTA_OK • '+fetchedTotal+'/'+expected)
+              });
+            }
+          } else if(c.mode==='initial'){
+            if(!x.complete && x.fetched.nextCursor){
+              partial++;
+              updateCommentFetchState_(c,{
+                handledCount:Math.min(c.totalCount,read),
+                observedCount:c.totalCount,
+                cursor:x.fetched.nextCursor,
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'PARTIAL • initial read='+read+' • page='+x.fetched.pages
+              });
+            } else if(read<c.totalCount) {
+              updateCommentFetchState_(c,{
+                handledCount:Math.min(c.totalCount,read),
+                observedCount:c.totalCount,
+                cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'ACCESS_GAP • initial '+read+'/'+c.totalCount+' • không có cursor'
+              });
+            } else {
+              updateCommentFetchState_(c,{
+                handledCount:c.totalCount,
+                observedCount:c.totalCount,
+                cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'OK • initial read='+read+' • page='+x.fetched.pages
+              });
+            }
+          } else {
+            const observed=Math.max(c.observedCount,c.totalCount);
+            const handled=Math.min(observed,c.handledCount+read);
+            if(!x.complete && x.fetched.nextCursor){
+              partial++;
+              updateCommentFetchState_(c,{
+                handledCount:handled,
+                observedCount:observed,
+                cursor:x.fetched.nextCursor,
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'PARTIAL • backfill '+handled+'/'+observed
+              });
+            } else if(handled<observed) {
+              updateCommentFetchState_(c,{
+                handledCount:handled,
+                observedCount:observed,
+                cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'ACCESS_GAP • backfill '+handled+'/'+observed+' • không có cursor'
+              });
+            } else {
+              updateCommentFetchState_(c,{
+                handledCount:observed,
+                observedCount:observed,
+                cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'OK • backfill complete • read='+read
+              });
+            }
+          }
+          processed++;
+        });
+      }catch(err){
+        const msg=String(err&&err.message||err);
+        errors.push('Batch import comment: '+msg);
+        pending.forEach(x=>{
+          updateCommentFetchState_(x.candidate,{
+            handledCount:x.candidate.handledCount,
+            observedCount:x.candidate.observedCount,
+            cursor:x.candidate.backfillCursor,
+            deltaCursor:x.candidate.deltaCursor,
+            deltaTargetTotal:x.candidate.deltaTargetTotal,
+            deltaBaseTotal:x.candidate.deltaBaseTotal,
+            deltaFetched:x.candidate.deltaFetched,
+            status:'ERROR • IMPORT • '+msg.slice(0,300)
+          });
+        });
+      }
+    }
+
+    (imported.errors||[]).forEach(e=>errors.push(String(e||'')));
+    SpreadsheetApp.flush();
+    return {
+      enabled:true,
+      processedPosts:processed,
+      zeroAccessiblePosts:zeroAccessible,
+      commentsRead,
+      commentsNew:Number(imported.commentImported||0),
+      partialPosts:partial,
+      newSourceIds:[...new Set((imported.newSourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean))],
+      errors,
+      queueRemaining:Math.max(0,getCommentQueueStats_().queue),
+      durationMs:Date.now()-started,
+      batchedImports:pending.length?1:0
+    };
+  }
+
+
+  function runProductionAcceptance_(options) {
+    options=options||{};
+    const repair=options.repair!==false;
+    const acceptanceLock=LockService.getScriptLock();
+    if(!acceptanceLock.tryLock(30000)) throw new Error('Production Acceptance đang chờ AUTO tick khác.');
+    try{
+      ensureV16Sheets_(true);
+    const repairs={
+      duplicates:{repaired:0,duplicates:[]},
+      crossSource:{repaired:0,rows:[]},
+      staleRunning:{repaired:0,rows:[]}
+    };
+    if(repair){
+      repairs.crossSource=repairCrossSourceRegistryContamination_();
+      repairs.duplicates=repairDuplicateGroupRegistry_();
+      repairs.staleRunning=repairStaleRunningRows_();
+    }
+
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const raw=mustSheet_(ss,CFG.RAW_SHEET);
+    const comments=mustSheet_(ss,CFG.COMMENT_SHEET);
+    const duplicateAfter=getDuplicateGroupRegistry_();
+    const crossSourceAfter=getCrossSourceRegistryContamination_();
+    const auto=getAutoMonitorV2State_();
+    const monitoring=getMonitoringOverview_();
+    const consistency=auditConsistency_();
+    const commentQueueStats=getCommentQueueStats_();
+
+    let active=0,selected=0;
+    if(scan.getLastRow()>=2){
+      scan.getRange(2,1,scan.getLastRow()-1,23).getDisplayValues().forEach(r=>{
+        if(String(r[0]||'').trim()==='Có') active++;
+        if(String(r[22]||'').toUpperCase()==='TRUE') selected++;
+      });
+    }
+    const commentRows=Math.max(0,comments.getLastRow()-1);
+    let rawPostsWithComments=0;
+    if(raw.getLastRow()>=5){
+      raw.getRange(5,10,raw.getLastRow()-4,1).getValues().forEach(r=>{
+        if(Number(r[0]||0)>0) rawPostsWithComments++;
+      });
+    }
+
+    const checks=[
+      {id:'VERSION',pass:CFG.VERSION==='1.10.0-pilot-200',detail:CFG.VERSION},
+      {id:'PILOT_LIMIT',pass:active<=CFG.PILOT_GROUP_LIMIT,detail:active+'/'+CFG.PILOT_GROUP_LIMIT+' active'},
+      {id:'GROUP_IDENTITY',pass:duplicateAfter.length===0,detail:duplicateAfter.length+' duplicate canonical key'},
+      {id:'SOURCE_ATTRIBUTION',pass:crossSourceAfter.length===0,detail:crossSourceAfter.length+' cross-source registry row'},
+      {id:'CONSISTENCY',pass:!!consistency.ok,detail:consistency.ok?'PASS':'Có chênh lệch dữ liệu'},
+      {id:'AUTO_TRIGGER',pass:!auto.enabled||auto.triggerInstalled,detail:auto.enabled?(auto.triggerInstalled?'installed':'MISSING'):'AUTO OFF'},
+      {id:'AUTO_SPREADSHEET_BINDING',pass:!auto.enabled||!!auto.spreadsheetId,detail:auto.spreadsheetId||'MISSING'},
+      {id:'AUTO_RUNTIME_CAPACITY',
+       pass:auto.runtimeEstimate.projectedTotalMs<=auto.runtimeUsage.budgetMs,
+       detail:'scan='+Math.round(auto.runtimeEstimate.scanEstimatedDailyMs/60000)+'m + reserve='+Math.round(auto.runtimeEstimate.nonScanReserveMs/60000)+'m = '+Math.round(auto.runtimeEstimate.projectedTotalMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • max≈'+Number(auto.runtimeEstimate.estimatedMaxGroups||0)+' Group @ cadence hiện tại • '+auto.runtimeUsage.accountClass},
+      {id:'NO_MANUAL_SELECTION_REQUIRED',pass:true,detail:'Auto queue dùng Quét tiếp theo/CẦN QUÉT; checkbox chỉ manual override. Selected hiện tại='+selected},
+      {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=25,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
+      {id:'COMMENT_PIPELINE',pass:rawPostsWithComments===0 || commentRows>0 || commentQueueStats.queue>0,detail:'posts có comment='+rawPostsWithComments+', comment rows='+commentRows+', queue='+commentQueueStats.queue+', cooldown='+commentQueueStats.cooldown},
+      {id:'WORKER_CONFIG',pass:Number(monitoring.workers&&monitoring.workers.configuredCount||0)>0,detail:String(Number(monitoring.workers&&monitoring.workers.configuredCount||0))+' configured'},
+      {id:'NO_STUCK_RUNNING',pass:repairs.staleRunning.repaired===0 || repair,detail:'recovered='+repairs.staleRunning.repaired}
+    ];
+
+    return {
+      version:CFG.VERSION,
+      repair,
+      pass:checks.every(x=>x.pass),
+      checks,
+      repairs,
+      monitoring:{
+        activeGroups:monitoring.activeGroups,
+        dueNow:monitoring.dueNow,
+        exceptions:monitoring.exceptions,
+        aiBacklog:monitoring.aiBacklog,
+        workerOnline:Number(monitoring.workers&&monitoring.workers.onlineCount||0),
+        workerConfigured:Number(monitoring.workers&&monitoring.workers.configuredCount||0)
+      },
+      commentIntelligence:{
+        rawPostsWithComments,
+        commentRows,
+        queue:commentQueueStats.queue,
+        ready:commentQueueStats.ready,
+        cooldown:commentQueueStats.cooldown,
+        accessUnavailable:commentQueueStats.accessUnavailable
+      },
+      autoMonitor:auto
+    };
+    } finally {
+      acceptanceLock.releaseLock();
+    }
+  }
+
+  function autoMonitorTick_() {
+    const lock=LockService.getScriptLock();
+    if(!lock.tryLock(1500)) return saveAutoMonitorLastState_({ok:false,skipped:true,reason:'TICK_BUSY'});
+    const started=Date.now();
+    let recordRuntime=false;
+    try{
+      bindAutoMonitorSpreadsheet_();
+      const state=getAutoMonitorV2State_();
+      if(!state.enabled) return saveAutoMonitorLastState_({ok:true,enabled:false,reason:'AUTO_OFF'});
+      recordRuntime=true;
+      const runtimeUsage=getAutoRuntimeUsage_();
+      if(runtimeUsage.remainingMs<5*60*1000){
+        return saveAutoMonitorLastState_({
+          ok:false,enabled:true,skipped:true,reason:'TRIGGER_RUNTIME_BUDGET_GUARD',
+          runtimeUsage
+        });
+      }
+
+      repairStaleRunningRows_();
+      const duplicates=getDuplicateGroupRegistry_();
+      const duplicateRows=new Set(duplicates.map(x=>Number(x.duplicateRow)));
+
+      const retryJobs=collectAutoRetryJobs_(CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK);
+      const dueJobs=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT)
+        .filter(j=>!duplicateRows.has(Number(j.row)))
+        .map(j=>Object.assign({},j,{jobMode:'auto_due'}));
+
+      const combined=[];
+      const seenRows=new Set();
+      retryJobs.concat(dueJobs).forEach(j=>{
+        if(combined.length>=CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK) return;
+        if(seenRows.has(Number(j.row))) return;
+        seenRows.add(Number(j.row));
+        combined.push(j);
+      });
+
+      const results=[];
+      let sourceIds=[];
+      let plan=null;
+      if(combined.length){
+        plan=prepareJobsForWorkers_(combined,0,false,'auto');
+        const flat=[];
+        (plan.workers||[]).forEach(w=>(w.jobs||[]).forEach(j=>flat.push({worker:w,job:j})));
+
+        for(let i=0;i<flat.length;i++){
+          if(Date.now()-started>CFG.AUTO_MONITOR_TICK_BUDGET_MS-90000) break;
+          if(!getBooleanDocumentProp_(CFG.AUTO_MONITOR_ENABLED_KEY,false)) break;
+          const item=flat[i];
+          const job=Object.assign({},item.job,{
+            workerSlot:item.worker.slot,
+            runId:plan.runId,
+            jobMode:String(item.job.jobMode||'auto')
+          });
+          const res=runWorkerJob_(job);
+          results.push(res);
+          const imported=res&&res.imported||{};
+          (imported.newSourceIds||[]).forEach(id=>sourceIds.push(String(id||'').trim()));
+          if(job.retryStateKey) updateAutoRetryAfterResult_(job,res);
+        }
+      }
+
+      let commentCycle={enabled:getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true),processedPosts:0,commentsRead:0,commentsNew:0,newSourceIds:[],errors:[]};
+      if(Date.now()-started<CFG.AUTO_MONITOR_TICK_BUDGET_MS-60000){
+        commentCycle=runCommentIntelligenceCycle_({
+          limit:CFG.COMMENT_POSTS_PER_CYCLE,
+          budgetMs:Math.min(90000,CFG.AUTO_MONITOR_TICK_BUDGET_MS-(Date.now()-started)-45000)
+        });
+        (commentCycle.newSourceIds||[]).forEach(id=>sourceIds.push(String(id||'').trim()));
+      }
+
+      sourceIds=[...new Set(sourceIds.filter(Boolean))];
+      let finalized=null,ai=null;
+      if(plan || sourceIds.length){
+        finalized=finalizeWorkerBatch_({runId:plan&&plan.runId||('auto-'+Utilities.getUuid().slice(0,8)),sourceIds,skipCommentCycle:true});
+        if(finalized.autoAnalyzeRequested && sourceIds.length && Date.now()-started<CFG.AUTO_MONITOR_TICK_BUDGET_MS-30000){
+          ai=analyzeByScope_({scope:'source_ids',sourceIds:sourceIds.slice(0,CFG.AUTO_AI_SOURCE_CHUNK)});
+        }
+      }
+
+      const summary={
+        ok:true,
+        enabled:true,
+        durationMs:Date.now()-started,
+        planned:combined.length,
+        processed:results.length,
+        passed:results.filter(x=>x&&x.status==='XONG').length,
+        incomplete:results.filter(x=>x&&x.status==='THIẾU').length,
+        failed:results.filter(x=>x&&x.status==='LỖI').length,
+        skipped:Math.max(0,combined.length-results.length),
+        commentSources:sourceIds.filter(x=>/^C:/i.test(x)).length,
+        postSources:sourceIds.filter(x=>!/^C:/i.test(x)).length,
+        commentCycle,
+        ai:ai?{analyzed:Number(ai.analyzed||0),remaining:Number(ai.remaining||0)}:null,
+        duplicateQuarantine:duplicates.length
+      };
+      return saveAutoMonitorLastState_(summary);
+    }catch(err){
+      return saveAutoMonitorLastState_({ok:false,error:String(err&&err.message||err),durationMs:Date.now()-started});
+    }finally{
+      if(recordRuntime){
+        try{recordAutoRuntimeUsage_(Date.now()-started);}catch(_){}
+      }
+      try{lock.releaseLock();}catch(_){}
+    }
+  }
+
+  function autoMonitorTick() {
+    return autoMonitorTick_();
   }
 
   function getGroupScanControlState_() {
@@ -4026,7 +5331,7 @@ const RemoteApp = (() => {
 
     // A Due Queue plan can become stale while another Control Center finishes
     // the same Group. Re-check immediately before execution.
-    if(String(command.jobMode||'').toLowerCase()==='due' && !isDueJobStillValid_(sheet,row)){
+    if(['due','auto_due'].includes(String(command.jobMode||'').toLowerCase()) && !isDueJobStillValid_(sheet,row)){
       return {
         ok:false,skippedNotDue:true,row,name,groupKey,groupUrl,targetCount:target,
         status:'SKIP_NOT_DUE',workerSlot:worker.slot,workerHealth:workerHealthState_(worker)
@@ -4145,13 +5450,35 @@ const RemoteApp = (() => {
   function finalizeWorkerBatch_(command) {
     const started=Date.now();
     const runId=String(command&&command.runId||'').trim();
-    const sourceIds=saveLastScanSourceIds_((command&&command.sourceIds)||[]);
-    sortOpportunityNewestFirst_();
-    const refresh=refreshAfterScanFast_();
+    let sourceIds=(command&&command.sourceIds)||[];
+    let commentCycle=null;
+
+    if(!(command&&command.skipCommentCycle) && getBooleanDocumentProp_(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,true)){
+      commentCycle=runCommentIntelligenceCycle_({
+        limit:CFG.COMMENT_POSTS_PER_CYCLE,
+        budgetMs:90000
+      });
+      sourceIds=sourceIds.concat(commentCycle.newSourceIds||[]);
+    }
+
+    sourceIds=saveLastScanSourceIds_([...new Set(sourceIds.map(x=>String(x||'').trim()).filter(Boolean))]);
+
+    // Import workers serialize their Sheet writes with DocumentLock. Final sort /
+    // summary refresh must join that same serialization boundary to avoid racing
+    // a manual scan against a backend Auto tick.
+    const finalizeLock=LockService.getDocumentLock();
+    if(!finalizeLock.tryLock(120000)) throw new Error('Finalize đang chờ Sheet lock quá lâu.');
+    let refresh;
+    try{
+      sortOpportunityNewestFirst_();
+      refresh=refreshAfterScanFast_();
+      clearScanRunStop_(runId);
+      clearGlobalStopAll_();
+      SpreadsheetApp.flush();
+    }finally{
+      finalizeLock.releaseLock();
+    }
     const aiCfg=getAiConfig_();
-    clearScanRunStop_(runId);
-    clearGlobalStopAll_();
-    SpreadsheetApp.flush();
     return {
       version:CFG.VERSION,
       runId,
@@ -4159,9 +5486,12 @@ const RemoteApp = (() => {
       analysisMode:aiCfg.analysisMode||'manual',
       autoAnalyzeRequested:!!(aiCfg.configured&&aiCfg.analysisMode==='auto_scan'),
       lastScanSources:sourceIds.length,
+      sourceIds,
+      commentCycle,
       durationMs:Date.now()-started
     };
   }
+
 
   function scanCheckedGroupsApiBridge_(targetOverride) {
     ensureV16Sheets_(false);
@@ -4902,6 +6232,19 @@ const RemoteApp = (() => {
     return CFG.GROUP_LEASE_PREFIX+safe;
   }
 
+  function readGroupLease_(groupKey) {
+    const key=groupLeasePropertyKey_(groupKey);
+    const raw=PropertiesService.getDocumentProperties().getProperty(key);
+    if(!raw) return null;
+    try {
+      const lease=JSON.parse(raw);
+      if(!lease || typeof lease!=='object') return null;
+      return lease;
+    } catch(_) {
+      return null;
+    }
+  }
+
   function acquireGroupLease_(groupKey,owner,row) {
     const key=groupLeasePropertyKey_(groupKey);
     const lock=LockService.getDocumentLock();
@@ -4969,7 +6312,8 @@ const RemoteApp = (() => {
     const active=String(vals[0]||'').trim();
     const due=String(vals[11]||'').trim();
     const status=String(vals[23]||'').trim();
-    return active==='Có' && due==='CẦN QUÉT' && status!=='ĐANG QUÉT';
+    return active==='Có' && due==='CẦN QUÉT' &&
+      status!=='ĐANG QUÉT' && status!=='LỖI' && status!=='THIẾU' && !/^DỪNG/.test(status);
   }
 
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
@@ -5384,7 +6728,12 @@ const RemoteApp = (() => {
       const chosen=candidates[0];
       const weight=Math.max(1,Number(chosen.latencyMs||1500)/1000);
       loads[chosen.slot]+=target*weight;
-      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot,jobMode:mode||'selected',runId}));
+      assignments[chosen.slot].push(Object.assign({},job,{
+        targetCount:target,
+        workerSlot:chosen.slot,
+        jobMode:String(job.jobMode||mode||'selected'),
+        runId
+      }));
     });
 
     const workers=pool.map(w=>({
@@ -5663,5 +7012,17 @@ const RemoteApp = (() => {
     retryFailedGroupsApiBridge_,
     stopCheckedGroupsApiBridge_,
     clearCheckedGroups_,
+    autoMonitorTick,
+    getAutoMonitorV2State_,
+    setAutoMonitorV2Enabled_,
+    runCommentIntelligenceCycle_,
+    runProductionAcceptance_,
+    __test: {
+      retryPolicyForClass_,
+      classifyStoredScanError_,
+      classifyScanError_,
+      parseApiPostsSourceKey_,
+      getVersion
+    },
   };
 })();

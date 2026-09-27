@@ -2,7 +2,9 @@ name: Package Apps Script Bootstrap
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - release/v1.10.0-pilot-200
     paths:
       - 'bootstrap/**'
       - '.github/workflows/package-bootstrap.yml'
@@ -13,23 +15,26 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Verify bootstrap
+      - name: Verify V2.2 production bootstrap
         run: |
-          grep -q "BOOTSTRAP_VERSION = '2.1-menu-shell'" bootstrap/Code.gs
-          grep -q "MỞ CONTROL CENTER" bootstrap/Code.gs
-          grep -q "openSignalFeed" bootstrap/Code.gs
-          grep -q "openLeadInbox" bootstrap/Code.gs
+          grep -q "BOOTSTRAP_VERSION = '2.2-auto-monitor-v2'" bootstrap/Code.gs
+          grep -q "function autoMonitorTick()" bootstrap/Code.gs
+          grep -q "SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1" bootstrap/Code.gs
+          grep -q "Cấp quyền & BẬT AUTO V2" bootstrap/Code.gs
+          node -e "const m=require('./bootstrap/appsscript.json'); const r=['https://www.googleapis.com/auth/spreadsheets','https://www.googleapis.com/auth/script.scriptapp','https://www.googleapis.com/auth/userinfo.email','https://www.googleapis.com/auth/script.external_request']; for(const s of r){if(!m.oauthScopes.includes(s))throw new Error('missing scope '+s)}"
       - name: Stage package
         run: |
           mkdir -p package
           cp bootstrap/Code.gs package/Code.gs
           cp bootstrap/appsscript.json package/appsscript.json
+          printf "V1.10.0 Pilot 200\nBootstrap 2.2-auto-monitor-v2\nReplace BOTH Code.gs and appsscript.json, then refresh the Sheet.\n" > package/INSTALL.txt
       - name: Upload bootstrap package
         uses: actions/upload-artifact@v4
         with:
-          name: Social_AIO_Bootstrap_V2.1_Menu_Shell
+          name: Social_AIO_Bootstrap_V2.2_Auto_Monitor_V2
           path: package/
           if-no-files-found: error
           retention-days: 30
