@@ -2334,7 +2334,7 @@ const RemoteApp = (() => {
 
     const registryStats = fast ? {rows:0} : repairScanRegistry_();
     const remapStats = fast ? {changed:0} : remapGroupNames_();
-    const rawFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:16, preferComplete:false });
+    const rawFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeSheet_(rawSheet, { headerRows:4, idCol:5, urlCol:6, totalCols:25, preferComplete:false });
     const commentFix = fast ? {removed:0} : normalizeAndDedupeCommentSheet_(commentSheet);
     const oppFix = fast ? {removed:0,repairedIds:0} : normalizeAndDedupeOpportunitySheet_(oppSheet);
 
