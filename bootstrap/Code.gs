@@ -4,7 +4,7 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
-const BOOTSTRAP_VERSION = '2.1-menu-shell';
+const BOOTSTRAP_VERSION = '2.2-auto-monitor-v2';
 
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
@@ -33,6 +33,7 @@ function buildLocalMenu_() {
     .addSubMenu(
       ui.createMenu('HỆ THỐNG')
         .addItem('🔄 Cập nhật runtime từ GitHub', 'githubForceUpdate')
+        .addItem('🧪 Nghiệm thu Production', 'runProductionAcceptanceMenu')
         .addItem('ℹ Thông tin phiên bản', 'showRuntimeInfo')
     )
     .addToUi();
@@ -58,6 +59,33 @@ function apiBridgeTest() { return callRemote_('apiBridgeTest', []); }
 function apiBridgeScanSelectedGroup() { return callRemote_('apiBridgeScanSelectedGroup', []); }
 function apiBridgeFetchCommentsSelectedPost() { return callRemote_('apiBridgeFetchCommentsSelectedPost', []); }
 function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
+
+/**
+ * Installable time-trigger entrypoint for Auto Monitor V2.
+ * MUST stay global/local because Apps Script triggers cannot directly target
+ * a function that only exists inside the remotely-evaluated Runtime object.
+ */
+function autoMonitorTick() {
+  return callRemote_('autoMonitorTick', []);
+}
+
+function runProductionAcceptanceMenu() {
+  const result = callRemote_('runProductionAcceptance_', [{repair:true}]);
+  const checks = (result && result.checks) || [];
+  const lines = checks.map(function(x) {
+    return (x.pass ? 'PASS ' : 'FAIL ') + x.id + ' - ' + x.detail;
+  });
+  SpreadsheetApp.getUi().alert(
+    (result && result.pass ? 'PRODUCTION ACCEPTANCE PASS' : 'PRODUCTION ACCEPTANCE CÒN GATE FAIL') +
+    '\nRuntime: ' + (result && result.version || 'unknown') +
+    '\n\n' + lines.join('\n') +
+    '\n\nRepairs: duplicate=' +
+      Number(result && result.repairs && result.repairs.duplicates && result.repairs.duplicates.repaired || 0) +
+    ', stale-running=' +
+      Number(result && result.repairs && result.repairs.staleRunning && result.repairs.staleRunning.repaired || 0)
+  );
+  return result;
+}
 
 function githubForceUpdate() {
   const cache = CacheService.getScriptCache();
