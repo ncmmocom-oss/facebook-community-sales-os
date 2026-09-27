@@ -66,6 +66,15 @@ function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
  * a function that only exists inside the remotely-evaluated Runtime object.
  */
 function autoMonitorTick() {
+  // Time-driven triggers have no guaranteed active spreadsheet context.
+  // Bind the exact Sheet captured when AUTO MONITOR V2 was enabled.
+  const id = String(
+    PropertiesService.getDocumentProperties()
+      .getProperty('SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1') || ''
+  ).trim();
+  if (!id) throw new Error('AUTO MONITOR V2 thiếu Spreadsheet ID binding. Hãy mở Sheet và bật AUTO lại.');
+  const ss = SpreadsheetApp.openById(id);
+  SpreadsheetApp.setActiveSpreadsheet(ss);
   return callRemote_('autoMonitorTick', []);
 }
 
