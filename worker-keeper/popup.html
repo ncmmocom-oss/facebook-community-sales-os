@@ -5,24 +5,29 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Worker Keeper</title>
 <style>
-  body{font-family:Arial,sans-serif;width:320px;margin:0;background:#f8fafc;color:#0f172a}
+  body{font-family:Arial,sans-serif;width:350px;margin:0;background:#f8fafc;color:#0f172a}
   .head{padding:14px 16px;background:#0f766e;color:white}
   .head b{font-size:15px}.head small{display:block;opacity:.85;margin-top:3px}
   .wrap{padding:12px}.card{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:10px}
   .row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:6px 0}
   .muted{color:#64748b;font-size:11px}.status{font-weight:700}
-  .online{color:#15803d}.offline{color:#b91c1c}.unknown{color:#b45309}
+  .online{color:#15803d}.offline{color:#b91c1c}.connecting,.unknown{color:#b45309}
   button{border:0;border-radius:8px;padding:8px 10px;font-weight:700;cursor:pointer}
   .primary{background:#0f766e;color:white}.secondary{background:#e2e8f0;color:#0f172a}
   .actions{display:flex;gap:6px}.actions button{flex:1}
   label{font-size:12px}.toggle{display:flex;align-items:center;gap:8px}
-  #lastError{white-space:pre-wrap;word-break:break-word}
+  #lastError,#bindResult{white-space:pre-wrap;word-break:break-word}
+  .urlLabel{font-size:11px;font-weight:700;margin-bottom:5px;color:#334155}
+  .urlRow{display:flex;gap:6px}
+  .urlRow input{min-width:0;flex:1;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:11px}
+  .urlRow button{white-space:nowrap}
+  .claim{width:100%;margin-top:7px}
 </style>
 </head>
 <body>
   <div class="head">
     <b>Social AIO Worker Keeper</b>
-    <small>P1.5 • W1 browser connection</small>
+    <small>P1.5 • V1.1.0 • URL Binding</small>
   </div>
   <div class="wrap">
     <div class="card">
@@ -31,6 +36,16 @@
       <div class="row"><span>Reconnect</span><span id="reconnects">0</span></div>
       <div class="row"><span>Last OK</span><span id="lastOk" class="muted">—</span></div>
       <div id="lastError" class="muted"></div>
+    </div>
+
+    <div class="card">
+      <div class="urlLabel">Worker URL</div>
+      <div class="urlRow">
+        <input id="workerUrl" value="https://fbaio.org/#/apis" spellcheck="false">
+        <button id="openUrl" class="primary">MỞ & BẮT</button>
+      </div>
+      <button id="claimCurrent" class="secondary claim">BẮT TAB HIỆN TẠI</button>
+      <div id="bindResult" class="muted" style="margin-top:7px">Dùng khi popup đang NO_TAB dù trang APIs đã mở.</div>
     </div>
 
     <div class="card">
