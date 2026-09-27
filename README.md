@@ -534,3 +534,8 @@ AUTO AI không dùng toàn bộ backlog của Group. Mỗi import từ API trả
 Vì vậy nếu quét 25 bài mới, một bài Chờ AI cũ ở cùng Group sẽ không còn bị kéo vào run thành 26. Manual mode có thêm phạm vi **Dữ liệu MỚI của lần quét gần nhất** để chạy lại đúng batch đó.
 
 Các lead cũ từ trước V1.8.7 được đánh dấu `LEGACY`. Chúng không được tính vào PASS KPI. Một LEGACY row chỉ bị loại khi toàn bộ nguồn đã biết của người đó đã được Hard Gate đánh giá và không có nguồn nào PASS; re-analysis từng phần không làm mất lead legacy ngoài ý muốn.
+
+
+## V1.9.2 — Phase 2 Control Center IA
+
+Control Center is reorganized into seven operator areas: Overview/System Health; 200 Group/Due Queue/Exceptions; Signal/Lead; AI/Offer Context/Settings; Worker/API; Data Operations; Runtime/Version/Logs. Backend remains Apps Script + Google Sheets + GitHub runtime. Scanner, raw pagination, Group identity, AI qualification, Lead Hard Gate, worker scheduler, retry/lease behavior and data semantics are unchanged.
