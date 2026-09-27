@@ -504,6 +504,7 @@
     let autoMonitorTimer=null;
     let autoMonitorEnabled=false;
     let monitorBusy=false;
+    let activeScanRunId='';
 
     function renderMonitoring(o) {
       if(!o) return;
@@ -587,10 +588,20 @@
       if(autoMonitorTimer) clearTimeout(autoMonitorTimer);
       autoMonitorTimer=null;
       setAutoMonitorUi();
-      document.getElementById('monitorState').textContent='AUTO MONITOR đã tạm dừng.';
+
+      const runId=String(activeScanRunId||'');
+      if(runId){
+        command({__command:'STOP_SCAN_RUN',runId}, r=>{
+          document.getElementById('monitorState').textContent=
+            'AUTO MONITOR đã tạm dừng • đang dừng cycle '+runId+'.';
+        }, ()=>{
+          document.getElementById('monitorState').textContent='AUTO MONITOR đã tạm dừng.';
+        });
+      } else {
+        document.getElementById('monitorState').textContent='AUTO MONITOR đã tạm dừng.';
+      }
       pollMonitoring();
     }
-
     function runDueGroups(fromAuto) {
       if(monitorBusy) {
         if(!fromAuto) setStatus('Monitoring đang xử lý một cycle khác.');
@@ -944,7 +955,8 @@
           workerSlot:worker.slot,
           row:job.row,
           targetCount:job.targetCount,
-          jobMode:job.jobMode||'selected'
+          jobMode:job.jobMode||'selected',
+          runId:job.runId||ctx.runId||''
         }, r=>{
           ctx.results.push(r);
           pollGroupScanState();
@@ -952,6 +964,7 @@
         }, e=>{
           ctx.results.push({
             ok:false,row:job.row,name:job.name,workerSlot:worker.slot,
+            runId:job.runId||ctx.runId||'',
             errorClass:'UI_COMMAND',error:String(e.message||e),status:'LỖI'
           });
           pollGroupScanState();
@@ -962,6 +975,7 @@
     }
     function runWorkerPlan(plan, retryMode, doneCallback) {
       const workers=(plan.workers||[]).filter(w=>(w.jobs||[]).length);
+      const runId=String(plan.runId||'');
       if(!workers.length){
         const msg='Không có Worker/Job khả dụng.'+
           ((plan.unassigned||[]).length?'\n'+plan.unassigned.map(x=>x.name+': '+x.error).join('\n'):'');
@@ -970,17 +984,22 @@
         return;
       }
 
-      const ctx={results:[],started:Date.now()};
+      activeScanRunId=runId;
+      const ctx={results:[],started:Date.now(),runId};
       let remaining=workers.length;
       const workerNames=workers.map(w=>w.slot+'('+w.jobs.length+')').join(' • ');
       const label=plan.mode==='due'?'DUE QUEUE':(retryMode?'RETRY':'QUÉT');
       setStatus(
         label+' bằng '+workers.length+' Worker...'+
+        (runId?'\nRun: '+runId:'')+
         '\nPhân phối: '+workerNames+
         ((plan.unassigned||[]).length?'\nKhông gán được: '+plan.unassigned.length:'')
       );
 
-      const finish=(payload)=>{ if(doneCallback) doneCallback(payload||{}); };
+      const finish=(payload)=>{
+        if(activeScanRunId===runId) activeScanRunId='';
+        if(doneCallback) doneCallback(payload||{});
+      };
 
       const onWorkerDone=()=>{
         remaining--;
@@ -991,7 +1010,7 @@
           .map(x=>String(x||'').trim())
           .filter(Boolean))];
 
-        command({__command:'FINALIZE_WORKER_BATCH',sourceIds:batchSourceIds},fin=>{
+        command({__command:'FINALIZE_WORKER_BATCH',sourceIds:batchSourceIds,runId},fin=>{
           const summary=summarizePoolResults(ctx);
           const elapsed=Date.now()-ctx.started;
           const newPosts=ctx.results.reduce((sum,r)=>
@@ -1007,6 +1026,7 @@
           const baseStatus=
             ((summary.failed===effectiveProcessed&&effectiveProcessed>0)?'❌ QUÉT THẤT BẠI':label+' XONG')+
             ' - V'+fin.version+
+            (runId?'\nRun: '+runId:'')+
             '\nGroup xử lý: '+summary.processed+
             '\nXong đủ: '+summary.passed+
             '\nThiếu: '+summary.incomplete+
@@ -1025,8 +1045,6 @@
           loadWorkerPool();
           pollMonitoring();
 
-          // Isolated Group failures are quarantined and AUTO continues.
-          // Pause globally only for worker disconnection or a broad failure pattern.
           if(pauseSystemic){
             finish({
               pauseAuto:true,
@@ -1085,13 +1103,17 @@
 
 
     function stopCheckedGroups() {
-      setStatus('Đang gửi yêu cầu dừng...');
-      command({__command:'STOP_CHECKED_GROUPS'}, r => {
-        setStatus('Đã gửi DỪNG cho ' + (r.requested || 0) + ' Group. Request đang chạy sẽ kết thúc rồi dừng.');
+      const runId=String(activeScanRunId||'');
+      setStatus('Đang gửi yêu cầu dừng'+(runId?' run '+runId:'')+'...');
+      command({__command:'STOP_CHECKED_GROUPS',runId}, r => {
+        setStatus(
+          'Đã gửi DỪNG cho '+(r.requested||0)+' Group'+
+          (r.runStopRequested&&r.runId?(' • run '+r.runId):'')+
+          '. Request đang chạy sẽ kết thúc page hiện tại rồi dừng.'
+        );
         pollGroupScanState();
       });
     }
-
     function clearCheckedGroups() {
       command({__command:'CLEAR_CHECKED_GROUPS'}, () => {
         setStatus('Đã bỏ chọn tất cả Group.');
