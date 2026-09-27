@@ -44,6 +44,7 @@ const RemoteApp = (() => {
     AUTO_MONITOR_LAST_STATE_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST',
     AUTO_MONITOR_RETRY_PREFIX: 'SOCIAL_AIO_AUTO_RETRY_V2_',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
+    AUTO_MONITOR_SPREADSHEET_ID_KEY: 'SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1',
     AUTO_MONITOR_TRIGGER_MINUTES: 5,
     AUTO_MONITOR_MAX_GROUPS_PER_TICK: 6,
     AUTO_MONITOR_TICK_BUDGET_MS: 240 * 1000,
@@ -4083,6 +4084,20 @@ const RemoteApp = (() => {
     return String(raw).toLowerCase()==='true';
   }
 
+  function bindAutoMonitorSpreadsheet_() {
+    let ss=null;
+    try { ss=SpreadsheetApp.getActiveSpreadsheet(); } catch(_){}
+    if(ss) return ss;
+
+    const id=String(
+      PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_MONITOR_SPREADSHEET_ID_KEY)||''
+    ).trim();
+    if(!id) throw new Error('AUTO MONITOR V2 chưa có Spreadsheet ID binding. Hãy mở Sheet và bật AUTO lại một lần.');
+    ss=SpreadsheetApp.openById(id);
+    SpreadsheetApp.setActiveSpreadsheet(ss);
+    return ss;
+  }
+
   function getAutoRuntimeBudget_() {
     let email='';
     try { email=String(Session.getEffectiveUser().getEmail()||Session.getActiveUser().getEmail()||'').trim().toLowerCase(); } catch(_){}
@@ -4163,6 +4178,7 @@ const RemoteApp = (() => {
     const retryEntries=Object.keys(retryState).map(k=>retryState[k]||{});
     return {
       version:CFG.VERSION,
+      spreadsheetId:String(props.getProperty(CFG.AUTO_MONITOR_SPREADSHEET_ID_KEY)||''),
       enabled,
       commentEnabled,
       triggerInstalled:triggerCount>0,
@@ -4231,8 +4247,11 @@ const RemoteApp = (() => {
   function setAutoMonitorV2Enabled_(enabled,options) {
     ensureV16Sheets_(false);
     const on=!!enabled;
-    const acceptance=on ? runProductionAcceptance_({repair:true}) : null;
+    const activeSs=SpreadsheetApp.getActiveSpreadsheet();
+    if(!activeSs) throw new Error('Không có active spreadsheet để bind AUTO MONITOR V2.');
     const props=PropertiesService.getDocumentProperties();
+    props.setProperty(CFG.AUTO_MONITOR_SPREADSHEET_ID_KEY,activeSs.getId());
+    const acceptance=on ? runProductionAcceptance_({repair:true}) : null;
     props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,String(on));
     if(options && Object.prototype.hasOwnProperty.call(options,'commentEnabled')) {
       props.setProperty(CFG.COMMENT_INTELLIGENCE_ENABLED_KEY,String(!!options.commentEnabled));
@@ -5083,6 +5102,7 @@ const RemoteApp = (() => {
       {id:'SOURCE_ATTRIBUTION',pass:crossSourceAfter.length===0,detail:crossSourceAfter.length+' cross-source registry row'},
       {id:'CONSISTENCY',pass:!!consistency.ok,detail:consistency.ok?'PASS':'Có chênh lệch dữ liệu'},
       {id:'AUTO_TRIGGER',pass:!auto.enabled||auto.triggerInstalled,detail:auto.enabled?(auto.triggerInstalled?'installed':'MISSING'):'AUTO OFF'},
+      {id:'AUTO_SPREADSHEET_BINDING',pass:!auto.enabled||!!auto.spreadsheetId,detail:auto.spreadsheetId||'MISSING'},
       {id:'AUTO_RUNTIME_CAPACITY',
        pass:auto.runtimeEstimate.estimatedDailyMs<=auto.runtimeUsage.budgetMs,
        detail:'estimate='+Math.round(auto.runtimeEstimate.estimatedDailyMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • '+auto.runtimeUsage.accountClass},
@@ -5128,6 +5148,7 @@ const RemoteApp = (() => {
     const started=Date.now();
     let recordRuntime=false;
     try{
+      bindAutoMonitorSpreadsheet_();
       const state=getAutoMonitorV2State_();
       if(!state.enabled) return saveAutoMonitorLastState_({ok:true,enabled:false,reason:'AUTO_OFF'});
       recordRuntime=true;
