@@ -140,6 +140,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <div class="opsMetricRow"><span>Post có comment</span><b id="commentPosts">0</b></div>
         <div class="opsMetricRow"><span>Post chờ đồng bộ comment</span><b id="commentBacklog">0</b></div>
         <div class="opsMetricRow"><span>Comment đã lưu</span><b id="commentStored">0</b></div>
+        <div class="opsMetricRow"><span>Hot Watch đến hạn</span><b id="commentHotWatch">0</b></div>
         <div class="opsMetricRow"><span>Coverage comment</span><b id="commentCoverage">0%</b></div>
         <div class="opsMetricRow"><span>Hard error</span><b id="commentHard" class="metricCritical">0</b></div>
       </div>
@@ -1469,6 +1470,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       phase2SetText('commentPosts',Number(ci.postsWithComments||0));
       phase2SetText('commentBacklog',Number(ci.backlogPosts||0));
       phase2SetText('commentStored',Number(ci.storedComments||0));
+      phase2SetText('commentHotWatch',Number(ci.hotWatchDue||0));
       phase2SetText('commentCoverage',Number(ci.coveragePct||0)+'%');
       phase2SetText('commentHard',Number(ci.hardErrors||0));
       phase2SetText('autoBackendState',am.enabled?'ON':'OFF');
