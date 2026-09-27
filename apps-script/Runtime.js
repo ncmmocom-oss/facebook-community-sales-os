@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.3-operations-dashboard',
+    VERSION: '1.9.4-auto-comment-production',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -36,6 +36,21 @@ const RemoteApp = (() => {
     OPS_COVERAGE_WINDOW_MS: 24 * 60 * 60 * 1000,
     OPS_FRESH_SIGNAL_MS: 2 * 60 * 60 * 1000,
     OPS_AI_STALE_MS: 2 * 60 * 60 * 1000,
+    AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
+    AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
+    AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
+    AUTO_MONITOR_TRIGGER_MINUTES: 5,
+    AUTO_MONITOR_MAX_GROUPS_PER_TICK: 5,
+    AUTO_MONITOR_BUDGET_MS: 250 * 1000,
+    AUTO_RETRY_PREFIX: 'SOCIAL_AIO_AUTO_RETRY_',
+    AUTO_RETRY_MAX_ATTEMPTS: 5,
+    AUTO_RETRY_DELAYS_MS: [2*60*1000,10*60*1000,30*60*1000,2*60*60*1000,6*60*60*1000],
+    COMMENT_INTEL_ENABLED_KEY: 'SOCIAL_AIO_COMMENT_INTEL_ENABLED',
+    COMMENT_MAX_POSTS_PER_TICK: 4,
+    COMMENT_MAX_PAGES_PER_POST: 3,
+    COMMENT_MAX_RECORDS_PER_POST: 100,
+    COMMENT_CYCLE_BUDGET_MS: 65 * 1000,
+    COMMENT_EMPTY_RETRY_MAX: 3,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
@@ -63,6 +78,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.4 Auto Monitor V2 + Comment Intelligence: backend trigger 5 phút, retry/backoff + hard quarantine, comment delta queue/pagination + AI Gate, production self-test/repair.\n' +
       'V1.9.3 Operations Dashboard: SLA quét + overdue/coverage + exception queue + fresh signal/AI aging + operational health score cho pilot 200 Group.\n' +
       'V1.9.2 Control Center IA: sidebar 7 khu vực + Overview/System Health; tách Group, Signal/Lead, AI/Offer, Worker/API, Data, Runtime/Logs mà không đổi business logic.\n' +
       'V1.9.1-HF4 Run Scope: bỏ STOP_ALL khỏi worker engine; mỗi batch/cycle có runId + cancellation riêng, không thể nhiễm state giữa các run.\nV1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
@@ -145,8 +161,14 @@ const RemoteApp = (() => {
             errors.push(`${file.name}: nhận diện comment JSON nhưng không bóc được comment record.`);
             return;
           }
+          const commentFallback={
+            postId:String(file && file.__sourcePostId || '').trim(),
+            postUrl:String(file && file.__sourcePostUrl || '').trim(),
+            groupKey:String(file && file.__sourceGroupKey || '').trim().toLowerCase(),
+            groupName:String(file && file.__sourceGroupName || '').trim()
+          };
           comments.forEach(item => {
-            const x = ingestCommentRecord_(item, file.name || '', ctx);
+            const x = ingestCommentRecord_(item, file.name || '', ctx, commentFallback);
             commentScanned += x.scanned;
             commentImported += x.imported;
             duplicateCount += x.duplicate;
@@ -912,7 +934,12 @@ const RemoteApp = (() => {
     }
 
     const raw = ss.getSheetByName(CFG.RAW_SHEET);
-    if (raw && raw.getMaxColumns() >= 16) raw.getRange(4,15,1,2).setValues([['Media URL','Media count']]);
+    if (raw) {
+      if (raw.getMaxColumns() < 20) raw.insertColumnsAfter(raw.getMaxColumns(),20-raw.getMaxColumns());
+      raw.getRange(4,15,1,6).setValues([[
+        'Media URL','Media count','Comment đã lấy','Comment cursor','Comment scan cuối','Comment sync trạng thái'
+      ]]);
+    }
 
     const opp = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
     if (opp) {
@@ -957,6 +984,12 @@ const RemoteApp = (() => {
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
     if (name === 'TEST_BRIDGE') return testApiBridge_();
     if (name === 'GET_MONITORING_OVERVIEW') return getMonitoringOverview_();
+    if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_(false);
+    if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2_(command.enabled !== false);
+    if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
+    if (name === 'GET_COMMENT_INTELLIGENCE') return getCommentIntelligenceStats_();
+    if (name === 'RUN_COMMENT_INTELLIGENCE') return runCommentIntelligenceCycle_({limit:command.limit||CFG.COMMENT_MAX_POSTS_PER_TICK,source:'UI'});
+    if (name === 'RUN_PRODUCTION_SELF_TEST') return runProductionSelfTest_(command.repair !== false);
     if (name === 'REFRESH_SIGNAL_FEED') return refreshSignalFeed_();
     if (name === 'OPEN_SIGNAL_FEED') return openOperationalSheet_(CFG.SIGNAL_FEED_SHEET);
     if (name === 'OPEN_LEAD_INBOX') return openOperationalSheet_(CFG.LEAD_SHEET);
@@ -3242,55 +3275,745 @@ const RemoteApp = (() => {
     };
   }
 
+
+  function commentRetryCount_(status) {
+    const m=String(status||'').match(/RETRY\s+(\d+)/i);
+    return m ? Number(m[1]||0) : 0;
+  }
+
+  function loadExistingCommentCountByPost_() {
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.COMMENT_SHEET);
+    const out={};
+    if(!sh || sh.getLastRow()<2) return out;
+    sh.getRange(2,5,sh.getLastRow()-1,1).getDisplayValues().forEach(r=>{
+      const id=String(r[0]||'').trim();
+      if(id) out[id]=(out[id]||0)+1;
+    });
+    return out;
+  }
+
+  function getCommentBacklog_(limit) {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const raw=mustSheet_(ss,CFG.RAW_SHEET);
+    if(raw.getLastRow()<5) return [];
+    if(raw.getMaxColumns()<20) ensureV16Sheets_(true);
+    const existing=loadExistingCommentCountByPost_();
+    const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
+    const jobs=[];
+    rows.forEach((r,i)=>{
+      const postId=String(r[4]||'').trim();
+      const url=String(r[5]||'').trim();
+      const expected=Math.max(0,toNumber_(r[9]));
+      if(!postId || !url || expected<=0) return;
+      const stored=Math.max(0,toNumber_(r[16]));
+      const imported=Math.max(0,Number(existing[postId]||0));
+      const fetched=Math.max(stored,imported);
+      const cursor=String(r[17]||'').trim();
+      const status=String(r[19]||'').trim();
+      if(/^HARD:/i.test(status)) return;
+      if(!cursor && fetched>=expected) return;
+      jobs.push({
+        rawRow:i+5,
+        postId,
+        url,
+        groupName:String(r[2]||'').trim(),
+        groupKey:String(r[3]||'').trim().toLowerCase(),
+        expected,
+        fetched,
+        cursor,
+        status,
+        retryCount:commentRetryCount_(status),
+        importedAtMs:opsDateMs_(r[0]),
+        delta:Math.max(0,expected-fetched)
+      });
+    });
+    jobs.sort((a,b)=>{
+      // Finish an existing cursor chain first, then newest/highest delta.
+      if(!!a.cursor!==!!b.cursor) return a.cursor ? -1 : 1;
+      if((b.importedAtMs||0)!==(a.importedAtMs||0)) return (b.importedAtMs||0)-(a.importedAtMs||0);
+      return (b.delta||0)-(a.delta||0);
+    });
+    const cap=Math.max(1,Math.min(100,Number(limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
+    return jobs.slice(0,cap);
+  }
+
+  function getCommentIntelligenceStats_() {
+    ensureV16Sheets_(false);
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const raw=ss.getSheetByName(CFG.RAW_SHEET);
+    const comment=ss.getSheetByName(CFG.COMMENT_SHEET);
+    const enabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0;
+    if(raw && raw.getLastRow()>=5){
+      const existing=loadExistingCommentCountByPost_();
+      const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
+      rows.forEach(r=>{
+        const postId=String(r[4]||'').trim();
+        if(!postId) return;
+        const expected=Math.max(0,toNumber_(r[9]));
+        if(expected<=0) return;
+        postsWithComments++;
+        expectedComments+=expected;
+        const fetched=Math.max(Math.max(0,toNumber_(r[16])),Number(existing[postId]||0));
+        fetchedComments+=Math.min(expected,fetched);
+        const cursor=String(r[17]||'').trim();
+        const status=String(r[19]||'').trim();
+        if(/^HARD:/i.test(status)) hard++;
+        else if(/^RETRY/i.test(status)) retry++;
+        if(!/^HARD:/i.test(status) && (cursor || fetched<expected)) backlogPosts++;
+      });
+    }
+    return {
+      version:CFG.VERSION,
+      enabled,
+      postsWithComments,
+      backlogPosts,
+      expectedComments,
+      fetchedComments,
+      coveragePct:expectedComments?Math.round(Math.min(expectedComments,fetchedComments)*1000/expectedComments)/10:100,
+      storedComments:comment?Math.max(0,comment.getLastRow()-1):0,
+      hardErrors:hard,
+      retryPosts:retry
+    };
+  }
+
+  function callCommentsRawOnce_(clientId,params) {
+    const id=String(clientId||'').trim();
+    if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
+    const url=CFG.BRIDGE_SERVER.replace(/\/$/,'')+'/call';
+    const res=UrlFetchApp.fetch(url,{
+      method:'post',
+      contentType:'application/json',
+      payload:JSON.stringify({
+        id,
+        apiname:'get_list_fb_comment',
+        apiparams:params||{}
+      }),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    const code=res.getResponseCode();
+    const text=res.getContentText('UTF-8');
+    if(code<200 || code>=300) throw new Error('Social AIO relay HTTP '+code+': '+text.slice(0,700));
+    let parsed=text;
+    try{parsed=JSON.parse(text);}catch(_){}
+    const err=findBridgeError_(parsed);
+    if(err){
+      if(/not\s+connected/i.test(err)) throw new Error('Social AIO báo Client not connected. '+err);
+      throw new Error('Social AIO API lỗi: '+err);
+    }
+    return {code,raw:parsed,bytes:Utilities.newBlob(text||'').getBytes().length};
+  }
+
+  function fetchCommentsPageRaw_(clientId,params) {
+    const max=Math.max(1,Math.min(5,Number(CFG.RELAY_RETRY_ATTEMPTS||3)));
+    const delays=[0,1500,3500,7000,12000];
+    let transientRetries=0,last=null;
+    for(let i=0;i<max;i++){
+      if(i>0) Utilities.sleep(delays[Math.min(i,delays.length-1)]);
+      try{
+        const res=callCommentsRawOnce_(clientId,params);
+        const comments=findBridgeArray_(res.raw,['comments']);
+        const cursor=findBridgeCursor_(res.raw)||'';
+        last={raw:res.raw,comments,cursor,code:res.code,bytes:res.bytes,attempts:i+1,transientRetries};
+        if(comments.length || i>=max-1) return last;
+      }catch(err){
+        if(!isTransientSocialAioError_(err) || i>=max-1) throw err;
+        transientRetries++;
+      }
+    }
+    return last||{raw:null,comments:[],cursor:'',code:0,bytes:0,attempts:max,transientRetries};
+  }
+
+  function updateRawCommentState_(job,patch) {
+    const raw=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.RAW_SHEET);
+    if(job.rawRow<5 || job.rawRow>raw.getLastRow()) return;
+    const vals=raw.getRange(job.rawRow,17,1,4).getValues()[0];
+    const next=Object.assign({
+      fetched:Math.max(0,toNumber_(vals[0])),
+      cursor:String(vals[1]||''),
+      lastScan:vals[2]||'',
+      status:String(vals[3]||'')
+    },patch||{});
+    raw.getRange(job.rawRow,17,1,4).setValues([[
+      Number(next.fetched||0),
+      String(next.cursor||''),
+      next.lastScan||new Date(),
+      String(next.status||'')
+    ]]);
+  }
+
+  function runSinglePostCommentIntelligence_(job,options) {
+    options=options||{};
+    const started=Date.now();
+    const clientId=String(options.clientId||'').trim() || getBridgeClientId_();
+    const currentFetched=Math.max(0,Number(job.fetched||0));
+    const expected=Math.max(0,Number(job.expected||0));
+    const page=fetchCommentsPageRaw_(clientId,{
+      url:job.url,
+      type:'Newest',
+      cursor:String(job.cursor||'')
+    });
+    const comments=page.comments||[];
+
+    if(!comments.length){
+      const n=Math.max(0,Number(job.retryCount||0))+1;
+      const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
+      updateRawCommentState_(job,{
+        fetched:currentFetched,
+        cursor:'',
+        lastScan:new Date(),
+        status:(hard?'HARD: ':'RETRY '+n+': ')+'API_EMPTY expected '+expected+' fetched '+currentFetched
+      });
+      return {
+        ok:false,hard,retry:!hard,postId:job.postId,postUrl:job.url,
+        commentsRead:0,commentImported:0,newSourceIds:[],
+        error:'Comment API page rỗng sau retry.',durationMs:Date.now()-started
+      };
+    }
+
+    const fileName='api_comments_'+job.postId+'_'
+      +Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+    const imported=importJsonFiles([{
+      name:fileName,
+      text:JSON.stringify(comments),
+      __workerFast:true,
+      __sourcePostId:job.postId,
+      __sourcePostUrl:job.url,
+      __sourceGroupKey:job.groupKey||'',
+      __sourceGroupName:job.groupName||''
+    }]);
+
+    const newCount=Math.max(0,Number(imported.commentImported||0));
+    const fetched=Math.min(expected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
+    const nextCursor=String(page.cursor||'');
+    let status='';
+    let cursor='';
+
+    if(fetched>=expected){
+      status='SYNCED '+fetched+'/'+expected;
+    } else if(nextCursor){
+      status='BACKLOG '+fetched+'/'+expected;
+      cursor=nextCursor;
+    } else {
+      const n=Math.max(0,Number(job.retryCount||0))+1;
+      const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
+      status=(hard?'HARD: ':'RETRY '+n+': ')+'GAP '+fetched+'/'+expected+' no cursor';
+    }
+
+    updateRawCommentState_(job,{fetched,cursor,lastScan:new Date(),status});
+    return {
+      ok:true,
+      postId:job.postId,
+      postUrl:job.url,
+      commentsRead:comments.length,
+      commentImported:newCount,
+      duplicates:Number(imported.duplicates||0),
+      fetched,
+      expected,
+      nextCursor:cursor,
+      status,
+      newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
+      durationMs:Date.now()-started
+    };
+  }
+
+  function runCommentIntelligenceCycle_(options) {
+    options=options||{};
+    ensureV16Sheets_(false);
+    const props=PropertiesService.getDocumentProperties();
+    const enabled=(props.getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    if(!enabled) return {ok:true,enabled:false,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
+
+    const started=Date.now();
+    const limit=Math.max(1,Math.min(20,Number(options.limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
+    const jobs=getCommentBacklog_(limit);
+    if(!jobs.length) return {ok:true,enabled:true,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
+
+    const pool=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId&&workerHealthState_(w)!=='OFFLINE');
+    const clientId=pool.length?pool[0].clientId:getBridgeClientId_();
+    const results=[],sourceIds=[];
+    let imported=0;
+
+    for(let i=0;i<jobs.length;i++){
+      if(Date.now()-started>CFG.COMMENT_CYCLE_BUDGET_MS) break;
+      const job=jobs[i];
+      try{
+        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO'});
+        results.push(r);
+        imported+=Number(r.commentImported||0);
+        (r.newSourceIds||[]).forEach(id=>sourceIds.push(id));
+      }catch(err){
+        const n=Math.max(0,Number(job.retryCount||0))+1;
+        const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX || !isTransientSocialAioError_(err);
+        updateRawCommentState_(job,{
+          fetched:job.fetched,
+          cursor:job.cursor||'',
+          lastScan:new Date(),
+          status:(hard?'HARD: ':'RETRY '+n+': ')+String(err.message||err).slice(0,180)
+        });
+        results.push({ok:false,hard,retry:!hard,postId:job.postId,error:String(err.message||err)});
+      }
+    }
+
+    return {
+      ok:true,enabled:true,version:CFG.VERSION,
+      requested:jobs.length,processed:results.length,
+      commentImported:imported,
+      newSourceIds:[...new Set(sourceIds)],
+      durationMs:Date.now()-started,
+      results,
+      stats:getCommentIntelligenceStats_()
+    };
+  }
+
+  function autoRetryKey_(groupKey) {
+    const raw=String(groupKey||'unknown').trim().toLowerCase();
+    const safe=Utilities.base64EncodeWebSafe(raw,Utilities.Charset.UTF_8).replace(/=+$/,'').slice(0,150);
+    return CFG.AUTO_RETRY_PREFIX+safe;
+  }
+
+  function getAutoRetryState_(groupKey) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(autoRetryKey_(groupKey))||'';
+    if(!raw) return {attempts:0,nextAt:0,hard:false,lastClass:'',lastError:''};
+    try{return Object.assign({attempts:0,nextAt:0,hard:false,lastClass:'',lastError:''},JSON.parse(raw));}
+    catch(_){return {attempts:0,nextAt:0,hard:false,lastClass:'',lastError:''};}
+  }
+
+  function clearAutoRetryState_(groupKey) {
+    if(groupKey) PropertiesService.getDocumentProperties().deleteProperty(autoRetryKey_(groupKey));
+  }
+
+  function setAutoRetryFailure_(groupKey,errorClass,error) {
+    const props=PropertiesService.getDocumentProperties();
+    const prev=getAutoRetryState_(groupKey);
+    const cls=String(errorClass||'UNKNOWN').toUpperCase();
+    const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY'].indexOf(cls)>=0;
+    const attempts=Number(prev.attempts||0)+1;
+    const hard=!retryable || attempts>=CFG.AUTO_RETRY_MAX_ATTEMPTS;
+    const delays=CFG.AUTO_RETRY_DELAYS_MS||[];
+    const delay=hard?0:Number(delays[Math.min(attempts-1,delays.length-1)]||30*60*1000);
+    const state={
+      attempts,
+      nextAt:hard?0:Date.now()+delay,
+      hard,
+      lastClass:cls,
+      lastError:String(error||'').slice(0,500),
+      updatedAt:new Date().toISOString()
+    };
+    props.setProperty(autoRetryKey_(groupKey),JSON.stringify(state));
+    return state;
+  }
+
+  function classifyAutoSheetException_(status,note) {
+    const text=String(note||'');
+    if(/DUPLICATE_IDENTITY|URL_INVALID|HARD_QUARANTINE/i.test(text)) return 'STRUCTURAL';
+    if(/không còn cursor|no cursor/i.test(text) && String(status||'')==='THIẾU') return 'EXHAUSTED';
+    return classifyScanError_(new Error(text));
+  }
+
+  function getDuplicateGroupIdentityRows_() {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return [];
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
+    const buckets={};
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có') return;
+      const url=String(r[3]||'').trim();
+      const key=exactGroupKeyFromRow_(url,r[4]);
+      if(!key) return;
+      (buckets[key]||(buckets[key]=[])).push({
+        row:i+2,key,name:String(r[2]||'').trim()||('Group '+key),
+        lastAt:opsDateMs_(r[9]),status:String(r[23]||'').trim()
+      });
+    });
+    const out=[];
+    Object.keys(buckets).forEach(key=>{
+      const list=buckets[key];
+      if(list.length<2) return;
+      list.sort((a,b)=>{
+        const doneA=a.status==='XONG'?1:0,doneB=b.status==='XONG'?1:0;
+        if(doneA!==doneB) return doneB-doneA;
+        return (b.lastAt||0)-(a.lastAt||0) || a.row-b.row;
+      });
+      const canonical=list[0];
+      list.slice(1).forEach(x=>out.push(Object.assign({},x,{canonicalRow:canonical.row,canonicalName:canonical.name})));
+    });
+    return out;
+  }
+
+  function cleanupExpiredRuntimeState_(repair) {
+    const props=PropertiesService.getDocumentProperties();
+    const all=props.getProperties();
+    let expiredLeases=0,expiredRunStops=0;
+    Object.keys(all).forEach(k=>{
+      if(k.indexOf(CFG.GROUP_LEASE_PREFIX)===0){
+        try{
+          const x=JSON.parse(all[k]||'{}');
+          if(Number(x.expiresAt||0) && Number(x.expiresAt)<Date.now()){
+            expiredLeases++;
+            if(repair) props.deleteProperty(k);
+          }
+        }catch(_){
+          expiredLeases++;
+          if(repair) props.deleteProperty(k);
+        }
+      }
+      if(k.indexOf(CFG.SCAN_RUN_STOP_PREFIX)===0){
+        try{
+          const x=JSON.parse(all[k]||'{}');
+          const at=Number(x.at||x.createdAt||0);
+          if(at && Date.now()-at>CFG.SCAN_RUN_STOP_TTL_MS){
+            expiredRunStops++;
+            if(repair) props.deleteProperty(k);
+          }
+        }catch(_){}
+      }
+    });
+
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    let staleRunning=0;
+    if(sh.getLastRow()>=2){
+      const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getValues();
+      rows.forEach((r,i)=>{
+        if(String(r[23]||'').trim()!=='ĐANG QUÉT') return;
+        const key=exactGroupKeyFromRow_(r[3],r[4]);
+        const raw=props.getProperty(groupLeasePropertyKey_(key))||'';
+        let active=false;
+        try{const x=JSON.parse(raw||'{}');active=Number(x.expiresAt||0)>Date.now();}catch(_){}
+        if(active) return;
+        staleRunning++;
+        if(repair){
+          setGroupRowStatus_(sh,i+2,'LỖI',String(r[24]||'').trim(),'AUTO SELF-REPAIR: stale ĐANG QUÉT không còn active lease.');
+        }
+      });
+    }
+
+    const duplicates=getDuplicateGroupIdentityRows_();
+    if(repair && duplicates.length){
+      duplicates.forEach(d=>{
+        const current=String(sh.getRange(d.row,24).getDisplayValue()||'').trim();
+        if(current==='ĐANG QUÉT') return;
+        setGroupRowStatus_(
+          sh,d.row,'LỖI',
+          String(sh.getRange(d.row,25).getDisplayValue()||'').trim(),
+          'AUTO HARD_QUARANTINE: DUPLICATE_IDENTITY → canonical row '+d.canonicalRow+' ('+d.canonicalName+').'
+        );
+        const state=getAutoRetryState_(d.key);
+        state.hard=true;state.lastClass='STRUCTURAL';state.lastError='DUPLICATE_IDENTITY canonical row '+d.canonicalRow;state.updatedAt=new Date().toISOString();
+        props.setProperty(autoRetryKey_(d.key),JSON.stringify(state));
+      });
+    }
+
+    SpreadsheetApp.flush();
+    return {expiredLeases,expiredRunStops,staleRunning,duplicates};
+  }
+
+  function getAutoRetryJobs_(limit) {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return [];
+    const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>x.row));
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getValues();
+    const out=[];
+    rows.forEach((r,i)=>{
+      const row=i+2;
+      if(duplicateRows.has(row)) return;
+      if(String(r[0]||'').trim()!=='Có') return;
+      const status=String(r[23]||'').trim();
+      if(status!=='LỖI' && status!=='THIẾU') return;
+      const url=String(r[3]||'').trim();
+      if(!url) return;
+      const key=exactGroupKeyFromRow_(url,r[4]);
+      const cls=classifyAutoSheetException_(status,r[25]);
+      if(['TRANSIENT','CONNECTION','SHEET_BUSY'].indexOf(cls)<0) return;
+      const state=getAutoRetryState_(key);
+      if(state.hard || (state.nextAt && state.nextAt>Date.now())) return;
+      out.push({
+        row,
+        name:String(r[2]||'').trim()||('Group '+key),
+        profile:String(r[1]||'').trim()||'AUTO',
+        url,
+        groupKey:key,
+        targetCount:normalizeGroupTarget_(r[8]||25),
+        status,
+        lifecycle:String(r[6]||'').trim(),
+        priorityRank:groupPriorityRank_(r[6]),
+        autoKind:'RETRY',
+        retryState:state,
+        errorClass:cls
+      });
+    });
+    out.sort((a,b)=>a.priorityRank-b.priorityRank || Number(a.retryState.attempts||0)-Number(b.retryState.attempts||0) || a.row-b.row);
+    return out.slice(0,Math.max(1,Number(limit||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK)));
+  }
+
+  function isAutoMonitorEnabled_() {
+    return PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_MONITOR_ENABLED_KEY)==='true';
+  }
+
+  function autoMonitorTriggers_() {
+    return ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()===CFG.AUTO_MONITOR_TRIGGER_HANDLER);
+  }
+
+  function ensureAutoMonitorTrigger_() {
+    const triggers=autoMonitorTriggers_();
+    if(triggers.length>1) triggers.slice(1).forEach(t=>ScriptApp.deleteTrigger(t));
+    if(triggers.length) return {installed:true,count:1};
+    ScriptApp.newTrigger(CFG.AUTO_MONITOR_TRIGGER_HANDLER)
+      .timeBased()
+      .everyMinutes(CFG.AUTO_MONITOR_TRIGGER_MINUTES)
+      .create();
+    return {installed:true,count:1};
+  }
+
+  function removeAutoMonitorTriggers_() {
+    const triggers=autoMonitorTriggers_();
+    triggers.forEach(t=>ScriptApp.deleteTrigger(t));
+    return triggers.length;
+  }
+
+  function getAutoMonitorV2State_(repairTrigger) {
+    const props=PropertiesService.getDocumentProperties();
+    const enabled=isAutoMonitorEnabled_();
+    if(enabled && repairTrigger) ensureAutoMonitorTrigger_();
+    const triggers=autoMonitorTriggers_();
+    let lastRun=null;
+    try{lastRun=JSON.parse(props.getProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY)||'null');}catch(_){}
+    return {
+      version:CFG.VERSION,
+      enabled,
+      backend:true,
+      intervalMinutes:CFG.AUTO_MONITOR_TRIGGER_MINUTES,
+      triggerInstalled:triggers.length>0,
+      triggerCount:triggers.length,
+      lastRun
+    };
+  }
+
+  function setAutoMonitorV2_(enabled) {
+    const props=PropertiesService.getDocumentProperties();
+    const on=enabled!==false;
+    props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,on?'true':'false');
+    let trigger;
+    if(on) trigger=ensureAutoMonitorTrigger_();
+    else trigger={removed:removeAutoMonitorTriggers_()};
+    return Object.assign(getAutoMonitorV2State_(false),{changed:true,trigger});
+  }
+
+  function flattenWorkerPlanJobs_(plan) {
+    const out=[];
+    (plan&&plan.workers||[]).forEach(w=>{
+      (w.jobs||[]).forEach(j=>out.push(Object.assign({},j,{workerSlot:w.slot})));
+    });
+    return out;
+  }
+
+  function autoMonitorTick_(options) {
+    options=options||{};
+    if(!options.force && !isAutoMonitorEnabled_()) return {ok:true,skipped:true,reason:'DISABLED',version:CFG.VERSION};
+
+    const lock=LockService.getScriptLock();
+    if(!lock.tryLock(1000)) return {ok:true,skipped:true,reason:'BUSY',version:CFG.VERSION};
+
+    const started=Date.now();
+    const props=PropertiesService.getDocumentProperties();
+    const runId='auto-'+Utilities.getUuid().slice(0,10);
+    const summary={
+      ok:true,version:CFG.VERSION,runId,source:options.source||'TRIGGER',
+      groupsProcessed:0,groupsPassed:0,groupsFailed:0,groupsSkipped:0,
+      commentsProcessed:0,commentsImported:0,aiAnalyzed:0,newSourceIds:[],
+      startedAt:new Date().toISOString()
+    };
+
+    try{
+      const repairs=cleanupExpiredRuntimeState_(true);
+      summary.repairs=repairs;
+
+      const configured=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
+      const available=configured.filter(w=>workerHealthState_(w)!=='OFFLINE');
+      if(!available.length){
+        summary.ok=false;
+        summary.waitingWorker=true;
+        summary.message=configured.length?'Worker hiện OFFLINE.':'Chưa cấu hình Worker.';
+        return summary;
+      }
+
+      const maxJobs=CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK;
+      const retry=getAutoRetryJobs_(Math.min(2,maxJobs));
+      const retryRows=new Set(retry.map(x=>x.row));
+      const due=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT)
+        .filter(x=>!retryRows.has(x.row))
+        .map(x=>Object.assign({},x,{autoKind:'DUE'}));
+
+      const jobs=[];
+      if(retry.length) jobs.push(retry[0]);
+      due.forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
+      retry.slice(1).forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
+
+      if(jobs.length){
+        const plan=prepareJobsForWorkers_(jobs,0,false,'auto_v2');
+        const work=flattenWorkerPlanJobs_(plan).slice(0,maxJobs);
+        for(let i=0;i<work.length;i++){
+          if(Date.now()-started>CFG.AUTO_MONITOR_BUDGET_MS) break;
+          if(!options.force && !isAutoMonitorEnabled_()) break;
+          const job=work[i];
+
+          if(job.autoKind==='DUE' && !isDueJobStillValid_(mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET),job.row)){
+            summary.groupsSkipped++;
+            continue;
+          }
+
+          const r=runWorkerJob_({
+            row:job.row,targetCount:job.targetCount,workerSlot:job.workerSlot,
+            runId,jobMode:'auto_v2'
+          });
+          summary.groupsProcessed++;
+          if(r&&r.ok&&!r.incomplete&&!r.stopped){
+            summary.groupsPassed++;
+            clearAutoRetryState_(r.groupKey||job.groupKey);
+          } else if(r&&r.busy){
+            summary.groupsSkipped++;
+          } else {
+            summary.groupsFailed++;
+            if(r&&r.groupKey) summary['retry_'+r.groupKey]=setAutoRetryFailure_(r.groupKey,r.errorClass||'UNKNOWN',r.error||r.note||'');
+          }
+          const imported=r&&r.imported||{};
+          (imported.newSourceIds||[]).forEach(id=>summary.newSourceIds.push(id));
+        }
+      }
+
+      if(Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
+        const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
+        summary.commentsProcessed=Number(cr.processed||0);
+        summary.commentsImported=Number(cr.commentImported||0);
+        (cr.newSourceIds||[]).forEach(id=>summary.newSourceIds.push(id));
+      }
+
+      summary.newSourceIds=[...new Set(summary.newSourceIds.map(x=>String(x||'').trim()).filter(Boolean))];
+
+      const aiCfg=getAiConfig_();
+      if(aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-35000){
+        try{
+          const ar=analyzeNewPosts_({
+            silent:true,
+            scope:'source_ids',
+            sourceIds:summary.newSourceIds.slice(0,Math.min(100,CFG.AUTO_AI_SOURCE_CHUNK))
+          });
+          summary.aiAnalyzed=Number(ar&&ar.analyzed||0);
+          summary.aiResult={analyzed:summary.aiAnalyzed,errors:(ar&&ar.errors||[]).length};
+        }catch(err){
+          summary.aiError=String(err.message||err);
+        }
+      }
+
+      summary.durationMs=Date.now()-started;
+      summary.finishedAt=new Date().toISOString();
+      return summary;
+    }catch(err){
+      summary.ok=false;
+      summary.error=String(err.message||err);
+      summary.durationMs=Date.now()-started;
+      summary.finishedAt=new Date().toISOString();
+      return summary;
+    }finally{
+      try{
+        summary.durationMs=summary.durationMs||Date.now()-started;
+        summary.finishedAt=summary.finishedAt||new Date().toISOString();
+        props.setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
+      }catch(_){}
+      lock.releaseLock();
+    }
+  }
+
+  function runProductionSelfTest_(repair) {
+    ensureV16Sheets_(false);
+    const fixes=cleanupExpiredRuntimeState_(repair!==false);
+    if(isAutoMonitorEnabled_() && repair!==false) ensureAutoMonitorTrigger_();
+
+    const overview=getMonitoringOverview_();
+    const audit=auditConsistency_();
+    const auto=getAutoMonitorV2State_(false);
+    const comments=getCommentIntelligenceStats_();
+    const ai=getAiConfig_();
+    const workers=overview.workers||{};
+    const duplicates=getDuplicateGroupIdentityRows_();
+
+    const checks=[
+      {id:'SCHEMA',severity:'P0',pass:!!SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.COMMENT_SHEET),detail:'BÌNH LUẬN tồn tại'},
+      {id:'WORKER_CONFIG',severity:'P0',pass:Number(workers.configuredCount||0)>0,detail:Number(workers.configuredCount||0)+' worker configured'},
+      {id:'WORKER_NOT_OFFLINE',severity:'P0',pass:Number(workers.configuredCount||0)>0 && Number(workers.offlineCount||0)<Number(workers.configuredCount||0),detail:Number(workers.onlineCount||0)+' online / '+Number(workers.staleCount||0)+' stale / '+Number(workers.offlineCount||0)+' offline'},
+      {id:'AUTO_TRIGGER',severity:'P0',pass:!auto.enabled || (auto.triggerInstalled&&auto.triggerCount===1),detail:auto.enabled?('enabled • trigger '+auto.triggerCount):'disabled'},
+      {id:'STALE_RUNNING',severity:'P0',pass:Number(fixes.staleRunning||0)===0 || repair!==false,detail:Number(fixes.staleRunning||0)+' stale runtime row'},
+      {id:'GROUP_IDENTITY',severity:'P1',pass:duplicates.length===0,detail:duplicates.length+' duplicate active identity row(s)'+(duplicates.length&&repair!==false?' quarantined':'')},
+      {id:'DATA_CONSISTENCY',severity:'P1',pass:!!audit.ok,detail:'raw/opportunity/comment integrity'},
+      {id:'AI_CONFIG',severity:'P1',pass:!!ai.configured,detail:ai.provider+' / '+ai.model},
+      {id:'COMMENT_PIPELINE',severity:'P1',pass:comments.hardErrors===0,detail:comments.backlogPosts+' backlog • '+comments.storedComments+' stored • '+comments.hardErrors+' hard'},
+      {id:'DUE_QUEUE',severity:'P1',pass:true,detail:Number(overview.dueNow||0)+' runnable due / '+Number(overview.sla&&overview.sla.overdueAll||0)+' all overdue'}
+    ];
+
+    return {
+      ok:checks.filter(x=>x.severity==='P0').every(x=>x.pass),
+      version:CFG.VERSION,
+      repaired:repair!==false,
+      checks,fixes,audit,autoMonitor:auto,commentIntel:comments,
+      overview:{
+        activeGroups:overview.activeGroups,dueNow:overview.dueNow,exceptions:overview.exceptions,
+        health:overview.operationalHealth
+      }
+    };
+  }
+
   function fetchCommentsApiBridge_(postUrl) {
     postUrl=String(postUrl || '').trim();
     if(!postUrl) throw new Error('Hãy nhập URL bài Facebook.');
     if (/facebook\.com\/groups\/[^\/?#]+\/?(?:[?#].*)?$/i.test(postUrl)) {
       throw new Error('URL đang nhập là URL NHÓM, không phải URL BÀI VIẾT. Muốn lấy comment hãy dùng URL post/permalink cụ thể.');
     }
-    const started=Date.now();
-    const apiResult=callSocialAioApi_('get_list_fb_comment',{
-      url:postUrl,
-      type:'Newest',
-      cursor:''
-    });
-    const comments=findBridgeArray_(apiResult,['comments']);
-    if(!comments.length) {
-      return {
-        ok:true,
-        version:CFG.VERSION,
-        postUrl,
-        commentsRead:0,
-        nextCursor:findBridgeCursor_(apiResult)||'',
-        responsePreview:compactBridgePreview_(apiResult,700),
-        imported:null,
-        durationMs:Date.now()-started
-      };
-    }
+
+    ensureV16Sheets_(false);
+    const raw=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.RAW_SHEET);
     const postId=normalizePostId_('',postUrl)||'post';
-    const fileName='api_comments_'+postId+'_'+
-      Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-    const imported=importJsonFiles([{name:fileName,text:JSON.stringify(comments)}]);
+    let job=null;
+    if(raw.getLastRow()>=5){
+      const vals=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
+      for(let i=0;i<vals.length;i++){
+        const id=String(vals[i][4]||'').trim();
+        const url=String(vals[i][5]||'').trim();
+        if(id===postId || normalizeUrl_(url)===normalizeUrl_(postUrl)){
+          job={
+            rawRow:i+5,postId:id||postId,url:url||postUrl,
+            groupName:String(vals[i][2]||'').trim(),
+            groupKey:String(vals[i][3]||'').trim().toLowerCase(),
+            expected:Math.max(1,toNumber_(vals[i][9])),
+            fetched:Math.max(0,toNumber_(vals[i][16])),
+            cursor:String(vals[i][17]||'').trim(),
+            status:String(vals[i][19]||'').trim(),
+            retryCount:commentRetryCount_(vals[i][19])
+          };
+          break;
+        }
+      }
+    }
+
+    if(job) return runSinglePostCommentIntelligence_(job,{source:'MANUAL'});
+
+    const started=Date.now();
+    const page=fetchCommentsPageRaw_(getBridgeClientId_(),{url:postUrl,type:'Newest',cursor:''});
+    const comments=page.comments||[];
+    if(!comments.length){
+      return {ok:true,version:CFG.VERSION,postUrl,commentsRead:0,nextCursor:page.cursor||'',imported:null,durationMs:Date.now()-started};
+    }
+    const fileName='api_comments_'+postId+'_'+Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+    const imported=importJsonFiles([{
+      name:fileName,text:JSON.stringify(comments),
+      __sourcePostId:postId,__sourcePostUrl:postUrl
+    }]);
     return {
-      ok:true,
-      version:CFG.VERSION,
-      postUrl,
-      commentsRead:comments.length,
-      nextCursor:findBridgeCursor_(apiResult)||'',
-      imported,
-      durationMs:Date.now()-started
+      ok:true,version:CFG.VERSION,postUrl,
+      commentsRead:comments.length,nextCursor:page.cursor||'',
+      imported,durationMs:Date.now()-started
     };
   }
-
-
-  // ============================================================
-  // V1.8.1 POC - QUÉT NHÓM operator controls inside sheet
-  // W: checkbox selection
-  // X: per-row command (▶ QUÉT / ■ DỪNG)
-  // Y: API status
-  // Z: API detail
-  // Q:V daily counters are preserved but hidden to keep controls adjacent to Ghi chú.
-  // ============================================================
 
   function setupBridgeControlColumns_(sheet) {
     if (!sheet) return { rows:0 };
@@ -3948,6 +4671,8 @@ const RemoteApp = (() => {
       workers,
       sla,
       aiOps:ai,
+      autoMonitor:getAutoMonitorV2State_(false),
+      commentIntel:getCommentIntelligenceStats_(),
       operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
@@ -5663,5 +6388,8 @@ const RemoteApp = (() => {
     retryFailedGroupsApiBridge_,
     stopCheckedGroupsApiBridge_,
     clearCheckedGroups_,
+    autoMonitorTick: autoMonitorTick_,
+    runCommentIntelligenceCycle: runCommentIntelligenceCycle_,
+    runProductionSelfTest: runProductionSelfTest_,
   };
 })();
