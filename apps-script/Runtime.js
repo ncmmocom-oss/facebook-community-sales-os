@@ -4157,12 +4157,23 @@ const RemoteApp = (() => {
     const avg=samples.length
       ? samples.reduce((a,b)=>a+b,0)/samples.length
       : 27;
+    const scanEstimatedDailyMs=Math.round(scans*avg*1000*1.15);
+    const budget=getAutoRuntimeBudget_();
+    const nonScanReserveMs=Math.max(15*60*1000,Math.round(budget.budgetMs*0.15));
+    const projectedTotalMs=scanEstimatedDailyMs+nonScanReserveMs;
+    const scansPerGroup=active ? scans/active : 0;
+    const maxScans=Math.max(0,Math.floor((budget.budgetMs-nonScanReserveMs)/(Math.max(1,avg)*1000*1.15)));
+    const estimatedMaxGroups=scansPerGroup ? Math.floor(maxScans/scansPerGroup) : 0;
     return {
       activeGroups:active,
       scansPerDay:scans,
       avgScanSec:Math.round(avg*10)/10,
       sampleCount:samples.length,
-      estimatedDailyMs:Math.round(scans*avg*1000*1.15)
+      scanEstimatedDailyMs,
+      nonScanReserveMs,
+      projectedTotalMs,
+      estimatedDailyMs:projectedTotalMs,
+      estimatedMaxGroups
     };
   }
 
@@ -5104,8 +5115,8 @@ const RemoteApp = (() => {
       {id:'AUTO_TRIGGER',pass:!auto.enabled||auto.triggerInstalled,detail:auto.enabled?(auto.triggerInstalled?'installed':'MISSING'):'AUTO OFF'},
       {id:'AUTO_SPREADSHEET_BINDING',pass:!auto.enabled||!!auto.spreadsheetId,detail:auto.spreadsheetId||'MISSING'},
       {id:'AUTO_RUNTIME_CAPACITY',
-       pass:auto.runtimeEstimate.estimatedDailyMs<=auto.runtimeUsage.budgetMs,
-       detail:'estimate='+Math.round(auto.runtimeEstimate.estimatedDailyMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • '+auto.runtimeUsage.accountClass},
+       pass:auto.runtimeEstimate.projectedTotalMs<=auto.runtimeUsage.budgetMs,
+       detail:'scan='+Math.round(auto.runtimeEstimate.scanEstimatedDailyMs/60000)+'m + reserve='+Math.round(auto.runtimeEstimate.nonScanReserveMs/60000)+'m = '+Math.round(auto.runtimeEstimate.projectedTotalMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • max≈'+Number(auto.runtimeEstimate.estimatedMaxGroups||0)+' Group @ cadence hiện tại • '+auto.runtimeUsage.accountClass},
       {id:'NO_MANUAL_SELECTION_REQUIRED',pass:true,detail:'Auto queue dùng Quét tiếp theo/CẦN QUÉT; checkbox chỉ manual override. Selected hiện tại='+selected},
       {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=25,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
       {id:'COMMENT_PIPELINE',pass:rawPostsWithComments===0 || commentRows>0 || commentQueueStats.queue>0,detail:'posts có comment='+rawPostsWithComments+', comment rows='+commentRows+', queue='+commentQueueStats.queue+', cooldown='+commentQueueStats.cooldown},
