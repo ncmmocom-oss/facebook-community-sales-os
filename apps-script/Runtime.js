@@ -3343,14 +3343,18 @@ const RemoteApp = (() => {
     const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
     const out={};
     if(!sh || sh.getLastRow()<2) return out;
-    const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getValues();
-    rows.forEach(r=>{
-      const sourceId=String(r[1]||'').trim();
-      const type=String(r[3]||'').trim();
+    const n=sh.getLastRow()-1;
+    const ids=sh.getRange(2,2,n,1).getValues(); // B
+    const types=sh.getRange(2,4,n,1).getValues(); // D
+    const scoreClass=sh.getRange(2,11,n,2).getValues(); // K:L
+    const gates=sh.getRange(2,25,n,1).getValues(); // Y
+    ids.forEach((r,i)=>{
+      const sourceId=String(r[0]||'').trim();
+      const type=String(types[i]&&types[i][0]||'').trim();
       if(!sourceId || type==='Bình luận' || sourceId.indexOf('C:')===0) return;
-      const score=Number(r[10]||0);
-      const classification=String(r[11]||'').trim();
-      const gate=String(r[24]||'').trim().toUpperCase();
+      const score=Number(scoreClass[i]&&scoreClass[i][0]||0);
+      const classification=String(scoreClass[i]&&scoreClass[i][1]||'').trim();
+      const gate=String(gates[i]&&gates[i][0]||'').trim().toUpperCase();
       const watch=
         gate==='PASS'||gate==='WATCH'||gate==='REVIEW'||gate==='REVIEW_REQUIRED'||
         classification==='Nguồn hội thoại'||score>=40;
@@ -3424,7 +3428,17 @@ const RemoteApp = (() => {
     return jobs.slice(0,cap);
   }
 
-  function getCommentIntelligenceStats_() {
+  function invalidateCommentStatsCache_() {
+    try{CacheService.getScriptCache().remove('COMMENT_INTEL_STATS_'+CFG.VERSION);}catch(_){}
+  }
+
+  function getCommentIntelligenceStats_(force) {
+    const cache=CacheService.getScriptCache();
+    const cacheKey='COMMENT_INTEL_STATS_'+CFG.VERSION;
+    if(!force){
+      const cached=cache.get(cacheKey);
+      if(cached){try{return JSON.parse(cached);}catch(_){}}
+    }
     ensureV16Sheets_(false);
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
@@ -3456,7 +3470,7 @@ const RemoteApp = (() => {
         if(!/^HARD:/i.test(status) && (cursor || fetched<expected)) backlogPosts++;
       });
     }
-    return {
+    const result={
       version:CFG.VERSION,
       enabled,
       postsWithComments,
@@ -3469,6 +3483,8 @@ const RemoteApp = (() => {
       retryPosts:retry,
       hotWatchDue
     };
+    try{cache.put(cacheKey,JSON.stringify(result),30);}catch(_){}
+    return result;
   }
 
   function callCommentsRawOnce_(clientId,params) {
@@ -3540,6 +3556,7 @@ const RemoteApp = (() => {
       const current=Math.max(0,toNumber_(raw.getRange(job.rawRow,10).getValue()));
       if(observed>current) raw.getRange(job.rawRow,10).setValue(observed);
     }
+    invalidateCommentStatsCache_();
   }
 
   function runSinglePostCommentIntelligence_(job,options) {
@@ -3676,7 +3693,7 @@ const RemoteApp = (() => {
       newSourceIds:[...new Set(sourceIds)],
       durationMs:Date.now()-started,
       results,
-      stats:getCommentIntelligenceStats_()
+      stats:getCommentIntelligenceStats_(true)
     };
   }
 
@@ -4616,15 +4633,17 @@ const RemoteApp = (() => {
 
     const now=Number(nowMs||Date.now());
     const n=sh.getLastRow()-1;
-    const rows=sh.getRange(2,1,n,26).getValues();
+    const core=sh.getRange(2,1,n,6).getValues(); // A:F
+    const scores=sh.getRange(2,11,n,1).getValues(); // K
+    const gates=sh.getRange(2,25,n,1).getValues(); // Y
     const out=Object.assign({},empty,{backlogPreview:[]});
 
-    rows.forEach((r,i)=>{
+    core.forEach((r,i)=>{
       const sourceId=String(r[1]||'').trim();
       if(!sourceId) return;
       out.total++;
 
-      const gate=String(r[24]||'').trim().toUpperCase();
+      const gate=String(gates[i]&&gates[i][0]||'').trim().toUpperCase();
       const sourceMs=opsDateMs_(r[0]);
       const ageMs=sourceMs?Math.max(0,now-sourceMs):0;
       const fresh=sourceMs && ageMs<=CFG.OPS_FRESH_SIGNAL_MS;
@@ -4656,7 +4675,7 @@ const RemoteApp = (() => {
           sourceId,
           group:String(r[4]||'').trim()||'Group không rõ',
           person:String(r[5]||'').trim()||'Ẩn danh',
-          score:Number(r[10]||0),
+          score:Number(scores[i]&&scores[i][0]||0),
           ageMs,
           url:String(r[2]||'').trim()
         });
