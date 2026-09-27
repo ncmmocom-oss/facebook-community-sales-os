@@ -62,6 +62,10 @@ const RemoteApp = (() => {
     RAW_COMMENT_STATUS_COL: 19,
     RAW_COMMENT_CURSOR_COL: 20,
     RAW_COMMENT_OBSERVED_COL: 21,
+    RAW_COMMENT_DELTA_CURSOR_COL: 22,
+    RAW_COMMENT_DELTA_TARGET_COL: 23,
+    RAW_COMMENT_DELTA_BASE_COL: 24,
+    RAW_COMMENT_DELTA_FETCHED_COL: 25,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -673,7 +677,7 @@ const RemoteApp = (() => {
     const rawRows=ids.map(id=>rowMap[id]&&rowMap[id].rawRow).filter(Boolean);
     if(rawRows.length){
       const min=Math.min(...rawRows), max=Math.max(...rawRows);
-      const vals=rawSheet.getRange(min,10,max-min+1,12).getValues(); // J:U
+      const vals=rawSheet.getRange(min,10,max-min+1,16).getValues(); // J:Y
       ids.forEach(id=>{
         const meta=rowMap[id]; if(!meta||!meta.rawRow)return;
         const u=uniq[id], r=vals[meta.rawRow-min];
@@ -686,15 +690,20 @@ const RemoteApp = (() => {
         }
         const handled=Number(r[7]||0); // Q
         const observed=Number(r[11]||0); // U
-        if(handled>nextCommentCount || observed>nextCommentCount){
+        const deltaTarget=Number(r[13]||0); // W
+        if(handled>nextCommentCount || observed>nextCommentCount || deltaTarget>nextCommentCount){
           r[7]=Math.min(handled,nextCommentCount);
           r[8]=new Date(); // R
-          r[9]='COUNT_RESET • Facebook total comment giảm từ '+Math.max(handled,observed)+' xuống '+nextCommentCount; // S
-          r[10]=''; // T cursor
+          r[9]='COUNT_RESET • Facebook total comment giảm từ '+Math.max(handled,observed,deltaTarget)+' xuống '+nextCommentCount; // S
+          r[10]=''; // T backfill cursor
           r[11]=nextCommentCount; // U observed baseline
+          r[12]=''; // V delta cursor
+          r[13]=0;  // W delta target
+          r[14]=0;  // X delta base
+          r[15]=0;  // Y delta fetched
         }
       });
-      rawSheet.getRange(min,10,vals.length,12).setValues(vals);
+      rawSheet.getRange(min,10,vals.length,16).setValues(vals);
     }
 
     const oppRows=ids.map(id=>rowMap[id]&&rowMap[id].oppRow).filter(Boolean);
@@ -964,9 +973,10 @@ const RemoteApp = (() => {
 
     const raw = ss.getSheetByName(CFG.RAW_SHEET);
     if (raw) {
-      if (raw.getMaxColumns() < 21) raw.insertColumnsAfter(raw.getMaxColumns(),21-raw.getMaxColumns());
-      raw.getRange(4,15,1,7).setValues([[
-        'Media URL','Media count','Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái','Comment cursor','Comment total đã quan sát'
+      if (raw.getMaxColumns() < 25) raw.insertColumnsAfter(raw.getMaxColumns(),25-raw.getMaxColumns());
+      raw.getRange(4,15,1,11).setValues([[
+        'Media URL','Media count','Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái',
+        'Comment backfill cursor','Comment total đã quan sát','Comment delta cursor','Comment delta target','Comment delta base','Comment delta fetched'
       ]]);
     }
 
@@ -4573,35 +4583,39 @@ const RemoteApp = (() => {
 
   function getCommentQueueStats_() {
     const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
-    if(!raw || raw.getLastRow()<5) return {queue:0,ready:0,partial:0,cooldown:0,accessUnavailable:0};
+    if(!raw || raw.getLastRow()<5) return {queue:0,ready:0,partial:0,cooldown:0,accessUnavailable:0,deltaPending:0};
     const n=raw.getLastRow()-4;
     const totals=raw.getRange(5,10,n,1).getValues(); // J
-    const state=raw.getRange(5,17,n,5).getValues();  // Q:U
+    const state=raw.getRange(5,17,n,9).getValues();  // Q:Y
     const now=Date.now();
-    let queue=0,ready=0,partial=0,cooldown=0,accessUnavailable=0;
+    let queue=0,ready=0,partial=0,cooldown=0,accessUnavailable=0,deltaPending=0;
 
     for(let i=0;i<n;i++){
       const total=Math.max(0,Number(totals[i][0]||0));
       const handled=Math.max(0,Number(state[i][0]||0));
       const checkedAt=opsDateMs_(state[i][1]);
       const status=String(state[i][2]||'').trim();
-      const cursor=String(state[i][3]||'').trim();
+      const backfillCursor=String(state[i][3]||'').trim();
       const observed=Math.max(0,Number(state[i][4]||0));
+      const deltaCursor=String(state[i][5]||'').trim();
+      const deltaTarget=Math.max(0,Number(state[i][6]||0));
       if(total<=0) continue;
 
-      const hasFreshDelta=observed>0 && total>observed;
-      const initial=observed===0;
-      const hasBackfill=!!cursor || (observed>handled);
-      if(!initial && !hasFreshDelta && !hasBackfill) continue;
+      const hasDeltaState=deltaTarget>observed || !!deltaCursor;
+      const hasFreshDelta=!hasDeltaState && observed>0 && total>observed;
+      const initial=observed===0 && !hasDeltaState;
+      const hasBackfill=!hasDeltaState && !hasFreshDelta && !initial && (!!backfillCursor || observed>handled);
+      if(!initial && !hasDeltaState && !hasFreshDelta && !hasBackfill) continue;
 
       queue++;
-      if(cursor) partial++;
+      if(hasDeltaState || hasFreshDelta) deltaPending++;
+      if(backfillCursor) partial++;
       if(/^ACCESS_UNAVAILABLE/i.test(status)) accessUnavailable++;
       const cooldownMs=commentCooldownMs_(status);
       if(cooldownMs && checkedAt && now-checkedAt<cooldownMs) cooldown++;
       else ready++;
     }
-    return {queue,ready,partial,cooldown,accessUnavailable};
+    return {queue,ready,partial,cooldown,accessUnavailable,deltaPending};
   }
 
   function getCommentFetchCandidates_(limit) {
@@ -4611,7 +4625,7 @@ const RemoteApp = (() => {
     const imported=raw.getRange(5,1,n,1).getValues(); // A
     const identity=raw.getRange(5,3,n,4).getValues(); // C:F
     const totals=raw.getRange(5,10,n,1).getValues(); // J
-    const state=raw.getRange(5,17,n,5).getValues();  // Q:U
+    const state=raw.getRange(5,17,n,9).getValues();  // Q:Y
     const now=Date.now();
     const out=[];
 
@@ -4624,23 +4638,40 @@ const RemoteApp = (() => {
       const status=String(state[i][2]||'').trim();
       const backfillCursor=String(state[i][3]||'').trim();
       const observed=Math.max(0,Number(state[i][4]||0));
+      const deltaCursor=String(state[i][5]||'').trim();
+      const storedDeltaTarget=Math.max(0,Number(state[i][6]||0));
+      const storedDeltaBase=Math.max(0,Number(state[i][7]||0));
+      const storedDeltaFetched=Math.max(0,Number(state[i][8]||0));
       if(!postId || !postUrl || total<=0) continue;
 
       const cooldownMs=commentCooldownMs_(status);
       if(cooldownMs && checkedAt && now-checkedAt<cooldownMs) continue;
 
       const importedAtMs=opsDateMs_(imported[i][0]);
-      const initial=observed===0;
-      const freshDelta=observed>0 && total>observed;
-      const backfill=!freshDelta && !initial && (!!backfillCursor || observed>handled);
-      if(!initial && !freshDelta && !backfill) continue;
+      const deltaInProgress=storedDeltaTarget>observed || !!deltaCursor;
+      const initial=observed===0 && !deltaInProgress;
+      const freshDelta=!deltaInProgress && observed>0 && total>observed;
+      const backfill=!deltaInProgress && !freshDelta && !initial && (!!backfillCursor || observed>handled);
+      if(!initial && !freshDelta && !backfill && !deltaInProgress) continue;
 
       let mode='initial';
       let cursor='';
       let targetCount=total;
-      if(freshDelta){
+      let deltaTargetTotal=0,deltaBaseTotal=0,deltaFetched=0;
+
+      if(deltaInProgress){
+        mode='delta_resume';
+        cursor=deltaCursor;
+        deltaTargetTotal=storedDeltaTarget;
+        deltaBaseTotal=storedDeltaBase;
+        deltaFetched=storedDeltaFetched;
+        targetCount=Math.max(1,deltaTargetTotal-deltaBaseTotal-deltaFetched);
+      } else if(freshDelta){
         mode='delta';
         cursor='';
+        deltaTargetTotal=total;
+        deltaBaseTotal=observed;
+        deltaFetched=0;
         targetCount=Math.max(1,total-observed);
       } else if(backfill){
         mode='backfill';
@@ -4661,8 +4692,12 @@ const RemoteApp = (() => {
         mode,
         cursor,
         backfillCursor,
+        deltaCursor,
+        deltaTargetTotal,
+        deltaBaseTotal,
+        deltaFetched,
         partial:mode==='backfill' && !!backfillCursor,
-        incremental:mode==='delta',
+        incremental:mode==='delta' || mode==='delta_resume',
         fresh:!!(importedAtMs && now-importedAtMs<=24*60*60*1000),
         importedAtMs,
         checkedAtMs:checkedAt,
@@ -4671,12 +4706,12 @@ const RemoteApp = (() => {
     }
 
     out.sort((a,b)=>{
-      // Fresh delta wins even if the same post still has a historical backfill cursor.
+      // Fresh/new delta always wins over historical backfill.
       if(a.incremental!==b.incremental) return a.incremental?-1:1;
       if(a.fresh!==b.fresh) return a.fresh?-1:1;
       if(a.mode!==b.mode){
-        const rank={delta:0,initial:1,backfill:2};
-        return (rank[a.mode]||9)-(rank[b.mode]||9);
+        const rank={delta_resume:0,delta:1,initial:2,backfill:3};
+        return (rank[a.mode]===undefined?9:rank[a.mode])-(rank[b.mode]===undefined?9:rank[b.mode]);
       }
       if(b.targetCount!==a.targetCount) return b.targetCount-a.targetCount;
       if(b.importedAtMs!==a.importedAtMs) return b.importedAtMs-a.importedAtMs;
@@ -4695,6 +4730,10 @@ const RemoteApp = (() => {
     raw.getRange(row,CFG.RAW_COMMENT_STATUS_COL).setValue(String(patch.status||'').slice(0,500));
     raw.getRange(row,CFG.RAW_COMMENT_CURSOR_COL).setValue(String(patch.cursor||''));
     if(Object.prototype.hasOwnProperty.call(patch,'observedCount')) raw.getRange(row,CFG.RAW_COMMENT_OBSERVED_COL).setValue(Number(patch.observedCount||0));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaCursor')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_CURSOR_COL).setValue(String(patch.deltaCursor||''));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaTargetTotal')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_TARGET_COL).setValue(Number(patch.deltaTargetTotal||0));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaBaseTotal')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_BASE_COL).setValue(Number(patch.deltaBaseTotal||0));
+    if(Object.prototype.hasOwnProperty.call(patch,'deltaFetched')) raw.getRange(row,CFG.RAW_COMMENT_DELTA_FETCHED_COL).setValue(Number(patch.deltaFetched||0));
   }
 
   function runCommentIntelligenceCycle_(options) {
@@ -4745,6 +4784,10 @@ const RemoteApp = (() => {
             handledCount:c.handledCount,
             observedCount:c.observedCount,
             cursor:c.backfillCursor,
+            deltaCursor:c.deltaCursor,
+            deltaTargetTotal:c.deltaTargetTotal,
+            deltaBaseTotal:c.deltaBaseTotal,
+            deltaFetched:c.deltaFetched,
             status:attempts>=3
               ? ('ACCESS_UNAVAILABLE • '+attempts+' empty fetch • total='+c.totalCount)
               : ('EMPTY_RETRY '+attempts+' • total='+c.totalCount)
@@ -4781,6 +4824,10 @@ const RemoteApp = (() => {
           handledCount:c.handledCount,
           observedCount:c.observedCount,
           cursor:c.backfillCursor,
+          deltaCursor:c.deltaCursor,
+          deltaTargetTotal:c.deltaTargetTotal,
+          deltaBaseTotal:c.deltaBaseTotal,
+          deltaFetched:c.deltaFetched,
           status:'ERROR • '+classifyScanError_(err)+' • '+msg.slice(0,300)
         });
       }
@@ -4793,17 +4840,47 @@ const RemoteApp = (() => {
         pending.forEach(x=>{
           const c=x.candidate;
           const read=Number(x.fetched.commentsRead||0);
-          if(c.mode==='delta'){
-            // Fresh delta is fetched from the newest page. Preserve any historical
-            // backfill cursor so old comments can continue later.
-            updateCommentFetchState_(c,{
-              handledCount:Math.min(c.totalCount,c.handledCount+read),
-              observedCount:c.totalCount,
-              cursor:c.backfillCursor,
-              status:c.backfillCursor
-                ? ('DELTA_OK + BACKFILL_PENDING • read='+read)
-                : ('DELTA_OK • read='+read)
-            });
+
+          if(c.mode==='delta' || c.mode==='delta_resume'){
+            const base=c.mode==='delta' ? c.deltaBaseTotal : c.deltaBaseTotal;
+            const target=c.mode==='delta' ? c.deltaTargetTotal : c.deltaTargetTotal;
+            const fetchedBefore=Number(c.deltaFetched||0);
+            const fetchedTotal=fetchedBefore+read;
+            const expected=Math.max(1,target-base);
+            const deltaComplete=
+              x.fetched.exhausted ||
+              !x.fetched.nextCursor ||
+              fetchedTotal>=expected;
+
+            if(!deltaComplete && x.fetched.nextCursor){
+              partial++;
+              updateCommentFetchState_(c,{
+                handledCount:c.handledCount,
+                observedCount:c.observedCount,
+                cursor:c.backfillCursor,
+                deltaCursor:x.fetched.nextCursor,
+                deltaTargetTotal:target,
+                deltaBaseTotal:base,
+                deltaFetched:fetchedTotal,
+                status:'DELTA_PARTIAL • '+fetchedTotal+'/'+expected
+              });
+            } else {
+              const historicalBackfillPending=!!c.backfillCursor || c.handledCount<c.observedCount;
+              updateCommentFetchState_(c,{
+                handledCount:historicalBackfillPending
+                  ? c.handledCount
+                  : Math.max(c.handledCount,target),
+                observedCount:target,
+                cursor:c.backfillCursor,
+                deltaCursor:'',
+                deltaTargetTotal:0,
+                deltaBaseTotal:0,
+                deltaFetched:0,
+                status:historicalBackfillPending
+                  ? ('DELTA_OK + BACKFILL_PENDING • '+fetchedTotal+'/'+expected)
+                  : ('DELTA_OK • '+fetchedTotal+'/'+expected)
+              });
+            }
           } else if(c.mode==='initial'){
             if(!x.complete && x.fetched.nextCursor){
               partial++;
@@ -4811,6 +4888,7 @@ const RemoteApp = (() => {
                 handledCount:Math.min(c.totalCount,read),
                 observedCount:c.totalCount,
                 cursor:x.fetched.nextCursor,
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
                 status:'PARTIAL • initial read='+read+' • page='+x.fetched.pages
               });
             } else {
@@ -4818,24 +4896,28 @@ const RemoteApp = (() => {
                 handledCount:c.totalCount,
                 observedCount:c.totalCount,
                 cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
                 status:'OK • initial read='+read+' • page='+x.fetched.pages
               });
             }
           } else {
-            const handled=Math.min(c.observedCount,c.handledCount+read);
+            const observed=Math.max(c.observedCount,c.totalCount);
+            const handled=Math.min(observed,c.handledCount+read);
             if(!x.complete && x.fetched.nextCursor){
               partial++;
               updateCommentFetchState_(c,{
                 handledCount:handled,
-                observedCount:Math.max(c.observedCount,c.totalCount),
+                observedCount:observed,
                 cursor:x.fetched.nextCursor,
-                status:'PARTIAL • backfill '+handled+'/'+Math.max(c.observedCount,c.totalCount)
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'PARTIAL • backfill '+handled+'/'+observed
               });
             } else {
               updateCommentFetchState_(c,{
-                handledCount:Math.max(c.observedCount,c.totalCount),
-                observedCount:Math.max(c.observedCount,c.totalCount),
+                handledCount:observed,
+                observedCount:observed,
                 cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
                 status:'OK • backfill complete • read='+read
               });
             }
@@ -4850,6 +4932,10 @@ const RemoteApp = (() => {
             handledCount:x.candidate.handledCount,
             observedCount:x.candidate.observedCount,
             cursor:x.candidate.backfillCursor,
+            deltaCursor:x.candidate.deltaCursor,
+            deltaTargetTotal:x.candidate.deltaTargetTotal,
+            deltaBaseTotal:x.candidate.deltaBaseTotal,
+            deltaFetched:x.candidate.deltaFetched,
             status:'ERROR • IMPORT • '+msg.slice(0,300)
           });
         });
@@ -4919,7 +5005,7 @@ const RemoteApp = (() => {
        pass:auto.runtimeEstimate.estimatedDailyMs<=auto.runtimeUsage.budgetMs,
        detail:'estimate='+Math.round(auto.runtimeEstimate.estimatedDailyMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • '+auto.runtimeUsage.accountClass},
       {id:'NO_MANUAL_SELECTION_REQUIRED',pass:true,detail:'Auto queue dùng Quét tiếp theo/CẦN QUÉT; checkbox chỉ manual override. Selected hiện tại='+selected},
-      {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=21,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
+      {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=25,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
       {id:'COMMENT_PIPELINE',pass:rawPostsWithComments===0 || commentRows>0 || commentQueueStats.queue>0,detail:'posts có comment='+rawPostsWithComments+', comment rows='+commentRows+', queue='+commentQueueStats.queue+', cooldown='+commentQueueStats.cooldown},
       {id:'WORKER_CONFIG',pass:Number(monitoring.workers&&monitoring.workers.configuredCount||0)>0,detail:String(Number(monitoring.workers&&monitoring.workers.configuredCount||0))+' configured'},
       {id:'NO_STUCK_RUNNING',pass:repairs.staleRunning.repaired===0 || repair,detail:'recovered='+repairs.staleRunning.repaired}
