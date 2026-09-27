@@ -7,6 +7,7 @@ function read(p){ return fs.readFileSync(p,'utf8'); }
 const runtime=read('apps-script/Runtime.js');
 const html=read('apps-script/ImportDialog.html');
 const bootstrap=read('bootstrap/Code.gs');
+const manifest=JSON.parse(read('bootstrap/appsscript.json'));
 
 // Syntax gates.
 new Function(runtime);
@@ -21,6 +22,14 @@ assert(bootstrap.includes('function autoMonitorTick()'),'global autoMonitorTick 
 assert(bootstrap.includes("SOCIAL_AIO_AUTO_MONITOR_SPREADSHEET_ID_V1"),'bootstrap trigger spreadsheet binding key missing');
 assert(bootstrap.includes('SpreadsheetApp.openById(id)'),'bootstrap time trigger must explicitly open target spreadsheet');
 assert(bootstrap.includes('SpreadsheetApp.setActiveSpreadsheet(ss)'),'bootstrap time trigger must establish active spreadsheet context');
+for(const scope of [
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/script.scriptapp',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/script.external_request'
+]){
+  assert(manifest.oauthScopes.includes(scope),'manifest missing required scope '+scope);
+}
 
 const requiredRuntime=[
   'function autoMonitorTick_',
