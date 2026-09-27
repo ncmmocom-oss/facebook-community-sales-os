@@ -45,6 +45,14 @@ assert(runtime.includes('A comment refresh is not a Group post scan'),'comment r
 assert(runtime.includes("CONSUMER_OR_UNKNOWN"),'unknown Apps Script account class must use conservative runtime budget');
 assert(runtime.includes('TRIGGER_RUNTIME_BUDGET_GUARD'),'trigger runtime quota guard missing');
 assert(runtime.includes("id:'AUTO_RUNTIME_CAPACITY'"),'acceptance runtime-capacity gate missing');
+assert(runtime.includes('function readGroupLease_'),'stale-running recovery calls a missing lease reader');
+assert(runtime.includes("status!=='LỖI' && status!=='THIẾU'"),'auto due stale-plan validation must fail closed on exception state');
+assert(runtime.includes('CROSS_SOURCE_REGISTRY_CONTAMINATION'),'cross-source registry quarantine missing');
+assert(runtime.includes("id:'SOURCE_ATTRIBUTION'"),'source attribution acceptance gate missing');
+assert(runtime.includes('Finalize đang chờ Sheet lock quá lâu.'),'finalize DocumentLock boundary missing');
+assert(runtime.includes('RAW_COMMENT_DELTA_CURSOR_COL: 22'),'separate delta cursor missing');
+assert(runtime.includes('DELTA_GAP'),'fresh comment delta must fail open on count/cursor mismatch');
+assert(runtime.includes('ACCESS_GAP'),'historical comment access gap must remain visible');
 
 assert(!html.includes('AUTO MONITOR chỉ chạy khi cửa sổ Control Center này đang mở'),'legacy window-only auto monitor copy remains');
 for(const cmd of ['SET_AUTO_MONITOR_V2','RUN_AUTO_MONITOR_TICK','RUN_COMMENT_INTELLIGENCE','RUN_PRODUCTION_ACCEPTANCE']){
@@ -67,6 +75,8 @@ assert(t.classifyStoredScanError_('LỖI','Social AIO relay HTTP 504: gateway ti
 assert(t.classifyStoredScanError_('LỖI','IDENTITY_DUPLICATE -> row 4')==='STRUCTURAL','identity duplicate must be structural');
 assert(t.classifyStoredScanError_('LỖI','API trả về nhưng không tìm thấy post cho Group này.')==='NO_POSTS','empty group must be NO_POSTS');
 assert(t.classifyStoredScanError_('THIẾU','Relay tạm lỗi')==='TRANSIENT','THIẾU fallback must be transient');
+assert(t.parseApiPostsSourceKey_('api_posts_253319881885681_20260927_221959.json')==='253319881885681','api_posts provenance parser mismatch');
+assert(t.parseApiPostsSourceKey_('posts (15).json')==='', 'manual JSON must not be treated as API source provenance');
 
 let p=t.retryPolicyForClass_('TRANSIENT',0);
 assert(p.retry===true && p.hard===false && p.delayMs===120000,'transient retry #1 policy mismatch');
