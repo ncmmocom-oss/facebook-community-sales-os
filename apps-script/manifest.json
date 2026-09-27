@@ -1,9 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.1-signal-feed",
+  "version": "1.9.1-hf1-monitor-safety",
   "channel": "pilot",
-  "updated_at": "2026-09-26",
+  "updated_at": "2026-09-27",
   "notes": [
+    "V1.9.1-HF1 Monitor Safety: fixes false-positive pagination diagnostics now that the production scanner already reads cursor from the raw wrapper.",
+    "Scanner retries transient relay errors (429/502/503/504, timeout/network class) up to 3 attempts with backoff; if a later page still fails, already collected posts are preserved and the Group is marked THIEU for retry.",
+    "Adds a cross-execution per-Group lease in Document Properties so AUTO, manual scan, retry, or a second Control Center cannot scan and overwrite the same Group concurrently.",
+    "Due Queue jobs carry their mode and re-check CẦN QUÉT server-side immediately before execution, preventing stale plans from rescanning a Group that another execution already completed.",
+    "AUTO MONITOR now quarantines isolated LỖI/THIẾU Groups and continues. Global pause is reserved for Worker connection failure or broad failure rate patterns.",
+    "Pagination/cursor, Group identity normalization, Worker health, exact-batch AI, Signal Feed and Lead Qualification Hard Gate semantics are preserved.",
     "V1.9.1 Signal Feed: adds a dedicated TIN HIEU operational view for the latest 7 days while preserving CO HOI as the source-of-truth.",
     "Signal Feed groups data by Day -> Group summary -> candidate rows and uses native Google Sheets row outlines; day groups stay expanded while PASS/WATCH/REVIEW children are collapsed by default.",
     "FAIL rows remain in backend but are excluded from the Signal Feed to reduce operator noise.",
