@@ -3699,9 +3699,9 @@ const RemoteApp = (() => {
           String(sh.getRange(d.row,25).getDisplayValue()||'').trim(),
           'AUTO HARD_QUARANTINE: DUPLICATE_IDENTITY → canonical row '+d.canonicalRow+' ('+d.canonicalName+').'
         );
-        const state=getAutoRetryState_(d.key);
-        state.hard=true;state.lastClass='STRUCTURAL';state.lastError='DUPLICATE_IDENTITY canonical row '+d.canonicalRow;state.updatedAt=new Date().toISOString();
-        props.setProperty(autoRetryKey_(d.key),JSON.stringify(state));
+        // Do not store duplicate quarantine by Group key: canonical and duplicate
+        // intentionally share the same identity. Row-level quarantine is enough,
+        // otherwise the canonical row would inherit the duplicate's hard retry state.
       });
     }
 
