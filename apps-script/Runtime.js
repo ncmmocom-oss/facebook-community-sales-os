@@ -4320,6 +4320,51 @@ const RemoteApp = (() => {
     };
   }
 
+  function parseApiPostsSourceKey_(fileName) {
+    const m=String(fileName||'').trim().match(/^api_posts_(.+?)_\d{8}_\d{6}\.json$/i);
+    return m ? String(m[1]||'').trim().toLowerCase() : '';
+  }
+
+  function getCrossSourceRegistryContamination_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const last=sheet.getLastRow();
+    if(last<2) return [];
+    const rows=sheet.getRange(2,1,last-1,26).getDisplayValues();
+    const out=[];
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có' || String(r[6]||'').trim()==='Loại') return;
+      const row=i+2;
+      const groupKey=exactGroupKeyFromRow_(r[3],r[4]);
+      const file=String(r[12]||'').trim();
+      const sourceKey=parseApiPostsSourceKey_(file);
+      const note=String(r[15]||'').trim();
+      if(!groupKey || !sourceKey || groupKey===sourceKey) return;
+      if(/Canonical identity|identity merge|alias nguồn/i.test(note)) return;
+      if(!/Tự thêm khi import JSON/i.test(note)) return;
+      out.push({
+        row,groupKey,sourceKey,file,
+        name:String(r[2]||'').trim(),
+        note
+      });
+    });
+    return out;
+  }
+
+  function repairCrossSourceRegistryContamination_() {
+    const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const bad=getCrossSourceRegistryContamination_();
+    bad.forEach(x=>{
+      const current=String(sheet.getRange(x.row,26).getDisplayValue()||'').trim();
+      const trace='CROSS_SOURCE_REGISTRY_CONTAMINATION • source='+x.sourceKey+' • rowKey='+x.groupKey;
+      sheet.getRange(x.row,1).setValue('Không');
+      sheet.getRange(x.row,7).setValue('Loại');
+      setGroupRowStatus_(sheet,x.row,'DỪNG','Cross-source registry quarantined',current?current+' | '+trace:trace);
+      sheet.getRange(x.row,23).setValue(false);
+    });
+    if(bad.length) SpreadsheetApp.flush();
+    return {repaired:bad.length,rows:bad};
+  }
+
   function getDuplicateGroupRegistry_() {
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const last=sheet.getLastRow();
@@ -4990,9 +5035,17 @@ const RemoteApp = (() => {
   function runProductionAcceptance_(options) {
     options=options||{};
     const repair=options.repair!==false;
-    ensureV16Sheets_(true);
-    const repairs={duplicates:{repaired:0,duplicates:[]},staleRunning:{repaired:0,rows:[]}};
+    const acceptanceLock=LockService.getScriptLock();
+    if(!acceptanceLock.tryLock(30000)) throw new Error('Production Acceptance đang chờ AUTO tick khác.');
+    try{
+      ensureV16Sheets_(true);
+    const repairs={
+      duplicates:{repaired:0,duplicates:[]},
+      crossSource:{repaired:0,rows:[]},
+      staleRunning:{repaired:0,rows:[]}
+    };
     if(repair){
+      repairs.crossSource=repairCrossSourceRegistryContamination_();
       repairs.duplicates=repairDuplicateGroupRegistry_();
       repairs.staleRunning=repairStaleRunningRows_();
     }
@@ -5002,6 +5055,7 @@ const RemoteApp = (() => {
     const raw=mustSheet_(ss,CFG.RAW_SHEET);
     const comments=mustSheet_(ss,CFG.COMMENT_SHEET);
     const duplicateAfter=getDuplicateGroupRegistry_();
+    const crossSourceAfter=getCrossSourceRegistryContamination_();
     const auto=getAutoMonitorV2State_();
     const monitoring=getMonitoringOverview_();
     const consistency=auditConsistency_();
@@ -5026,6 +5080,7 @@ const RemoteApp = (() => {
       {id:'VERSION',pass:CFG.VERSION==='1.10.0-pilot-200',detail:CFG.VERSION},
       {id:'PILOT_LIMIT',pass:active<=CFG.PILOT_GROUP_LIMIT,detail:active+'/'+CFG.PILOT_GROUP_LIMIT+' active'},
       {id:'GROUP_IDENTITY',pass:duplicateAfter.length===0,detail:duplicateAfter.length+' duplicate canonical key'},
+      {id:'SOURCE_ATTRIBUTION',pass:crossSourceAfter.length===0,detail:crossSourceAfter.length+' cross-source registry row'},
       {id:'CONSISTENCY',pass:!!consistency.ok,detail:consistency.ok?'PASS':'Có chênh lệch dữ liệu'},
       {id:'AUTO_TRIGGER',pass:!auto.enabled||auto.triggerInstalled,detail:auto.enabled?(auto.triggerInstalled?'installed':'MISSING'):'AUTO OFF'},
       {id:'AUTO_RUNTIME_CAPACITY',
@@ -5062,6 +5117,9 @@ const RemoteApp = (() => {
       },
       autoMonitor:auto
     };
+    } finally {
+      acceptanceLock.releaseLock();
+    }
   }
 
   function autoMonitorTick_() {
@@ -5372,12 +5430,23 @@ const RemoteApp = (() => {
     }
 
     sourceIds=saveLastScanSourceIds_([...new Set(sourceIds.map(x=>String(x||'').trim()).filter(Boolean))]);
-    sortOpportunityNewestFirst_();
-    const refresh=refreshAfterScanFast_();
+
+    // Import workers serialize their Sheet writes with DocumentLock. Final sort /
+    // summary refresh must join that same serialization boundary to avoid racing
+    // a manual scan against a backend Auto tick.
+    const finalizeLock=LockService.getDocumentLock();
+    if(!finalizeLock.tryLock(120000)) throw new Error('Finalize đang chờ Sheet lock quá lâu.');
+    let refresh;
+    try{
+      sortOpportunityNewestFirst_();
+      refresh=refreshAfterScanFast_();
+      clearScanRunStop_(runId);
+      clearGlobalStopAll_();
+      SpreadsheetApp.flush();
+    }finally{
+      finalizeLock.releaseLock();
+    }
     const aiCfg=getAiConfig_();
-    clearScanRunStop_(runId);
-    clearGlobalStopAll_();
-    SpreadsheetApp.flush();
     return {
       version:CFG.VERSION,
       runId,
@@ -6131,6 +6200,19 @@ const RemoteApp = (() => {
     return CFG.GROUP_LEASE_PREFIX+safe;
   }
 
+  function readGroupLease_(groupKey) {
+    const key=groupLeasePropertyKey_(groupKey);
+    const raw=PropertiesService.getDocumentProperties().getProperty(key);
+    if(!raw) return null;
+    try {
+      const lease=JSON.parse(raw);
+      if(!lease || typeof lease!=='object') return null;
+      return lease;
+    } catch(_) {
+      return null;
+    }
+  }
+
   function acquireGroupLease_(groupKey,owner,row) {
     const key=groupLeasePropertyKey_(groupKey);
     const lock=LockService.getDocumentLock();
@@ -6198,7 +6280,8 @@ const RemoteApp = (() => {
     const active=String(vals[0]||'').trim();
     const due=String(vals[11]||'').trim();
     const status=String(vals[23]||'').trim();
-    return active==='Có' && due==='CẦN QUÉT' && status!=='ĐANG QUÉT';
+    return active==='Có' && due==='CẦN QUÉT' &&
+      status!=='ĐANG QUÉT' && status!=='LỖI' && status!=='THIẾU' && !/^DỪNG/.test(status);
   }
 
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
@@ -6906,6 +6989,7 @@ const RemoteApp = (() => {
       retryPolicyForClass_,
       classifyStoredScanError_,
       classifyScanError_,
+      parseApiPostsSourceKey_,
       getVersion
     },
   };
