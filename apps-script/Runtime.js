@@ -3907,7 +3907,6 @@ const RemoteApp = (() => {
 
   function scanCheckedGroupsApiBridge_(targetOverride) {
     ensureV16Sheets_(false);
-    const props=PropertiesService.getDocumentProperties();
     clearGlobalStopAll_();
 
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
@@ -3921,7 +3920,6 @@ const RemoteApp = (() => {
     let deferred=0;
 
     for(let i=0;i<selected.length;i++) {
-      if(props.getProperty(CFG.BRIDGE_STOP_ALL_KEY)==='1') break;
       if(Date.now()-started>budgetMs) {
         deferred=selected.length-i;
         break;
@@ -3942,7 +3940,7 @@ const RemoteApp = (() => {
       if(r && r.ok && !r.stopped && !r.incomplete) sheet.getRange(item.row,23).setValue(false);
     }
 
-    props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
+    clearGlobalStopAll_();
     SpreadsheetApp.flush();
 
     const passed=results.filter(r=>r&&r.ok&&!r.stopped&&!r.incomplete).length;
