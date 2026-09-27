@@ -5,57 +5,81 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Worker Keeper</title>
 <style>
-  body{font-family:Arial,sans-serif;width:350px;margin:0;background:#f8fafc;color:#0f172a}
+  *{box-sizing:border-box}
+  body{font-family:Arial,sans-serif;width:390px;margin:0;background:#f8fafc;color:#0f172a}
   .head{padding:14px 16px;background:#0f766e;color:white}
-  .head b{font-size:15px}.head small{display:block;opacity:.85;margin-top:3px}
-  .wrap{padding:12px}.card{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:10px}
-  .row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:6px 0}
-  .muted{color:#64748b;font-size:11px}.status{font-weight:700}
-  .online{color:#15803d}.offline{color:#b91c1c}.connecting,.unknown{color:#b45309}
-  button{border:0;border-radius:8px;padding:8px 10px;font-weight:700;cursor:pointer}
-  .primary{background:#0f766e;color:white}.secondary{background:#e2e8f0;color:#0f172a}
+  .head b{font-size:15px}.head small{display:block;opacity:.88;margin-top:3px}
+  .wrap{padding:11px}.card{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:11px;margin-bottom:9px}
+  .row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:5px 0}
+  .muted{color:#64748b;font-size:11px}.tiny{font-size:10px}.status{font-weight:800}
+  .online{color:#15803d}.offline,.error{color:#b91c1c}.connecting,.stale,.unknown{color:#b45309}.restoring{color:#2563eb}
+  button{border:0;border-radius:8px;padding:8px 9px;font-weight:700;cursor:pointer;font-size:11px}
+  .primary{background:#0f766e;color:white}.secondary{background:#e2e8f0;color:#0f172a}.danger{background:#fee2e2;color:#991b1b}
   .actions{display:flex;gap:6px}.actions button{flex:1}
-  label{font-size:12px}.toggle{display:flex;align-items:center;gap:8px}
-  #lastError,#bindResult{white-space:pre-wrap;word-break:break-word}
+  label{font-size:12px}.toggle{display:flex;align-items:center;gap:8px;margin:5px 0}
   .urlLabel{font-size:11px;font-weight:700;margin-bottom:5px;color:#334155}
-  .urlRow{display:flex;gap:6px}
-  .urlRow input{min-width:0;flex:1;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:11px}
-  .urlRow button{white-space:nowrap}
-  .claim{width:100%;margin-top:7px}
+  .urlRow{display:flex;gap:6px}.urlRow input{min-width:0;flex:1;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:11px}
+  #message,#lastError,#testResult{white-space:pre-wrap;word-break:break-word}
+  .binding{padding:7px;border-radius:7px;background:#f1f5f9;font-size:11px;margin-top:7px}
+  .good{background:#ecfdf5;color:#166534}.warn{background:#fffbeb;color:#92400e}.bad{background:#fef2f2;color:#991b1b}
+  .log{max-height:112px;overflow:auto;border-top:1px solid #e2e8f0;margin-top:7px;padding-top:5px}
+  .logline{font-size:10px;padding:3px 0;border-bottom:1px dashed #e2e8f0}
+  .code{font-weight:700}
+  .hidden{display:none!important}
 </style>
 </head>
 <body>
   <div class="head">
     <b>Social AIO Worker Keeper</b>
-    <small>P1.5 • V1.1.0 • URL Binding</small>
+    <small>P1.5 • V1.2.0 Production Hardening</small>
   </div>
+
   <div class="wrap">
     <div class="card">
       <div class="row"><span>Worker</span><span id="status" class="status unknown">UNKNOWN</span></div>
+      <div class="row"><span>Bound tab</span><span id="boundTab" class="muted">—</span></div>
       <div class="row"><span>Client</span><span id="client" class="muted">—</span></div>
-      <div class="row"><span>Reconnect</span><span id="reconnects">0</span></div>
+      <div class="row"><span>Client guard</span><span id="clientGuard" class="muted">UNSET</span></div>
+      <div class="row"><span>Uptime</span><span id="uptime" class="muted">—</span></div>
+      <div class="row"><span>Reconnect 1h / 24h</span><span id="reconnectMetric">0 / 0</span></div>
       <div class="row"><span>Last OK</span><span id="lastOk" class="muted">—</span></div>
       <div id="lastError" class="muted"></div>
     </div>
 
     <div class="card">
-      <div class="urlLabel">Worker URL</div>
+      <div class="urlLabel">W1 Worker URL</div>
       <div class="urlRow">
         <input id="workerUrl" value="https://fbaio.org/#/apis" spellcheck="false">
-        <button id="openUrl" class="primary">MỞ & BẮT</button>
+        <button id="openUrl" class="primary">MỞ & GẮN</button>
       </div>
-      <button id="claimCurrent" class="secondary claim">BẮT TAB HIỆN TẠI</button>
-      <div id="bindResult" class="muted" style="margin-top:7px">Dùng khi popup đang NO_TAB dù trang APIs đã mở.</div>
+      <div class="actions" style="margin-top:6px">
+        <button id="claimCurrent" class="secondary">GẮN TAB HIỆN TẠI</button>
+        <button id="focus" class="secondary">MỞ W1</button>
+        <button id="unbind" class="danger">BỎ GẮN</button>
+      </div>
+      <div id="bindingInfo" class="binding">W1 chưa được gắn.</div>
+      <div id="message" class="muted" style="margin-top:6px"></div>
     </div>
 
     <div class="card">
       <div class="toggle"><input type="checkbox" id="autoReconnect"><label for="autoReconnect">Tự reconnect khi rớt</label></div>
       <div class="toggle"><input type="checkbox" id="autoDismiss"><label for="autoDismiss">Tự đóng popup WebSocket error</label></div>
+      <div class="toggle"><input type="checkbox" id="autoRestore"><label for="autoRestore">Tự khôi phục W1 tab nếu bị đóng</label></div>
+      <button id="acceptClient" class="danger hidden" style="width:100%;margin-top:6px">XÁC NHẬN CLIENT HIỆN TẠI</button>
     </div>
 
-    <div class="actions">
-      <button id="open" class="secondary">Mở API tab</button>
-      <button id="reconnect" class="primary">Reconnect ngay</button>
+    <div class="card">
+      <div class="actions">
+        <button id="selfTest" class="primary">SELF TEST</button>
+        <button id="scanErrors" class="secondary">QUÉT LỖI</button>
+        <button id="reconnect" class="secondary">RECONNECT</button>
+      </div>
+      <div id="testResult" class="muted" style="margin-top:7px">Chưa chạy Self Test.</div>
+    </div>
+
+    <div class="card">
+      <div class="row"><b>Health log</b><button id="copyLog" class="secondary">COPY LOG</button></div>
+      <div id="log" class="log"><div class="muted">Chưa có event.</div></div>
     </div>
   </div>
 <script src="popup.js"></script>
