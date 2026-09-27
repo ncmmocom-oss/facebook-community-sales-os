@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.1-hf2-raw-pagination',
+    VERSION: '1.9.1-hf3-stop-state',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -54,7 +54,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -3147,6 +3147,24 @@ const RemoteApp = (() => {
     }
 
     if(!posts.length) {
+      if(stopped){
+        return {
+          ok:false,
+          version:CFG.VERSION,
+          groupUrl,
+          targetCount:target,
+          postsRead:0,
+          pages,
+          exhausted:false,
+          stopped:true,
+          incomplete:false,
+          nextCursor:'',
+          transientRetries,
+          transientError:'',
+          imported:null,
+          durationMs:Date.now()-started
+        };
+      }
       if(transientError){
         throw new Error('Social AIO page rỗng tạm thời: '+transientError);
       }
@@ -3345,6 +3363,14 @@ const RemoteApp = (() => {
     return CFG.BRIDGE_STOP_PREFIX + String(groupKey || '').toLowerCase();
   }
 
+  function clearGlobalStopAll_() {
+    PropertiesService.getDocumentProperties().deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
+  }
+
+  function isGlobalStopRequested_() {
+    return PropertiesService.getDocumentProperties().getProperty(CFG.BRIDGE_STOP_ALL_KEY)==='1';
+  }
+
   function clearGroupStop_(groupKey) {
     if(groupKey) PropertiesService.getDocumentProperties().deleteProperty(groupStopKey_(groupKey));
   }
@@ -3389,6 +3415,10 @@ const RemoteApp = (() => {
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
     const target=normalizeGroupTarget_(options.targetCount || sheet.getRange(row,9).getValue() || 25);
+
+    if(String(options.source||'').toUpperCase()==='ACTIVE_ROW' || !options.source){
+      clearGlobalStopAll_();
+    }
 
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
       throw new Error('Dòng '+row+' không có URL Group Facebook hợp lệ.');
@@ -3809,7 +3839,7 @@ const RemoteApp = (() => {
   function scanCheckedGroupsApiBridge_(targetOverride) {
     ensureV16Sheets_(false);
     const props=PropertiesService.getDocumentProperties();
-    props.deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
+    clearGlobalStopAll_();
 
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const selected=getCheckedGroupRows_();
@@ -3864,6 +3894,7 @@ const RemoteApp = (() => {
 
   function retryFailedGroupsApiBridge_() {
     ensureV16Sheets_(false);
+    clearGlobalStopAll_();
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const last=sheet.getLastRow();
     if(last<2) return {version:CFG.VERSION,retried:0,passed:0,failed:0,incomplete:0};
@@ -5041,6 +5072,7 @@ const RemoteApp = (() => {
 
   function prepareWorkerBatch_(targetOverride,retryMode) {
     ensureV16Sheets_(false);
+    clearGlobalStopAll_();
     const jobs=retryMode?collectRetryJobs_():getCheckedGroupRows_();
     if(!jobs.length) throw new Error(retryMode?'Không có Group LỖI/THIẾU để retry.':'Chưa chọn Group nào.');
     return prepareJobsForWorkers_(jobs,targetOverride,retryMode,retryMode?'retry':'selected');
@@ -5048,6 +5080,7 @@ const RemoteApp = (() => {
 
   function prepareDueWorkerBatch_(limit) {
     ensureV16Sheets_(false);
+    clearGlobalStopAll_();
     const jobs=getDueGroupRows_(limit||CFG.DUE_CYCLE_LIMIT);
     if(!jobs.length){
       return {
