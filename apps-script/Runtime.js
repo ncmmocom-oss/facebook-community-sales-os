@@ -61,6 +61,7 @@ const RemoteApp = (() => {
     RAW_COMMENT_CHECKED_COL: 18,
     RAW_COMMENT_STATUS_COL: 19,
     RAW_COMMENT_CURSOR_COL: 20,
+    RAW_COMMENT_OBSERVED_COL: 21,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -672,7 +673,7 @@ const RemoteApp = (() => {
     const rawRows=ids.map(id=>rowMap[id]&&rowMap[id].rawRow).filter(Boolean);
     if(rawRows.length){
       const min=Math.min(...rawRows), max=Math.max(...rawRows);
-      const vals=rawSheet.getRange(min,10,max-min+1,11).getValues(); // J:T
+      const vals=rawSheet.getRange(min,10,max-min+1,12).getValues(); // J:U
       ids.forEach(id=>{
         const meta=rowMap[id]; if(!meta||!meta.rawRow)return;
         const u=uniq[id], r=vals[meta.rawRow-min];
@@ -684,14 +685,16 @@ const RemoteApp = (() => {
           r[6]=u.mediaUrls.length;
         }
         const handled=Number(r[7]||0); // Q
-        if(handled>nextCommentCount){
-          r[7]=nextCommentCount;
+        const observed=Number(r[11]||0); // U
+        if(handled>nextCommentCount || observed>nextCommentCount){
+          r[7]=Math.min(handled,nextCommentCount);
           r[8]=new Date(); // R
-          r[9]='COUNT_RESET • Facebook total comment giảm từ '+handled+' xuống '+nextCommentCount; // S
+          r[9]='COUNT_RESET • Facebook total comment giảm từ '+Math.max(handled,observed)+' xuống '+nextCommentCount; // S
           r[10]=''; // T cursor
+          r[11]=nextCommentCount; // U observed baseline
         }
       });
-      rawSheet.getRange(min,10,vals.length,11).setValues(vals);
+      rawSheet.getRange(min,10,vals.length,12).setValues(vals);
     }
 
     const oppRows=ids.map(id=>rowMap[id]&&rowMap[id].oppRow).filter(Boolean);
@@ -961,9 +964,9 @@ const RemoteApp = (() => {
 
     const raw = ss.getSheetByName(CFG.RAW_SHEET);
     if (raw) {
-      if (raw.getMaxColumns() < 20) raw.insertColumnsAfter(raw.getMaxColumns(),20-raw.getMaxColumns());
-      raw.getRange(4,15,1,6).setValues([[
-        'Media URL','Media count','Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái','Comment cursor'
+      if (raw.getMaxColumns() < 21) raw.insertColumnsAfter(raw.getMaxColumns(),21-raw.getMaxColumns());
+      raw.getRange(4,15,1,7).setValues([[
+        'Media URL','Media count','Comment count đã xử lý','Comment check gần nhất','Comment fetch trạng thái','Comment cursor','Comment total đã quan sát'
       ]]);
     }
 
@@ -4073,10 +4076,10 @@ const RemoteApp = (() => {
   function getAutoRuntimeBudget_() {
     let email='';
     try { email=String(Session.getEffectiveUser().getEmail()||Session.getActiveUser().getEmail()||'').trim().toLowerCase(); } catch(_){}
-    const consumer=/@gmail\.com$/i.test(email);
+    const workspace=!!email && !/@gmail\.com$/i.test(email);
     return {
-      accountClass:consumer?'CONSUMER':'WORKSPACE_OR_UNKNOWN',
-      budgetMs:consumer?CFG.AUTO_MONITOR_CONSUMER_BUDGET_MS:CFG.AUTO_MONITOR_WORKSPACE_BUDGET_MS
+      accountClass:workspace?'WORKSPACE':'CONSUMER_OR_UNKNOWN',
+      budgetMs:workspace?CFG.AUTO_MONITOR_WORKSPACE_BUDGET_MS:CFG.AUTO_MONITOR_CONSUMER_BUDGET_MS
     };
   }
 
@@ -4511,9 +4514,10 @@ const RemoteApp = (() => {
     let exhausted=false;
     let transientRetries=0;
     let transientError='';
-    const target=candidate.partial
-      ? CFG.COMMENT_MAX_PER_POST_CYCLE
-      : Math.max(1,Math.min(CFG.COMMENT_MAX_PER_POST_CYCLE,Number(candidate.delta||candidate.totalCount||25)));
+    const target=Math.max(1,Math.min(
+      CFG.COMMENT_MAX_PER_POST_CYCLE,
+      Number(candidate.mode==='backfill' ? CFG.COMMENT_MAX_PER_POST_CYCLE : (candidate.targetCount||candidate.totalCount||25))
+    ));
 
     while(comments.length<target && pages<20 && Date.now()-started<CFG.COMMENT_PAGE_BUDGET_MS){
       let res;
@@ -4559,32 +4563,45 @@ const RemoteApp = (() => {
     };
   }
 
+  function commentCooldownMs_(status) {
+    const st=String(status||'').trim();
+    if(/^ACCESS_UNAVAILABLE/i.test(st)) return 6*60*60*1000;
+    if(/^EMPTY_RETRY/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
+    if(/^ERROR/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
+    return 0;
+  }
+
   function getCommentQueueStats_() {
     const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
-    if(!raw || raw.getLastRow()<5) return {queue:0,partial:0,errorCooldown:0};
+    if(!raw || raw.getLastRow()<5) return {queue:0,ready:0,partial:0,cooldown:0,accessUnavailable:0};
     const n=raw.getLastRow()-4;
     const totals=raw.getRange(5,10,n,1).getValues(); // J
-    const state=raw.getRange(5,17,n,4).getValues();  // Q:T
+    const state=raw.getRange(5,17,n,5).getValues();  // Q:U
     const now=Date.now();
-    let queue=0,partial=0,errorCooldown=0;
+    let queue=0,ready=0,partial=0,cooldown=0,accessUnavailable=0;
+
     for(let i=0;i<n;i++){
       const total=Math.max(0,Number(totals[i][0]||0));
       const handled=Math.max(0,Number(state[i][0]||0));
       const checkedAt=opsDateMs_(state[i][1]);
       const status=String(state[i][2]||'').trim();
       const cursor=String(state[i][3]||'').trim();
-      const isPartial=!!cursor || /^PARTIAL/i.test(status);
+      const observed=Math.max(0,Number(state[i][4]||0));
       if(total<=0) continue;
-      if(/^ERROR/i.test(status) && checkedAt && now-checkedAt<CFG.COMMENT_RETRY_COOLDOWN_MS){
-        errorCooldown++;
-        continue;
-      }
-      if(isPartial || total>handled){
-        queue++;
-        if(isPartial) partial++;
-      }
+
+      const hasFreshDelta=observed>0 && total>observed;
+      const initial=observed===0;
+      const hasBackfill=!!cursor || (observed>handled);
+      if(!initial && !hasFreshDelta && !hasBackfill) continue;
+
+      queue++;
+      if(cursor) partial++;
+      if(/^ACCESS_UNAVAILABLE/i.test(status)) accessUnavailable++;
+      const cooldownMs=commentCooldownMs_(status);
+      if(cooldownMs && checkedAt && now-checkedAt<cooldownMs) cooldown++;
+      else ready++;
     }
-    return {queue,partial,errorCooldown};
+    return {queue,ready,partial,cooldown,accessUnavailable};
   }
 
   function getCommentFetchCandidates_(limit) {
@@ -4594,7 +4611,7 @@ const RemoteApp = (() => {
     const imported=raw.getRange(5,1,n,1).getValues(); // A
     const identity=raw.getRange(5,3,n,4).getValues(); // C:F
     const totals=raw.getRange(5,10,n,1).getValues(); // J
-    const state=raw.getRange(5,17,n,4).getValues();  // Q:T
+    const state=raw.getRange(5,17,n,5).getValues();  // Q:U
     const now=Date.now();
     const out=[];
 
@@ -4605,15 +4622,32 @@ const RemoteApp = (() => {
       const handled=Math.max(0,Number(state[i][0]||0));
       const checkedAt=opsDateMs_(state[i][1]);
       const status=String(state[i][2]||'').trim();
-      const cursor=String(state[i][3]||'').trim();
+      const backfillCursor=String(state[i][3]||'').trim();
+      const observed=Math.max(0,Number(state[i][4]||0));
       if(!postId || !postUrl || total<=0) continue;
 
-      const partial=!!cursor || /^PARTIAL/i.test(status);
-      const delta=Math.max(0,total-handled);
-      if(!partial && delta<=0) continue;
-      if(/^ERROR/i.test(status) && checkedAt && now-checkedAt<CFG.COMMENT_RETRY_COOLDOWN_MS) continue;
+      const cooldownMs=commentCooldownMs_(status);
+      if(cooldownMs && checkedAt && now-checkedAt<cooldownMs) continue;
 
       const importedAtMs=opsDateMs_(imported[i][0]);
+      const initial=observed===0;
+      const freshDelta=observed>0 && total>observed;
+      const backfill=!freshDelta && !initial && (!!backfillCursor || observed>handled);
+      if(!initial && !freshDelta && !backfill) continue;
+
+      let mode='initial';
+      let cursor='';
+      let targetCount=total;
+      if(freshDelta){
+        mode='delta';
+        cursor='';
+        targetCount=Math.max(1,total-observed);
+      } else if(backfill){
+        mode='backfill';
+        cursor=backfillCursor;
+        targetCount=Math.max(1,observed-handled);
+      }
+
       out.push({
         rawRow:i+5,
         postId,
@@ -4621,24 +4655,30 @@ const RemoteApp = (() => {
         groupName:String(identity[i][0]||'').trim(),
         groupKey:String(identity[i][1]||'').trim().toLowerCase(),
         totalCount:total,
+        observedCount:observed,
         handledCount:handled,
-        delta:partial?Math.max(1,total-handled):delta,
+        targetCount,
+        mode,
         cursor,
-        partial,
-        incremental:!partial && handled>0 && delta>0,
+        backfillCursor,
+        partial:mode==='backfill' && !!backfillCursor,
+        incremental:mode==='delta',
         fresh:!!(importedAtMs && now-importedAtMs<=24*60*60*1000),
         importedAtMs,
-        checkedAtMs:checkedAt
+        checkedAtMs:checkedAt,
+        previousStatus:status
       });
     }
 
     out.sort((a,b)=>{
-      // Fresh delta always wins over historical backfill: this is the core
-      // "detect new demand early" policy.
+      // Fresh delta wins even if the same post still has a historical backfill cursor.
       if(a.incremental!==b.incremental) return a.incremental?-1:1;
       if(a.fresh!==b.fresh) return a.fresh?-1:1;
-      if(a.partial!==b.partial) return a.partial?-1:1;
-      if(b.delta!==a.delta) return b.delta-a.delta;
+      if(a.mode!==b.mode){
+        const rank={delta:0,initial:1,backfill:2};
+        return (rank[a.mode]||9)-(rank[b.mode]||9);
+      }
+      if(b.targetCount!==a.targetCount) return b.targetCount-a.targetCount;
       if(b.importedAtMs!==a.importedAtMs) return b.importedAtMs-a.importedAtMs;
       return a.checkedAtMs-b.checkedAtMs;
     });
@@ -4654,6 +4694,7 @@ const RemoteApp = (() => {
     raw.getRange(row,CFG.RAW_COMMENT_CHECKED_COL).setValue(new Date());
     raw.getRange(row,CFG.RAW_COMMENT_STATUS_COL).setValue(String(patch.status||'').slice(0,500));
     raw.getRange(row,CFG.RAW_COMMENT_CURSOR_COL).setValue(String(patch.cursor||''));
+    if(Object.prototype.hasOwnProperty.call(patch,'observedCount')) raw.getRange(row,CFG.RAW_COMMENT_OBSERVED_COL).setValue(Number(patch.observedCount||0));
   }
 
   function runCommentIntelligenceCycle_(options) {
@@ -4697,22 +4738,26 @@ const RemoteApp = (() => {
 
         if(!fetched.comments.length){
           zeroAccessible++;
+          const prev=String(c.previousStatus||'');
+          const m=prev.match(/EMPTY_RETRY\s+(\d+)/i);
+          const attempts=(m?Number(m[1]):0)+1;
           updateCommentFetchState_(c,{
-            handledCount:c.totalCount,
-            cursor:'',
-            status:'OK • 0 comment accessible • total='+c.totalCount
+            handledCount:c.handledCount,
+            observedCount:c.observedCount,
+            cursor:c.backfillCursor,
+            status:attempts>=3
+              ? ('ACCESS_UNAVAILABLE • '+attempts+' empty fetch • total='+c.totalCount)
+              : ('EMPTY_RETRY '+attempts+' • total='+c.totalCount)
           });
           processed++;
           continue;
         }
 
-        const incremental=!c.partial && c.handledCount>0;
-        const initialFits=!c.partial && c.handledCount===0 && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE;
         const complete=
           fetched.exhausted ||
           !fetched.nextCursor ||
-          (incremental && fetched.commentsRead>=Math.max(1,c.delta)) ||
-          (initialFits && fetched.commentsRead>=Math.max(1,c.totalCount));
+          (c.mode==='delta' && fetched.commentsRead>=Math.max(1,c.targetCount)) ||
+          (c.mode==='initial' && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE && fetched.commentsRead>=Math.max(1,c.totalCount));
 
         pending.push({
           candidate:c,
@@ -4734,7 +4779,8 @@ const RemoteApp = (() => {
         errors.push('Post '+c.postId+': '+msg);
         updateCommentFetchState_(c,{
           handledCount:c.handledCount,
-          cursor:c.cursor,
+          observedCount:c.observedCount,
+          cursor:c.backfillCursor,
           status:'ERROR • '+classifyScanError_(err)+' • '+msg.slice(0,300)
         });
       }
@@ -4745,19 +4791,54 @@ const RemoteApp = (() => {
       try{
         imported=importJsonFiles(pending.map(x=>x.file));
         pending.forEach(x=>{
-          if(!x.complete && x.fetched.nextCursor){
-            partial++;
-            updateCommentFetchState_(x.candidate,{
-              handledCount:x.candidate.handledCount,
-              cursor:x.fetched.nextCursor,
-              status:'PARTIAL • read='+x.fetched.commentsRead+' • batch-import • page='+x.fetched.pages
+          const c=x.candidate;
+          const read=Number(x.fetched.commentsRead||0);
+          if(c.mode==='delta'){
+            // Fresh delta is fetched from the newest page. Preserve any historical
+            // backfill cursor so old comments can continue later.
+            updateCommentFetchState_(c,{
+              handledCount:Math.min(c.totalCount,c.handledCount+read),
+              observedCount:c.totalCount,
+              cursor:c.backfillCursor,
+              status:c.backfillCursor
+                ? ('DELTA_OK + BACKFILL_PENDING • read='+read)
+                : ('DELTA_OK • read='+read)
             });
+          } else if(c.mode==='initial'){
+            if(!x.complete && x.fetched.nextCursor){
+              partial++;
+              updateCommentFetchState_(c,{
+                handledCount:Math.min(c.totalCount,read),
+                observedCount:c.totalCount,
+                cursor:x.fetched.nextCursor,
+                status:'PARTIAL • initial read='+read+' • page='+x.fetched.pages
+              });
+            } else {
+              updateCommentFetchState_(c,{
+                handledCount:c.totalCount,
+                observedCount:c.totalCount,
+                cursor:'',
+                status:'OK • initial read='+read+' • page='+x.fetched.pages
+              });
+            }
           } else {
-            updateCommentFetchState_(x.candidate,{
-              handledCount:x.candidate.totalCount,
-              cursor:'',
-              status:'OK • read='+x.fetched.commentsRead+' • batch-import • page='+x.fetched.pages
-            });
+            const handled=Math.min(c.observedCount,c.handledCount+read);
+            if(!x.complete && x.fetched.nextCursor){
+              partial++;
+              updateCommentFetchState_(c,{
+                handledCount:handled,
+                observedCount:Math.max(c.observedCount,c.totalCount),
+                cursor:x.fetched.nextCursor,
+                status:'PARTIAL • backfill '+handled+'/'+Math.max(c.observedCount,c.totalCount)
+              });
+            } else {
+              updateCommentFetchState_(c,{
+                handledCount:Math.max(c.observedCount,c.totalCount),
+                observedCount:Math.max(c.observedCount,c.totalCount),
+                cursor:'',
+                status:'OK • backfill complete • read='+read
+              });
+            }
           }
           processed++;
         });
@@ -4767,7 +4848,8 @@ const RemoteApp = (() => {
         pending.forEach(x=>{
           updateCommentFetchState_(x.candidate,{
             handledCount:x.candidate.handledCount,
-            cursor:x.candidate.cursor,
+            observedCount:x.candidate.observedCount,
+            cursor:x.candidate.backfillCursor,
             status:'ERROR • IMPORT • '+msg.slice(0,300)
           });
         });
@@ -4785,7 +4867,7 @@ const RemoteApp = (() => {
       partialPosts:partial,
       newSourceIds:[...new Set((imported.newSourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean))],
       errors,
-      queueRemaining:Math.max(0,getCommentFetchCandidates_(CFG.PILOT_GROUP_LIMIT).length),
+      queueRemaining:Math.max(0,getCommentQueueStats_().queue),
       durationMs:Date.now()-started,
       batchedImports:pending.length?1:0
     };
@@ -4810,7 +4892,7 @@ const RemoteApp = (() => {
     const auto=getAutoMonitorV2State_();
     const monitoring=getMonitoringOverview_();
     const consistency=auditConsistency_();
-    const commentQueue=getCommentFetchCandidates_(CFG.PILOT_GROUP_LIMIT);
+    const commentQueueStats=getCommentQueueStats_();
 
     let active=0,selected=0;
     if(scan.getLastRow()>=2){
@@ -4837,8 +4919,8 @@ const RemoteApp = (() => {
        pass:auto.runtimeEstimate.estimatedDailyMs<=auto.runtimeUsage.budgetMs,
        detail:'estimate='+Math.round(auto.runtimeEstimate.estimatedDailyMs/60000)+'m/day • budget='+Math.round(auto.runtimeUsage.budgetMs/60000)+'m/day • '+auto.runtimeUsage.accountClass},
       {id:'NO_MANUAL_SELECTION_REQUIRED',pass:true,detail:'Auto queue dùng Quét tiếp theo/CẦN QUÉT; checkbox chỉ manual override. Selected hiện tại='+selected},
-      {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=20,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
-      {id:'COMMENT_PIPELINE',pass:rawPostsWithComments===0 || commentRows>0 || commentQueue.length>0,detail:'posts có comment='+rawPostsWithComments+', comment rows='+commentRows+', queue='+commentQueue.length},
+      {id:'COMMENT_SCHEMA',pass:raw.getMaxColumns()>=21,detail:'NHẬP JSON columns='+raw.getMaxColumns()},
+      {id:'COMMENT_PIPELINE',pass:rawPostsWithComments===0 || commentRows>0 || commentQueueStats.queue>0,detail:'posts có comment='+rawPostsWithComments+', comment rows='+commentRows+', queue='+commentQueueStats.queue+', cooldown='+commentQueueStats.cooldown},
       {id:'WORKER_CONFIG',pass:Number(monitoring.workers&&monitoring.workers.configuredCount||0)>0,detail:String(Number(monitoring.workers&&monitoring.workers.configuredCount||0))+' configured'},
       {id:'NO_STUCK_RUNNING',pass:repairs.staleRunning.repaired===0 || repair,detail:'recovered='+repairs.staleRunning.repaired}
     ];
@@ -4860,7 +4942,10 @@ const RemoteApp = (() => {
       commentIntelligence:{
         rawPostsWithComments,
         commentRows,
-        queue:commentQueue.length
+        queue:commentQueueStats.queue,
+        ready:commentQueueStats.ready,
+        cooldown:commentQueueStats.cooldown,
+        accessUnavailable:commentQueueStats.accessUnavailable
       },
       autoMonitor:auto
     };
