@@ -1,0 +1,37 @@
+name: Package Worker Keeper
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker-keeper/**'
+      - '.github/workflows/package-worker-keeper.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate manifest and JavaScript
+        run: |
+          python - <<'PY'
+          import json
+          with open('worker-keeper/manifest.json', encoding='utf-8') as f:
+              m=json.load(f)
+          assert m['manifest_version']==3
+          assert m['version']=='1.2.0'
+          print('manifest OK', m['version'])
+          PY
+          node --check worker-keeper/background.js
+          node --check worker-keeper/content.js
+          node --check worker-keeper/popup.js
+      - name: Upload unpacked extension package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Social_AIO_Worker_Keeper_P1.5_V1.2.0
+          path: worker-keeper/
+          if-no-files-found: error
+          retention-days: 30
