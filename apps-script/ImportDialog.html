@@ -921,15 +921,19 @@
       });
     }
     function summarizePoolResults(ctx) {
+      const results=ctx.results||[];
       return {
-        processed:ctx.results.length,
-        passed:ctx.results.filter(r=>r&&r.ok&&!r.incomplete&&!r.stopped).length,
-        incomplete:ctx.results.filter(r=>r&&r.incomplete).length,
-        failed:ctx.results.filter(r=>r&&!r.ok&&!r.stopped).length,
-        stopped:ctx.results.filter(r=>r&&r.stopped).length
+        processed:results.length,
+        passed:results.filter(r=>r&&r.ok&&!r.incomplete&&!r.stopped).length,
+        incomplete:results.filter(r=>r&&r.incomplete).length,
+        failed:results.filter(r=>r&&!r.ok&&!r.stopped&&!r.busy&&!r.skippedNotDue).length,
+        stopped:results.filter(r=>r&&r.stopped).length,
+        busy:results.filter(r=>r&&r.busy).length,
+        skipped:results.filter(r=>r&&r.skippedNotDue).length,
+        transientFailed:results.filter(r=>r&&!r.ok&&r.errorClass==='TRANSIENT').length,
+        connectionFailed:results.filter(r=>r&&!r.ok&&r.errorClass==='CONNECTION').length
       };
     }
-
     function runWorkerQueue(worker, ctx, done) {
       const jobs=(worker.jobs||[]).slice();
       const next=()=>{
@@ -939,7 +943,8 @@
           __command:'RUN_WORKER_JOB',
           workerSlot:worker.slot,
           row:job.row,
-          targetCount:job.targetCount
+          targetCount:job.targetCount,
+          jobMode:job.jobMode||'selected'
         }, r=>{
           ctx.results.push(r);
           pollGroupScanState();
@@ -947,7 +952,7 @@
         }, e=>{
           ctx.results.push({
             ok:false,row:job.row,name:job.name,workerSlot:worker.slot,
-            error:String(e.message||e),status:'LỖI'
+            errorClass:'UI_COMMAND',error:String(e.message||e),status:'LỖI'
           });
           pollGroupScanState();
           next();
@@ -955,7 +960,6 @@
       };
       next();
     }
-
     function runWorkerPlan(plan, retryMode, doneCallback) {
       const workers=(plan.workers||[]).filter(w=>(w.jobs||[]).length);
       if(!workers.length){
@@ -992,36 +996,43 @@
           const elapsed=Date.now()-ctx.started;
           const newPosts=ctx.results.reduce((sum,r)=>
             sum+Number(r&&r.imported&&r.imported.postImported||0),0);
+          const exceptionCount=summary.failed+summary.incomplete;
+          const effectiveProcessed=Math.max(0,summary.processed-summary.busy-summary.skipped-summary.stopped);
+          const exceptionRate=effectiveProcessed?exceptionCount/effectiveProcessed:0;
+          const systemicConnection=summary.connectionFailed>0;
+          const systemicRate=effectiveProcessed>=3 && exceptionRate>=0.5;
+          const systemicAllFail=effectiveProcessed>=2 && summary.passed===0 && exceptionCount>=effectiveProcessed;
+          const pauseSystemic=systemicConnection||systemicRate||systemicAllFail;
+
           const baseStatus=
-            ((summary.failed===summary.processed&&summary.processed>0)?'❌ QUÉT THẤT BẠI':label+' XONG')+
+            ((summary.failed===effectiveProcessed&&effectiveProcessed>0)?'❌ QUÉT THẤT BẠI':label+' XONG')+
             ' - V'+fin.version+
             '\nGroup xử lý: '+summary.processed+
             '\nXong đủ: '+summary.passed+
             '\nThiếu: '+summary.incomplete+
             '\nLỗi: '+summary.failed+
+            '\nBận/skip: '+(summary.busy+summary.skipped)+
             '\nDừng: '+summary.stopped+
             '\nPost mới: '+newPosts+
             '\nTổng thời gian: '+Math.round(elapsed/100)/10+'s'+
-            '\nKH PASS hiện có: '+((fin.refresh&&fin.refresh.leads)||0);
+            '\nKH PASS hiện có: '+((fin.refresh&&fin.refresh.leads)||0)+
+            (exceptionCount>0
+              ? ('\n⚠️ '+exceptionCount+' exception đã quarantine; dùng RETRY LỖI / THIẾU.')
+              : '');
 
           setStatus(baseStatus);
           pollGroupScanState();
           loadWorkerPool();
           pollMonitoring();
 
-          // Any incomplete/failed Group is an operational exception. Do not let
-          // unattended AUTO MONITOR loop indefinitely on partial data.
-          if(summary.incomplete>0 || summary.failed>0){
-            const probe=ctx.results.find(r=>r&&(r.incomplete||(!r.ok&&!r.stopped))&&Number(r.row||0)>=2);
-            if(probe && summary.incomplete>0){
-              const diagPrefix=baseStatus+
-                '\n\n⚠️ Có Group quét thiếu. AUTO tạm dừng sau cycle này.'+
-                '\nĐang chẩn đoán: '+(probe.name||probe.groupKey||('dòng '+probe.row));
-              runApiDiagnostic(probe.row,diagPrefix);
-            }
+          // Isolated Group failures are quarantined and AUTO continues.
+          // Pause globally only for worker disconnection or a broad failure pattern.
+          if(pauseSystemic){
             finish({
               pauseAuto:true,
-              message:baseStatus+'\nAUTO MONITOR tạm dừng vì có '+(summary.failed+summary.incomplete)+' exception.'
+              message:baseStatus+
+                '\nAUTO MONITOR tạm dừng do lỗi hệ thống/diện rộng'+
+                (systemicConnection?' (Worker connection).':' (failure rate cao).')
             });
             return;
           }
@@ -1030,7 +1041,7 @@
             analyzeSourceIdsSequential(batchSourceIds,baseStatus,r=>{
               finish(r&&r.pauseAuto
                 ? {pauseAuto:true,message:baseStatus+'\nAUTO MONITOR tạm dừng vì AI lỗi.'}
-                : {ok:true,newPosts,processed:summary.processed});
+                : {ok:true,newPosts,processed:summary.processed,exceptions:exceptionCount});
             });
             return;
           }
@@ -1038,7 +1049,7 @@
           if(newPosts>0 && fin.analysisMode==='manual'){
             setStatus(baseStatus+'\nAI: THỦ CÔNG — dữ liệu mới đã sẵn sàng.');
           }
-          finish({ok:true,newPosts,processed:summary.processed});
+          finish({ok:true,newPosts,processed:summary.processed,exceptions:exceptionCount});
         },e=>{
           const msg='Finalize batch lỗi: '+(e.message||e);
           setStatus(msg);
