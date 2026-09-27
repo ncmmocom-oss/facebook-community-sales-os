@@ -4,7 +4,7 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
-const BOOTSTRAP_VERSION = '2.1-menu-shell';
+const BOOTSTRAP_VERSION = '2.2-auto-monitor';
 
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
@@ -59,6 +59,9 @@ function apiBridgeScanSelectedGroup() { return callRemote_('apiBridgeScanSelecte
 function apiBridgeFetchCommentsSelectedPost() { return callRemote_('apiBridgeFetchCommentsSelectedPost', []); }
 function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
 
+// Installable time-driven trigger entrypoint for Auto Monitor V2.
+function autoMonitorTick() { return callRemote_('autoMonitorTick', []); }
+
 function githubForceUpdate() {
   const cache = CacheService.getScriptCache();
   cache.remove('SOCIAL_AIO_REMOTE_RUNTIME');
@@ -72,8 +75,8 @@ function githubForceUpdate() {
     'Đã tải RUNTIME mới nhất từ GitHub.\n' +
     'Runtime: ' + version + '\n' +
     'Bootstrap local: ' + BOOTSTRAP_VERSION + '\n\n' +
-    'Lưu ý: nút này KHÔNG tự thay Code.gs/bootstrap. ' +
-    'Menu native được tạo bởi Code.gs đang cài trong Apps Script project.'
+    'Auto Monitor V2 dùng trigger global autoMonitorTick() trong bootstrap 2.2.\n' +
+    'Lưu ý: runtime update không tự thay Code.gs/bootstrap.'
   );
 }
 
