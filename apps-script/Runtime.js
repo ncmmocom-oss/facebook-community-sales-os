@@ -2978,13 +2978,19 @@ const RemoteApp = (() => {
   function updateGroupScanStatus_(sheet, stats) {
     const now = new Date();
     Object.keys(stats).forEach(groupKey => {
-      const s = stats[groupKey];
-      if (!s.row) return;
-      sheet.getRange(s.row, 10).setValue(now);
-      sheet.getRange(s.row, 13).setValue(s.fileName);
-      sheet.getRange(s.row, 14).setValue(s.postNew !== undefined ? s.postNew : (s.newCount || 0));
+      const st = stats[groupKey];
+      if (!st.row) return;
+
+      // A comment refresh is not a Group post scan. Never move Lần quét gần nhất /
+      // Quét tiếp theo because that would hide an actually-due Group.
+      if (Number(st.postScanned||0) > 0) {
+        sheet.getRange(st.row, 10).setValue(now);
+        sheet.getRange(st.row, 13).setValue(st.fileName);
+        sheet.getRange(st.row, 14).setValue(st.postNew !== undefined ? st.postNew : (st.newCount || 0));
+      }
     });
   }
+
 
   function extractGroupKey_(url) {
     const m = String(url || '').match(/facebook\.com\/groups\/([^\/?#]+)/i);
@@ -4098,6 +4104,7 @@ const RemoteApp = (() => {
   function setAutoMonitorV2Enabled_(enabled,options) {
     ensureV16Sheets_(false);
     const on=!!enabled;
+    const acceptance=on ? runProductionAcceptance_({repair:true}) : null;
     const props=PropertiesService.getDocumentProperties();
     props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,String(on));
     if(options && Object.prototype.hasOwnProperty.call(options,'commentEnabled')) {
@@ -4107,7 +4114,7 @@ const RemoteApp = (() => {
     }
     ensureAutoMonitorTrigger_(on);
     const state=getAutoMonitorV2State_();
-    return Object.assign({},state,{message:on
+    return Object.assign({},state,{acceptance,message:on
       ? 'AUTO MONITOR V2 đã bật. Backend trigger sẽ tự quét Group đến hạn; không cần tick checkbox.'
       : 'AUTO MONITOR V2 đã tắt. Manual scan vẫn hoạt động.'
     });
@@ -4164,6 +4171,9 @@ const RemoteApp = (() => {
     const values=sheet.getRange(2,1,last-1,Math.min(27,sheet.getMaxColumns())).getValues();
     const buckets={};
     values.forEach((r,i)=>{
+      const active=String(r[0]||'').trim();
+      const lifecycle=String(r[6]||'').trim();
+      if(active!=='Có' || lifecycle==='Loại') return;
       const url=String(r[3]||'').trim();
       const key=exactGroupKeyFromRow_(url,r[4]);
       if(!key) return;
@@ -4361,7 +4371,9 @@ const RemoteApp = (() => {
     let exhausted=false;
     let transientRetries=0;
     let transientError='';
-    const target=Math.max(1,Math.min(CFG.COMMENT_MAX_PER_POST_CYCLE,Number(candidate.delta||candidate.totalCount||25)));
+    const target=candidate.partial
+      ? CFG.COMMENT_MAX_PER_POST_CYCLE
+      : Math.max(1,Math.min(CFG.COMMENT_MAX_PER_POST_CYCLE,Number(candidate.delta||candidate.totalCount||25)));
 
     while(comments.length<target && pages<20 && Date.now()-started<CFG.COMMENT_PAGE_BUDGET_MS){
       let res;
@@ -4530,7 +4542,15 @@ const RemoteApp = (() => {
         commentsNew+=added;
         (imported.newSourceIds||[]).forEach(id=>newIds.push(String(id||'').trim()));
 
-        if(fetched.nextCursor){
+        const incremental=!c.partial && c.handledCount>0;
+        const initialFits=!c.partial && c.handledCount===0 && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE;
+        const complete=
+          fetched.exhausted ||
+          !fetched.nextCursor ||
+          (incremental && fetched.commentsRead>=Math.max(1,c.delta)) ||
+          (initialFits && fetched.commentsRead>=Math.max(1,c.totalCount));
+
+        if(!complete && fetched.nextCursor){
           partial++;
           updateCommentFetchState_(c,{
             handledCount:c.handledCount,
@@ -4719,8 +4739,8 @@ const RemoteApp = (() => {
         incomplete:results.filter(x=>x&&x.status==='THIẾU').length,
         failed:results.filter(x=>x&&x.status==='LỖI').length,
         skipped:Math.max(0,combined.length-results.length),
-        postSources:sourceIds.filter(x=>/^P:/i.test(x)).length,
         commentSources:sourceIds.filter(x=>/^C:/i.test(x)).length,
+        postSources:sourceIds.filter(x=>!/^C:/i.test(x)).length,
         commentCycle,
         ai:ai?{analyzed:Number(ai.analyzed||0),remaining:Number(ai.remaining||0)}:null,
         duplicateQuarantine:duplicates.length
@@ -4949,6 +4969,7 @@ const RemoteApp = (() => {
       analysisMode:aiCfg.analysisMode||'manual',
       autoAnalyzeRequested:!!(aiCfg.configured&&aiCfg.analysisMode==='auto_scan'),
       lastScanSources:sourceIds.length,
+      sourceIds,
       commentCycle,
       durationMs:Date.now()-started
     };
