@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.1-hf1-monitor-safety',
+    VERSION: '1.9.1-hf2-raw-pagination',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -30,6 +30,7 @@ const RemoteApp = (() => {
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
+    EMPTY_PAGE_RETRY_ATTEMPTS: 3,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -53,7 +54,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -2979,6 +2980,99 @@ const RemoteApp = (() => {
     return 25;
   }
 
+  function callGroupPostsRawOnce_(clientId,params) {
+    const id=String(clientId||'').trim();
+    if(!id) throw new Error('Thiếu CLIENT_ID Social AIO.');
+
+    const url=CFG.BRIDGE_SERVER.replace(/\/$/,'')+'/call';
+    const res=UrlFetchApp.fetch(url,{
+      method:'post',
+      contentType:'application/json',
+      payload:JSON.stringify({
+        id,
+        apiname:'get_list_fb_group_posts',
+        apiparams:params||{}
+      }),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+
+    const code=res.getResponseCode();
+    const text=res.getContentText('UTF-8');
+    if(code<200 || code>=300){
+      throw new Error('Social AIO relay HTTP '+code+': '+text.slice(0,700));
+    }
+
+    let parsed=text;
+    try{ parsed=JSON.parse(text); }catch(_){}
+
+    const err=findBridgeError_(parsed);
+    if(err){
+      if(/not\s+connected/i.test(err)){
+        throw new Error(
+          'Social AIO báo Client not connected. Mở đúng tab Social AIO > Automation > APIs, bấm Connect và giữ tab đó hoạt động. Chi tiết: '+err
+        );
+      }
+      throw new Error('Social AIO API lỗi: '+err);
+    }
+
+    return {
+      code,
+      raw:parsed,
+      bytes:Utilities.newBlob(text||'').getBytes().length
+    };
+  }
+
+  function fetchGroupPostsPageRaw_(clientId,params) {
+    const max=Math.max(1,Math.min(5,Number(CFG.EMPTY_PAGE_RETRY_ATTEMPTS||3)));
+    const delays=[0,1500,3500,7000,12000];
+    let transientRetries=0;
+    let emptyRetries=0;
+    let last=null;
+
+    for(let i=0;i<max;i++){
+      if(i>0) Utilities.sleep(delays[Math.min(i,delays.length-1)]);
+      try{
+        const res=callGroupPostsRawOnce_(clientId,params);
+        const posts=findBridgeArray_(res.raw,['posts']);
+        const cursor=findBridgeCursor_(res.raw)||'';
+        last={raw:res.raw,posts,cursor,code:res.code,bytes:res.bytes};
+
+        if(posts.length){
+          return Object.assign(last,{
+            transientRetries,
+            emptyRetries,
+            attempts:i+1
+          });
+        }
+
+        if(i<max-1){
+          emptyRetries++;
+          continue;
+        }
+
+        return Object.assign(last,{
+          transientRetries,
+          emptyRetries,
+          attempts:i+1
+        });
+      }catch(err){
+        if(!isTransientSocialAioError_(err) || i>=max-1) throw err;
+        transientRetries++;
+      }
+    }
+
+    return Object.assign(last||{raw:null,posts:[],cursor:'',code:0,bytes:0},{
+      transientRetries,
+      emptyRetries,
+      attempts:max
+    });
+  }
+
+  function exactGroupKeyFromRow_(groupUrl,cellValue) {
+    return String(extractGroupKey_(groupUrl)||cellValue||'').trim().toLowerCase();
+  }
+
   function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast,sourceRow) {
     groupUrl=String(groupUrl || '').trim();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
@@ -3006,16 +3100,14 @@ const RemoteApp = (() => {
         break;
       }
 
-      let apiResult;
+      let page;
       try{
-        apiResult=callSocialAioApiWithRetry_(relayClient,'get_list_fb_group_posts',{
+        page=fetchGroupPostsPageRaw_(relayClient,{
           url:groupUrl,
           sorting:'Newest Posts',
           cursor:cursor || ''
-        },{
-          maxAttempts:CFG.RELAY_RETRY_ATTEMPTS,
-          onRetry:()=>{ transientRetries++; }
         });
+        transientRetries+=Number(page.transientRetries||0);
       }catch(err){
         if(isTransientSocialAioError_(err) && posts.length>0){
           transientError=String(err.message||err);
@@ -3025,10 +3117,13 @@ const RemoteApp = (() => {
       }
       pages++;
 
-      const pagePosts=findBridgeArray_(apiResult,['posts']);
+      const pagePosts=page.posts||[];
       if(!pagePosts.length) {
         exhausted=true;
         nextCursor='';
+        if(!posts.length){
+          transientError='HTTP 200 nhưng page đầu rỗng sau '+Number(page.attempts||1)+' lần thử.';
+        }
         break;
       }
 
@@ -3042,7 +3137,7 @@ const RemoteApp = (() => {
         posts.push(p);
       });
 
-      nextCursor=findBridgeCursor_(apiResult)||'';
+      nextCursor=page.cursor||'';
       if(!nextCursor || nextCursor===cursor || seenCursor[nextCursor]) {
         exhausted=true;
         break;
@@ -3052,6 +3147,9 @@ const RemoteApp = (() => {
     }
 
     if(!posts.length) {
+      if(transientError){
+        throw new Error('Social AIO page rỗng tạm thời: '+transientError);
+      }
       throw new Error('API trả về nhưng không tìm thấy post cho Group này.');
     }
 
@@ -3289,7 +3387,7 @@ const RemoteApp = (() => {
 
     const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group dòng '+row);
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
-    const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+    const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
     const target=normalizeGroupTarget_(options.targetCount || sheet.getRange(row,9).getValue() || 25);
 
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
@@ -3431,7 +3529,7 @@ const RemoteApp = (() => {
         name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
         profile:String(r[1]||'').trim() || 'AUTO',
         url,
-        groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
+        groupKey:exactGroupKeyFromRow_(url,r[4]),
         targetCount:normalizeGroupTarget_(r[8]||25),
         status:runtimeStatus||'CHỜ',
         lifecycle,
@@ -3575,7 +3673,7 @@ const RemoteApp = (() => {
 
     const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group '+row);
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
-    const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+    const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
     if(!/facebook\.com\/groups\//i.test(groupUrl)) throw new Error('Dòng '+row+' không có URL Group hợp lệ.');
 
     // A Due Queue plan can become stale while another Control Center finishes
@@ -4134,7 +4232,7 @@ const RemoteApp = (() => {
       return {
         code:'P_PAGINATION_OK',
         title:'Pagination PASS — raw cursor và PAGE2 đều hoạt động',
-        action:'Không sửa pagination. Nếu scan lỗi, kiểm tra relay/lease/retry thay vì cursor parser.'
+        action:'Production scanner HF2 dùng cùng raw-wrapper path này. Nếu scan lỗi, kiểm tra retry/empty-page/lease.'
       };
     }
 
@@ -4270,7 +4368,7 @@ const RemoteApp = (() => {
 
     const groupName=String(sh.getRange(row,3).getDisplayValue()||'').trim()||('Group '+row);
     const groupUrl=String(sh.getRange(row,4).getDisplayValue()||'').trim();
-    const groupKey=String(sh.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim();
+    const groupKey=exactGroupKeyFromRow_(groupUrl,sh.getRange(row,5).getDisplayValue());
 
     if(!groupUrl) throw new Error('Dòng đang chọn chưa có URL Group.');
 
@@ -4401,7 +4499,7 @@ const RemoteApp = (() => {
   function classifyScanError_(err) {
     const msg=String(err&&err.message||err||'');
     if(isWorkerConnectionError_(msg)) return 'CONNECTION';
-    if(isTransientSocialAioError_(msg)) return 'TRANSIENT';
+    if(isTransientSocialAioError_(msg) || /page rỗng tạm thời|HTTP 200 nhưng page đầu rỗng/i.test(msg)) return 'TRANSIENT';
     if(/không tìm thấy post/i.test(msg)) return 'NO_POSTS';
     if(/Sheet đang bận/i.test(msg)) return 'SHEET_BUSY';
     return 'UNKNOWN';
