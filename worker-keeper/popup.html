@@ -1,0 +1,48 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Worker Keeper</title>
+<style>
+  body{font-family:Arial,sans-serif;width:320px;margin:0;background:#f8fafc;color:#0f172a}
+  .head{padding:14px 16px;background:#0f766e;color:white}
+  .head b{font-size:15px}.head small{display:block;opacity:.85;margin-top:3px}
+  .wrap{padding:12px}.card{background:white;border:1px solid #e2e8f0;border-radius:10px;padding:12px;margin-bottom:10px}
+  .row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin:6px 0}
+  .muted{color:#64748b;font-size:11px}.status{font-weight:700}
+  .online{color:#15803d}.offline{color:#b91c1c}.unknown{color:#b45309}
+  button{border:0;border-radius:8px;padding:8px 10px;font-weight:700;cursor:pointer}
+  .primary{background:#0f766e;color:white}.secondary{background:#e2e8f0;color:#0f172a}
+  .actions{display:flex;gap:6px}.actions button{flex:1}
+  label{font-size:12px}.toggle{display:flex;align-items:center;gap:8px}
+  #lastError{white-space:pre-wrap;word-break:break-word}
+</style>
+</head>
+<body>
+  <div class="head">
+    <b>Social AIO Worker Keeper</b>
+    <small>P1.5 • W1 browser connection</small>
+  </div>
+  <div class="wrap">
+    <div class="card">
+      <div class="row"><span>Worker</span><span id="status" class="status unknown">UNKNOWN</span></div>
+      <div class="row"><span>Client</span><span id="client" class="muted">—</span></div>
+      <div class="row"><span>Reconnect</span><span id="reconnects">0</span></div>
+      <div class="row"><span>Last OK</span><span id="lastOk" class="muted">—</span></div>
+      <div id="lastError" class="muted"></div>
+    </div>
+
+    <div class="card">
+      <div class="toggle"><input type="checkbox" id="autoReconnect"><label for="autoReconnect">Tự reconnect khi rớt</label></div>
+      <div class="toggle"><input type="checkbox" id="autoDismiss"><label for="autoDismiss">Tự đóng popup WebSocket error</label></div>
+    </div>
+
+    <div class="actions">
+      <button id="open" class="secondary">Mở API tab</button>
+      <button id="reconnect" class="primary">Reconnect ngay</button>
+    </div>
+  </div>
+<script src="popup.js"></script>
+</body>
+</html>
