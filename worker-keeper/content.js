@@ -153,7 +153,7 @@
   async function emitEvent(code,severity,message,action,extra) {
     const key = [code,message].join('|');
     const t = now();
-    if (STATE.lastEventKey === key && t - STATE.lastEventAt < 10000) return;
+    if (STATE.lastEventKey === key && t - STATE.lastEventAt < 60000) return;
     STATE.lastEventKey = key;
     STATE.lastEventAt = t;
 
