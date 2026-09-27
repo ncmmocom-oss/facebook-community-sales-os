@@ -1,4 +1,6 @@
 (() => {
+  if (globalThis.__SOCIAL_AIO_WORKER_KEEPER__) return;
+  globalThis.__SOCIAL_AIO_WORKER_KEEPER__ = '1.1.0';
   const STATE = {
     primary: false,
     connected: false,
@@ -240,6 +242,11 @@
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!msg || !msg.type) return;
+
+    if (msg.type === 'KEEPER_PING') {
+      sendResponse({ok:true,version:'1.1.0',primary:STATE.primary});
+      return;
+    }
 
     if (msg.type === 'KEEPER_PRIMARY_CHANGED') {
       STATE.primary = !!msg.primary;
