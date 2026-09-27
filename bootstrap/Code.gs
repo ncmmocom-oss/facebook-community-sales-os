@@ -4,6 +4,8 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
+const BOOTSTRAP_VERSION = '2.1-menu-shell';
+
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
   RUNTIME_FILE: 'Runtime.js',
@@ -67,9 +69,11 @@ function githubForceUpdate() {
   buildLocalMenu_();
 
   SpreadsheetApp.getUi().alert(
-    'Đã tải runtime mới nhất từ GitHub.\n' +
-    'Phiên bản: ' + version + '\n\n' +
-    'Không cần reload để menu xuất hiện.'
+    'Đã tải RUNTIME mới nhất từ GitHub.\n' +
+    'Runtime: ' + version + '\n' +
+    'Bootstrap local: ' + BOOTSTRAP_VERSION + '\n\n' +
+    'Lưu ý: nút này KHÔNG tự thay Code.gs/bootstrap. ' +
+    'Menu native được tạo bởi Code.gs đang cài trong Apps Script project.'
   );
 }
 
