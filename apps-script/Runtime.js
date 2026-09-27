@@ -14,6 +14,7 @@ const RemoteApp = (() => {
     IMPORT_LOG_SHEET: 'NHẬT KÝ IMPORT',
     DAILY_STATS_SHEET: 'THỐNG KÊ NGÀY',
     API_DIAG_SHEET: 'NHẬT KÝ API',
+    AUTO_LOG_SHEET: 'NHẬT KÝ AUTO',
     BRIDGE_SERVER: 'https://api.fbaio.org',
     BRIDGE_CLIENT_ID_KEY: 'SOCIAL_AIO_BRIDGE_CLIENT_ID',
     WORKER_POOL_KEY: 'SOCIAL_AIO_WORKER_POOL_V1',
@@ -929,6 +930,14 @@ const RemoteApp = (() => {
     il.getRange(1,1,1,18).setValues([[
       'Thời gian','Run ID','Group','Group ID','File','Số file','Bản ghi đọc','Post đọc','Comment đọc',
       'Post mới','Comment mới','Trùng','Bài/lần','Duration ms','Trạng thái','Version','Lỗi','Ghi chú'
+    ]]);
+
+    let al = ss.getSheetByName(CFG.AUTO_LOG_SHEET);
+    if (!al) al = ss.insertSheet(CFG.AUTO_LOG_SHEET);
+    if (al.getMaxColumns() < 15) al.insertColumnsAfter(al.getMaxColumns(),15-al.getMaxColumns());
+    al.getRange(1,1,1,15).setValues([[
+      'Thời gian','Run ID','Source','Enabled','Group xử lý','Group PASS','Group lỗi','Group skip',
+      'Post comment xử lý','Comment mới','AI analyzed','Duration ms','Trạng thái','Lỗi','Chi tiết'
     ]]);
 
     let ds = ss.getSheetByName(CFG.DAILY_STATS_SHEET);
@@ -3969,6 +3978,36 @@ const RemoteApp = (() => {
     return out;
   }
 
+  function logAutoMonitorRun_(summary) {
+    try{
+      const ss=SpreadsheetApp.getActiveSpreadsheet();
+      let sh=ss.getSheetByName(CFG.AUTO_LOG_SHEET);
+      if(!sh){
+        ensureV16Sheets_(true);
+        sh=ss.getSheetByName(CFG.AUTO_LOG_SHEET);
+      }
+      const detail=[
+        summary.waitingWorker?'WAIT_WORKER':'',
+        summary.repairs?('repair lease='+Number(summary.repairs.expiredLeases||0)+
+          ', stale='+Number(summary.repairs.staleRunning||0)+
+          ', spill='+Number((summary.repairs.spillovers||[]).length)+
+          ', dup='+Number((summary.repairs.duplicates||[]).length)):'',
+        summary.newSourceIds&&summary.newSourceIds.length?('sources='+summary.newSourceIds.length):''
+      ].filter(Boolean).join(' | ');
+      sh.appendRow([
+        new Date(),summary.runId||'',summary.source||'',
+        isAutoMonitorEnabled_()?'ON':'OFF',
+        Number(summary.groupsProcessed||0),Number(summary.groupsPassed||0),
+        Number(summary.groupsFailed||0),Number(summary.groupsSkipped||0),
+        Number(summary.commentsProcessed||0),Number(summary.commentsImported||0),
+        Number(summary.aiAnalyzed||0),Number(summary.durationMs||0),
+        summary.ok===false?'ERROR':(summary.skipped?'SKIP':'OK'),
+        String(summary.error||summary.message||summary.aiError||'').slice(0,1000),
+        detail
+      ]);
+    }catch(_){}
+  }
+
   function autoMonitorTick_(options) {
     options=options||{};
     if(!options.force && !isAutoMonitorEnabled_()) return {ok:true,skipped:true,reason:'DISABLED',version:CFG.VERSION};
@@ -4081,6 +4120,7 @@ const RemoteApp = (() => {
         summary.durationMs=summary.durationMs||Date.now()-started;
         summary.finishedAt=summary.finishedAt||new Date().toISOString();
         props.setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
+        logAutoMonitorRun_(summary);
       }catch(_){}
       lock.releaseLock();
     }
