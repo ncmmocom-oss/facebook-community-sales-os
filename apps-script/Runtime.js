@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.1-signal-feed',
+    VERSION: '1.9.1-hf1-monitor-safety',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -27,6 +27,9 @@ const RemoteApp = (() => {
     AUTO_AI_SOURCE_CHUNK: 150,
     SIGNAL_FEED_DAYS: 7,
     SIGNAL_FEED_MAX_SOURCE_ROWS: 20000,
+    GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
+    GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
+    RELAY_RETRY_ATTEMPTS: 3,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -50,7 +53,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -2993,6 +2996,8 @@ const RemoteApp = (() => {
     let pages=0;
     let exhausted=false;
     let stopped=false;
+    let transientRetries=0;
+    let transientError='';
     const relayClient=String(clientId||'').trim() || getBridgeClientId_();
 
     while(posts.length<target && pages<30 && (Date.now()-started)<pageBudgetMs) {
@@ -3001,11 +3006,23 @@ const RemoteApp = (() => {
         break;
       }
 
-      const apiResult=callSocialAioApiWithClient_(relayClient,'get_list_fb_group_posts',{
-        url:groupUrl,
-        sorting:'Newest Posts',
-        cursor:cursor || ''
-      });
+      let apiResult;
+      try{
+        apiResult=callSocialAioApiWithRetry_(relayClient,'get_list_fb_group_posts',{
+          url:groupUrl,
+          sorting:'Newest Posts',
+          cursor:cursor || ''
+        },{
+          maxAttempts:CFG.RELAY_RETRY_ATTEMPTS,
+          onRetry:()=>{ transientRetries++; }
+        });
+      }catch(err){
+        if(isTransientSocialAioError_(err) && posts.length>0){
+          transientError=String(err.message||err);
+          break;
+        }
+        throw err;
+      }
       pages++;
 
       const pagePosts=findBridgeArray_(apiResult,['posts']);
@@ -3068,8 +3085,10 @@ const RemoteApp = (() => {
       pages,
       exhausted,
       stopped,
-      incomplete:selectedPosts.length<target,
+      incomplete:selectedPosts.length<target || !!transientError,
       nextCursor:nextCursor||'',
+      transientRetries,
+      transientError,
       imported,
       durationMs:Date.now()-started
     };
@@ -3277,9 +3296,16 @@ const RemoteApp = (() => {
       throw new Error('Dòng '+row+' không có URL Group Facebook hợp lệ.');
     }
 
-    const currentStatus=String(sheet.getRange(row,24).getDisplayValue()||'');
-    if(currentStatus==='ĐANG QUÉT' && options.source!=='BATCH' && options.source!=='RETRY') {
-      return {ok:false,alreadyRunning:true,row,name,groupUrl,targetCount:target};
+    const lease=acquireGroupLease_(
+      groupKey||extractGroupKey_(groupUrl),
+      'DIRECT|'+Utilities.getUuid().slice(0,8),
+      row
+    );
+    if(!lease.ok){
+      return {
+        ok:false,busy:true,row,name,groupKey,groupUrl,targetCount:target,
+        status:'SKIP_BUSY',leaseReason:lease.reason||'GROUP_BUSY',leaseExpiresAt:lease.expiresAt||0
+      };
     }
 
     sheet.getRange(row,9).setValue(target);
@@ -3304,14 +3330,18 @@ const RemoteApp = (() => {
         (imported.postImported||0)+' mới',
         (imported.duplicates||0)+' trùng',
         (result.pages||1)+' page',
+        result.transientRetries?('retry '+result.transientRetries):'',
         (Math.round((Date.now()-started)/100)/10)+'s'
-      ].join(' • ');
+      ].filter(Boolean).join(' • ');
 
       let status='XONG';
       let note='';
       if(stopped) {
         status='DỪNG';
         note='Đã dừng theo yêu cầu.';
+      } else if(result.transientError) {
+        status='THIẾU';
+        note='Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
       } else if((result.postsRead||0)<target) {
         status='THIẾU';
         note='API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
@@ -3324,18 +3354,22 @@ const RemoteApp = (() => {
       SpreadsheetApp.flush();
       return Object.assign({},result,{
         row,name,groupKey,status,targetCount:target,stopped,incomplete:status==='THIẾU',progress,note,
-        workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:''
+        workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:'',
+        errorClass:result.transientError?'TRANSIENT':''
       });
     } catch(err) {
       const msg=String(err.message||err);
+      const errorClass=classifyScanError_(err);
       const health=healthWorkerSlot?recordWorkerJobHealth_(healthWorkerSlot,false,Date.now()-started,msg):null;
       setGroupRowStatus_(sheet,row,'LỖI','0/'+target+' bài',msg);
       SpreadsheetApp.flush();
       return {
         ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
         workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:'',
-        error:msg,durationMs:Date.now()-started
+        errorClass,error:msg,durationMs:Date.now()-started
       };
+    } finally {
+      releaseGroupLease_(groupKey||extractGroupKey_(groupUrl),lease.token);
     }
   }
   function getCheckedGroupRows_() {
@@ -3544,6 +3578,25 @@ const RemoteApp = (() => {
     const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) throw new Error('Dòng '+row+' không có URL Group hợp lệ.');
 
+    // A Due Queue plan can become stale while another Control Center finishes
+    // the same Group. Re-check immediately before execution.
+    if(String(command.jobMode||'').toLowerCase()==='due' && !isDueJobStillValid_(sheet,row)){
+      return {
+        ok:false,skippedNotDue:true,row,name,groupKey,groupUrl,targetCount:target,
+        status:'SKIP_NOT_DUE',workerSlot:worker.slot,workerHealth:workerHealthState_(worker)
+      };
+    }
+
+    const owner=worker.slot+'|'+Utilities.getUuid().slice(0,8);
+    const lease=acquireGroupLease_(groupKey||extractGroupKey_(groupUrl),owner,row);
+    if(!lease.ok){
+      return {
+        ok:false,busy:true,row,name,groupKey,groupUrl,targetCount:target,
+        status:'SKIP_BUSY',workerSlot:worker.slot,workerHealth:workerHealthState_(worker),
+        leaseReason:lease.reason||'GROUP_BUSY',leaseExpiresAt:lease.expiresAt||0
+      };
+    }
+
     sheet.getRange(row,9).setValue(target);
     clearGroupStop_(groupKey);
     const workerTag=worker.slot + (worker.profile?(' · '+worker.profile):(' · '+worker.label));
@@ -3565,12 +3618,18 @@ const RemoteApp = (() => {
         (imported.postImported||0)+' mới',
         (imported.duplicates||0)+' trùng',
         (result.pages||1)+' page',
+        result.transientRetries?('retry '+result.transientRetries):'',
         (Math.round((Date.now()-started)/100)/10)+'s'
-      ].join(' • ');
+      ].filter(Boolean).join(' • ');
 
       let status='XONG', note='';
-      if(stopped){status='DỪNG';note='Đã dừng theo yêu cầu.';}
-      else if((result.postsRead||0)<target){
+      if(stopped){
+        status='DỪNG';
+        note='Đã dừng theo yêu cầu.';
+      } else if(result.transientError){
+        status='THIẾU';
+        note='Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
+      } else if((result.postsRead||0)<target){
         status='THIẾU';
         note='API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
           (result.nextCursor?' trước time budget.':' vì không còn cursor.');
@@ -3586,10 +3645,12 @@ const RemoteApp = (() => {
         row,name,groupKey,status,targetCount:target,
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:'ONLINE',
-        stopped,incomplete:status==='THIẾU',progress,note
+        stopped,incomplete:status==='THIẾU',progress,note,
+        errorClass:result.transientError?'TRANSIENT':''
       });
     }catch(err){
       const msg=String(err.message||err);
+      const errorClass=classifyScanError_(err);
       const health=recordWorkerJobHealth_(worker.slot,false,Date.now()-started,msg);
       setGroupRowStatus_(sheet,row,'LỖI',worker.slot+' • 0/'+target+' bài',msg);
       SpreadsheetApp.flush();
@@ -3597,8 +3658,10 @@ const RemoteApp = (() => {
         ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:workerHealthState_(worker),
-        error:msg,durationMs:Date.now()-started
+        errorClass,error:msg,durationMs:Date.now()-started
       };
+    } finally {
+      releaseGroupLease_(groupKey||extractGroupKey_(groupUrl),lease.token);
     }
   }
   function sortOpportunityNewestFirst_() {
@@ -4062,20 +4125,24 @@ const RemoteApp = (() => {
     const first=results[0]||{};
     const uid=results.find(x=>x.name==='UID+sorting');
     const def=results.find(x=>x.name==='URL-default');
+    const cursorSource=results.find(x=>x.cursorValue);
 
-    if(first.cursorValue && !first.unCursor){
+    // Since V1.8.6 the production scanner reads findBridgeCursor_(apiResult)
+    // from the RAW wrapper before any unwrap. A successful page-2 probe is
+    // therefore evidence that pagination is healthy, not evidence of a bug.
+    if(cursorSource && page2 && Number(page2.rawBestCount||0)>0){
       return {
-        code:'B_UNWRAP_CURSOR',
-        title:'Wrapper/unwrap làm mất cursor',
-        action:'Giữ pagination metadata trước khi unwrap.'
+        code:'P_PAGINATION_OK',
+        title:'Pagination PASS — raw cursor và PAGE2 đều hoạt động',
+        action:'Không sửa pagination. Nếu scan lỗi, kiểm tra relay/lease/retry thay vì cursor parser.'
       };
     }
 
-    if(page2 && page2.rawBestCount>0){
+    if(cursorSource && (!page2 || Number(page2.rawBestCount||0)<=0)){
       return {
-        code:'B_CURSOR_CONFIRMED',
-        title:'Cursor hoạt động nhưng scanner chưa dùng đúng metadata',
-        action:'Chuyển scanner sang raw-wrapper pagination.'
+        code:'B_PAGE2_RELAY_OR_CURSOR',
+        title:'Có raw cursor nhưng PAGE2 probe không trả bài',
+        action:'Kiểm tra relay/upstream và cursor request của PAGE2; chưa kết luận scanner sai metadata.'
       };
     }
 
@@ -4122,7 +4189,6 @@ const RemoteApp = (() => {
       action:'Đọc NHẬT KÝ API và bổ sung parser theo schema thật.'
     };
   }
-
   function ensureApiDiagSheet_() {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     let sh=ss.getSheetByName(CFG.API_DIAG_SHEET);
@@ -4325,6 +4391,117 @@ const RemoteApp = (() => {
       page2,
       conclusion
     };
+  }
+
+  function isTransientSocialAioError_(err) {
+    const msg=String(err&&err.message||err||'');
+    return /Social AIO relay HTTP\s+(429|502|503|504)\b|\btimeout\b|timed\s*out|temporar(?:y|ily)|service unavailable|bad gateway|gateway timeout|connection reset|socket|network error|address unavailable/i.test(msg);
+  }
+
+  function classifyScanError_(err) {
+    const msg=String(err&&err.message||err||'');
+    if(isWorkerConnectionError_(msg)) return 'CONNECTION';
+    if(isTransientSocialAioError_(msg)) return 'TRANSIENT';
+    if(/không tìm thấy post/i.test(msg)) return 'NO_POSTS';
+    if(/Sheet đang bận/i.test(msg)) return 'SHEET_BUSY';
+    return 'UNKNOWN';
+  }
+
+  function callSocialAioApiWithRetry_(clientId,apiName,apiParams,options) {
+    options=options||{};
+    const attempts=Math.max(1,Math.min(5,Number(options.maxAttempts||CFG.RELAY_RETRY_ATTEMPTS||3)));
+    const delays=[0,2000,5000,9000,15000];
+    let lastErr=null;
+
+    for(let i=0;i<attempts;i++){
+      if(i>0) Utilities.sleep(delays[Math.min(i,delays.length-1)]);
+      try{
+        return callSocialAioApiWithClient_(clientId,apiName,apiParams);
+      }catch(err){
+        lastErr=err;
+        if(!isTransientSocialAioError_(err) || i>=attempts-1) throw err;
+        if(typeof options.onRetry==='function'){
+          try{ options.onRetry({attempt:i+2,error:String(err.message||err)}); }catch(_){}
+        }
+      }
+    }
+    throw lastErr||new Error('Social AIO transient retry failed.');
+  }
+
+  function groupLeasePropertyKey_(groupKey) {
+    const raw=String(groupKey||'unknown').trim().toLowerCase();
+    const safe=Utilities.base64EncodeWebSafe(raw,Utilities.Charset.UTF_8).replace(/=+$/,'').slice(0,180);
+    return CFG.GROUP_LEASE_PREFIX+safe;
+  }
+
+  function acquireGroupLease_(groupKey,owner,row) {
+    const key=groupLeasePropertyKey_(groupKey);
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)){
+      return {ok:false,reason:'LEASE_LOCK_BUSY',groupKey:String(groupKey||''),row:Number(row||0)};
+    }
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const now=Date.now();
+      let existing=null;
+      const raw=props.getProperty(key);
+      if(raw){
+        try{ existing=JSON.parse(raw); }catch(_){}
+      }
+      if(existing && Number(existing.expiresAt||0)>now){
+        return {
+          ok:false,
+          reason:'GROUP_BUSY',
+          groupKey:String(groupKey||''),
+          row:Number(row||0),
+          owner:existing.owner||'',
+          expiresAt:Number(existing.expiresAt||0)
+        };
+      }
+
+      const lease={
+        token:Utilities.getUuid(),
+        owner:String(owner||'scan'),
+        row:Number(row||0),
+        groupKey:String(groupKey||''),
+        acquiredAt:now,
+        expiresAt:now+CFG.GROUP_LEASE_TTL_MS
+      };
+      props.setProperty(key,JSON.stringify(lease));
+      return Object.assign({ok:true},lease);
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  function releaseGroupLease_(groupKey,token) {
+    if(!groupKey || !token) return false;
+    const key=groupLeasePropertyKey_(groupKey);
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return false;
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const raw=props.getProperty(key);
+      if(!raw) return true;
+      let current=null;
+      try{ current=JSON.parse(raw); }catch(_){}
+      if(current && String(current.token||'')===String(token)){
+        props.deleteProperty(key);
+        return true;
+      }
+      return false;
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  function isDueJobStillValid_(sheet,row) {
+    if(!sheet || row<2 || row>sheet.getLastRow()) return false;
+    const vals=sheet.getRange(row,1,1,24).getDisplayValues()[0]||[];
+    const active=String(vals[0]||'').trim();
+    const due=String(vals[11]||'').trim();
+    const status=String(vals[23]||'').trim();
+    return active==='Có' && due==='CẦN QUÉT' && status!=='ĐANG QUÉT';
   }
 
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
@@ -4738,7 +4915,7 @@ const RemoteApp = (() => {
       const chosen=candidates[0];
       const weight=Math.max(1,Number(chosen.latencyMs||1500)/1000);
       loads[chosen.slot]+=target*weight;
-      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot}));
+      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot,jobMode:mode||'selected'}));
     });
 
     const workers=pool.map(w=>({
