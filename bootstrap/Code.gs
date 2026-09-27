@@ -17,28 +17,28 @@ function onOpen() {
 
 function buildLocalMenu_() {
   const ui=SpreadsheetApp.getUi();
+
+  // V1.9.2 UX Shell P1:
+  // Native Google Sheets menu is only the entry point.
+  // Operational workflows live in the Control Center.
   ui.createMenu('SOCIAL AIO')
-    .addItem('1. ⚙ CÀI ĐẶT', 'showSettingsDialog')
-    .addItem('2. 🔎 QUÉT GROUP', 'showScanDialog')
-    .addItem('3. 🤖 AI PHÂN TÍCH', 'showAiDialog')
-    .addItem('4. 🔄 CẬP NHẬT DỮ LIỆU (khi cần)', 'refreshCurrentData')
+    .addItem('🚀 MỞ CONTROL CENTER', 'showControlCenterHome')
     .addSeparator()
-    .addSubMenu(
-      ui.createMenu('CÔNG CỤ')
-        .addItem('Import JSON thủ công', 'showSettingsDialog')
-        .addItem('Đồng bộ KH PASS', 'syncPotentialCustomers')
-        .addItem('Kiểm tra bài trùng', 'auditDuplicates')
-    )
+    .addItem('📡 TÍN HIỆU', 'openSignalFeed')
+    .addItem('🎯 LEAD INBOX', 'openLeadInbox')
+    .addSeparator()
+    .addItem('⚙ CÀI ĐẶT', 'showSettingsDialog')
     .addSubMenu(
       ui.createMenu('HỆ THỐNG')
-        .addItem('Cập nhật runtime từ GitHub', 'githubForceUpdate')
-        .addItem('Thông tin phiên bản', 'showRuntimeInfo')
-        .addSeparator()
-        .addItem('Bridge: TEST kết nối', 'apiBridgeTest')
-        .addItem('Bridge: Trạng thái', 'apiBridgeStatus')
+        .addItem('🔄 Cập nhật runtime từ GitHub', 'githubForceUpdate')
+        .addItem('ℹ Thông tin phiên bản', 'showRuntimeInfo')
     )
     .addToUi();
 }
+
+function showControlCenterHome() { return callRemote_('showControlCenter', ['scan']); }
+function openSignalFeed() { return callRemote_('openSignalFeed', []); }
+function openLeadInbox() { return callRemote_('openLeadInbox', []); }
 
 function showSettingsDialog() { return callRemote_('showControlCenter', ['settings']); }
 function showScanDialog() { return callRemote_('showControlCenter', ['scan']); }
