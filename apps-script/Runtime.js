@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.1-hf3-stop-state',
+    VERSION: '1.9.1-hf4-run-scope',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -19,6 +19,8 @@ const RemoteApp = (() => {
     WORKER_POOL_KEY: 'SOCIAL_AIO_WORKER_POOL_V1',
     BRIDGE_STOP_ALL_KEY: 'SOCIAL_AIO_BRIDGE_STOP_ALL',
     BRIDGE_STOP_PREFIX: 'SOCIAL_AIO_BRIDGE_STOP_',
+    SCAN_RUN_STOP_PREFIX: 'SOCIAL_AIO_SCAN_RUN_STOP_',
+    SCAN_RUN_STOP_TTL_MS: 20 * 60 * 1000,
     GROUP_CONTROL_START_COL: 23,
     LAST_SCAN_SOURCE_IDS_KEY: 'SOCIAL_AIO_LAST_SCAN_SOURCE_IDS_V1',
     WORKER_HEALTH_TTL_MS: 15 * 60 * 1000,
@@ -54,7 +56,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
+      'V1.9.1-HF4 Run Scope: bỏ STOP_ALL khỏi worker engine; mỗi batch/cycle có runId + cancellation riêng, không thể nhiễm state giữa các run.\nV1.9.1-HF3 Stop State: xóa STOP_ALL khi bắt đầu run mới và trả STOPPED có cấu trúc; không còn biến stop cũ thành lỗi 0/25.\nV1.9.1-HF2 Raw Pagination: production scanner dùng raw relay wrapper như diagnostic + retry HTTP 200 page rỗng; tránh false empty scan.\nV1.9.1-HF1 Monitor Safety: diagnostic đúng pagination hiện tại + transient retry + per-Group lease + fault isolation cho AUTO MONITOR.\nV1.9.1 Signal Feed: view TÍN HIỆU 7 ngày, Group/ngày summary + native collapse chỉ bung PASS/WATCH/REVIEW; CƠ HỘI giữ nguyên source-of-truth.\nV1.9.0 200G Pilot: Monitoring Overview + Due Queue + fast worker import + lighter post-scan refresh + AI source batching cho pilot 200 Group.\nV1.8.7 worker-health.1: Worker health dùng evidence TEST/SCAN theo thời gian; UNKNOWN/ONLINE/STALE/OFFLINE tách biệt.\nV1.8.7 identity-fix.2: mọi API scan có sourceRow đều normalize registry; hỗ trợ cả numeric→numeric và numeric→slug.\nV1.8.7 identity-fix.1: canonical Group identity bind về đúng source row; không append duplicate khi numeric URL resolve sang slug.\nV1.8.7: Lead Qualification Hard Gate + AI scope AUTO/MANUAL + per-Group AI Context/Offer.\nV1.8.6: Social AIO Group pagination fix — cursor trên result item.\nV1.8.5-diagnostic: API RESPONSE DIAGNOSTIC — kiểm tra raw wrapper, array path, cursor và input mode mà không import dữ liệu.\nV1.8.4-pilot: Pilot chạy 1 Worker (W1); W2/W3 giữ sẵn nhưng tắt mặc định để mở rộng sau.\nV1.8.4-poc: 3 Social AIO Client IDs = 3 worker song song, smart load balancing + Profile affinity.\nV1.8.3-poc: Operator Simple UX — chọn Group, chọn 10/15/20/25 bài, QUÉT; có bộ đếm trạng thái và Retry.\nV1.8.2-poc: Triggerless modeless control center + active-row scan + multi-select queue controls.\nV1.8.1-poc: Sheet-native Group controls + batch selection + stop state + clearer comment URL validation.\nV1.8.0-poc: Official Social AIO HTTP Relay Bridge + direct Group/Post Comment POC.\nV1.7.0: Daily Metrics + Import Log + Nested Comment Intake + Media URLs + Fast Sync + Token Saver.\nAPI key được lưu trong Script Properties, không lưu trong Sheet hoặc GitHub.'
     );
   }
 
@@ -958,13 +960,14 @@ const RemoteApp = (() => {
     if (name === 'PREPARE_RETRY_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, true);
     if (name === 'RUN_WORKER_JOB') return runWorkerJob_(command);
     if (name === 'FINALIZE_WORKER_BATCH') return finalizeWorkerBatch_(command);
+    if (name === 'STOP_SCAN_RUN') return requestStopScanRun_(command.runId);
     if (name === 'BRIDGE_SCAN_GROUP') return scanGroupApiBridge_(command.groupUrl, command.targetCount || 25);
     if (name === 'BRIDGE_FETCH_COMMENTS') return fetchCommentsApiBridge_(command.postUrl);
     if (name === 'GET_GROUP_SCAN_CONTROL') return getGroupScanControlState_();
     if (name === 'RUN_ACTIVE_GROUP') return scanActiveGroupApiBridge_(command.targetCount);
     if (name === 'RUN_CHECKED_GROUPS') return scanCheckedGroupsApiBridge_(command.targetCount);
     if (name === 'RETRY_FAILED_GROUPS') return retryFailedGroupsApiBridge_();
-    if (name === 'STOP_CHECKED_GROUPS') return stopCheckedGroupsApiBridge_();
+    if (name === 'STOP_CHECKED_GROUPS') return stopCheckedGroupsApiBridge_(command);
     if (name === 'CLEAR_CHECKED_GROUPS') return clearCheckedGroups_();
     if (name === 'SETUP_GROUP_CONTROLS') return setupGroupScanControls_();
     throw new Error('Lệnh giao diện không được hỗ trợ: ' + name);
@@ -3073,7 +3076,7 @@ const RemoteApp = (() => {
     return String(extractGroupKey_(groupUrl)||cellValue||'').trim().toLowerCase();
   }
 
-  function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast,sourceRow) {
+  function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast,sourceRow,runId) {
     groupUrl=String(groupUrl || '').trim();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
       throw new Error('Hãy nhập URL Group Facebook hợp lệ.');
@@ -3090,13 +3093,20 @@ const RemoteApp = (() => {
     let pages=0;
     let exhausted=false;
     let stopped=false;
+    let stopScope='';
     let transientRetries=0;
     let transientError='';
     const relayClient=String(clientId||'').trim() || getBridgeClientId_();
 
     while(posts.length<target && pages<30 && (Date.now()-started)<pageBudgetMs) {
+      if(runId && isScanRunStopRequested_(runId)) {
+        stopped=true;
+        stopScope='RUN';
+        break;
+      }
       if(groupKey && isGroupStopRequested_(groupKey)) {
         stopped=true;
+        stopScope='GROUP';
         break;
       }
 
@@ -3157,6 +3167,7 @@ const RemoteApp = (() => {
           pages,
           exhausted:false,
           stopped:true,
+          stopScope:stopScope||'RUN',
           incomplete:false,
           nextCursor:'',
           transientRetries,
@@ -3201,6 +3212,7 @@ const RemoteApp = (() => {
       pages,
       exhausted,
       stopped,
+      stopScope,
       incomplete:selectedPosts.length<target || !!transientError,
       nextCursor:nextCursor||'',
       transientRetries,
@@ -3364,11 +3376,46 @@ const RemoteApp = (() => {
   }
 
   function clearGlobalStopAll_() {
+    // Legacy self-healing only. V1.9.1-HF4 never reads STOP_ALL when scanning.
     PropertiesService.getDocumentProperties().deleteProperty(CFG.BRIDGE_STOP_ALL_KEY);
   }
 
-  function isGlobalStopRequested_() {
-    return PropertiesService.getDocumentProperties().getProperty(CFG.BRIDGE_STOP_ALL_KEY)==='1';
+  function scanRunStopKey_(runId) {
+    return CFG.SCAN_RUN_STOP_PREFIX + String(runId || '').trim();
+  }
+
+  function requestStopScanRun_(runId) {
+    const id=String(runId||'').trim();
+    if(!id) return {ok:false,requested:false,reason:'NO_ACTIVE_RUN'};
+    const now=Date.now();
+    PropertiesService.getDocumentProperties().setProperty(
+      scanRunStopKey_(id),
+      JSON.stringify({requestedAt:now,expiresAt:now+CFG.SCAN_RUN_STOP_TTL_MS})
+    );
+    return {ok:true,requested:true,runId:id};
+  }
+
+  function clearScanRunStop_(runId) {
+    const id=String(runId||'').trim();
+    if(id) PropertiesService.getDocumentProperties().deleteProperty(scanRunStopKey_(id));
+  }
+
+  function isScanRunStopRequested_(runId) {
+    const id=String(runId||'').trim();
+    if(!id) return false;
+    const props=PropertiesService.getDocumentProperties();
+    const key=scanRunStopKey_(id);
+    const raw=props.getProperty(key);
+    if(!raw) return false;
+
+    let state=null;
+    try{ state=JSON.parse(raw); }catch(_){}
+    const expiresAt=Number(state&&state.expiresAt||0);
+    if(expiresAt && expiresAt<Date.now()){
+      props.deleteProperty(key);
+      return false;
+    }
+    return true;
   }
 
   function clearGroupStop_(groupKey) {
@@ -3376,9 +3423,8 @@ const RemoteApp = (() => {
   }
 
   function isGroupStopRequested_(groupKey) {
-    const p=PropertiesService.getDocumentProperties();
-    return p.getProperty(CFG.BRIDGE_STOP_ALL_KEY)==='1' ||
-      (groupKey && p.getProperty(groupStopKey_(groupKey))==='1');
+    if(!groupKey) return false;
+    return PropertiesService.getDocumentProperties().getProperty(groupStopKey_(groupKey))==='1';
   }
 
   function setGroupRowStatus_(sheet,row,status,progress,note) {
@@ -3398,7 +3444,7 @@ const RemoteApp = (() => {
   function requestStopGroupRow_(row) {
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
-    const groupKey=String(sheet.getRange(row,5).getDisplayValue()||extractGroupKey_(groupUrl)||'').trim().toLowerCase();
+    const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
     if(groupKey) PropertiesService.getDocumentProperties().setProperty(groupStopKey_(groupKey),'1');
     setGroupRowStatus_(sheet,row,'DỪNG YÊU CẦU','Đang chờ dừng','Sẽ dừng sau API call/page hiện tại.');
     SpreadsheetApp.flush();
@@ -3414,6 +3460,7 @@ const RemoteApp = (() => {
     const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group dòng '+row);
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
+    const runId=String(options.runId||'').trim();
     const target=normalizeGroupTarget_(options.targetCount || sheet.getRange(row,9).getValue() || 25);
 
     if(String(options.source||'').toUpperCase()==='ACTIVE_ROW' || !options.source){
@@ -3446,7 +3493,7 @@ const RemoteApp = (() => {
     try {
       const relayClient=getBridgeClientId_();
       healthWorkerSlot=findWorkerSlotByClientId_(relayClient);
-      const result=scanGroupApiBridge_(groupUrl,target,groupKey,relayClient,false,row);
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey,relayClient,false,row,runId);
       const imported=result.imported||{};
       const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
 
@@ -3465,8 +3512,13 @@ const RemoteApp = (() => {
       let status='XONG';
       let note='';
       if(stopped) {
-        status='DỪNG';
-        note='Đã dừng theo yêu cầu.';
+        if(result.stopScope==='RUN'){
+          status='CHỜ';
+          note='Đã dừng cycle theo yêu cầu. Group có thể chạy lại.';
+        } else {
+          status='DỪNG';
+          note='Đã dừng Group theo yêu cầu.';
+        }
       } else if(result.transientError) {
         status='THIẾU';
         note='Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
@@ -3516,7 +3568,7 @@ const RemoteApp = (() => {
           name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
           profile:String(r[1]||'').trim() || 'AUTO',
           url,
-          groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
+          groupKey:exactGroupKeyFromRow_(url,r[4]),
           targetCount:normalizeGroupTarget_(r[8]||25),
           status:String(r[23]||'')
         });
@@ -3695,6 +3747,7 @@ const RemoteApp = (() => {
   function runWorkerJob_(command) {
     ensureV16Sheets_(false);
     const row=Number(command.row||0);
+    const runId=String(command.runId||'').trim();
     const target=normalizeGroupTarget_(command.targetCount||25);
     const worker=getWorkerBySlot_(command.workerSlot);
     const ss=SpreadsheetApp.getActiveSpreadsheet();
@@ -3705,6 +3758,13 @@ const RemoteApp = (() => {
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
     if(!/facebook\.com\/groups\//i.test(groupUrl)) throw new Error('Dòng '+row+' không có URL Group hợp lệ.');
+
+    if(runId && isScanRunStopRequested_(runId)){
+      return {
+        ok:false,stopped:true,stoppedRun:true,row,name,groupKey,groupUrl,targetCount:target,
+        status:'SKIP_STOPPED_RUN',runId,workerSlot:worker.slot,workerHealth:workerHealthState_(worker)
+      };
+    }
 
     // A Due Queue plan can become stale while another Control Center finishes
     // the same Group. Re-check immediately before execution.
@@ -3733,7 +3793,7 @@ const RemoteApp = (() => {
 
     const started=Date.now();
     try{
-      const result=scanGroupApiBridge_(groupUrl,target,groupKey,worker.clientId,true,row);
+      const result=scanGroupApiBridge_(groupUrl,target,groupKey,worker.clientId,true,row,runId);
       const imported=result.imported||{};
       const stopped=!!result.stopped || isGroupStopRequested_(groupKey);
 
@@ -3752,8 +3812,13 @@ const RemoteApp = (() => {
 
       let status='XONG', note='';
       if(stopped){
-        status='DỪNG';
-        note='Đã dừng theo yêu cầu.';
+        if(result.stopScope==='RUN'){
+          status='CHỜ';
+          note='Đã dừng cycle theo yêu cầu. Group có thể chạy lại ở cycle sau.';
+        } else {
+          status='DỪNG';
+          note='Đã dừng Group theo yêu cầu.';
+        }
       } else if(result.transientError){
         status='THIẾU';
         note='Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
@@ -3773,7 +3838,7 @@ const RemoteApp = (() => {
         row,name,groupKey,status,targetCount:target,
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:'ONLINE',
-        stopped,incomplete:status==='THIẾU',progress,note,
+        runId,stopped,stopScope:result.stopScope||'',incomplete:status==='THIẾU',progress,note,
         errorClass:result.transientError?'TRANSIENT':''
       });
     }catch(err){
@@ -3821,13 +3886,17 @@ const RemoteApp = (() => {
 
   function finalizeWorkerBatch_(command) {
     const started=Date.now();
+    const runId=String(command&&command.runId||'').trim();
     const sourceIds=saveLastScanSourceIds_((command&&command.sourceIds)||[]);
     sortOpportunityNewestFirst_();
     const refresh=refreshAfterScanFast_();
     const aiCfg=getAiConfig_();
+    clearScanRunStop_(runId);
+    clearGlobalStopAll_();
     SpreadsheetApp.flush();
     return {
       version:CFG.VERSION,
+      runId,
       refresh,
       analysisMode:aiCfg.analysisMode||'manual',
       autoAnalyzeRequested:!!(aiCfg.configured&&aiCfg.analysisMode==='auto_scan'),
@@ -3924,17 +3993,31 @@ const RemoteApp = (() => {
     };
   }
 
-  function stopCheckedGroupsApiBridge_() {
+  function stopCheckedGroupsApiBridge_(command) {
+    command=command||{};
     const props=PropertiesService.getDocumentProperties();
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const selected=getCheckedGroupRows_();
+    const runId=String(command.runId||'').trim();
+    const runStop=runId ? requestStopScanRun_(runId) : {ok:false,requested:false};
+
     selected.forEach(item=>{
       if(item.groupKey) props.setProperty(groupStopKey_(item.groupKey),'1');
-      setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Đang chờ dừng','Sẽ dừng sau API call/page hiện tại.');
+      if(String(item.status||'')==='ĐANG QUÉT'){
+        setGroupRowStatus_(sheet,item.row,'DỪNG YÊU CẦU','Đang chờ dừng','Sẽ dừng sau API call/page hiện tại.');
+      }
     });
-    props.setProperty(CFG.BRIDGE_STOP_ALL_KEY,'1');
+
+    // Clean the legacy poison flag every time STOP is used. HF4 never sets it.
+    clearGlobalStopAll_();
     SpreadsheetApp.flush();
-    return { ok:true, requested:selected.length };
+    return {
+      ok:true,
+      requested:selected.length,
+      runId,
+      runStopRequested:!!runStop.requested,
+      legacyStopAll:false
+    };
   }
 
   function clearCheckedGroups_() {
@@ -4995,7 +5078,7 @@ const RemoteApp = (() => {
         name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
         profile:String(r[1]||'').trim() || 'AUTO',
         url,
-        groupKey:String(r[4]||extractGroupKey_(url)||'').trim().toLowerCase(),
+        groupKey:exactGroupKeyFromRow_(url,r[4]),
         targetCount:normalizeGroupTarget_(r[8]||25),
         status
       });
@@ -5005,6 +5088,7 @@ const RemoteApp = (() => {
 
   function prepareJobsForWorkers_(jobs,targetOverride,retryMode,mode) {
     const list=Array.isArray(jobs)?jobs:[];
+    const runId=(String(mode||'selected').toLowerCase())+'-'+Utilities.getUuid().slice(0,12);
     const override=targetOverride?normalizeGroupTarget_(targetOverride):0;
     const configured=getWorkerPoolRaw_()
       .filter(w=>w.enabled&&w.clientId)
@@ -5044,7 +5128,7 @@ const RemoteApp = (() => {
       const chosen=candidates[0];
       const weight=Math.max(1,Number(chosen.latencyMs||1500)/1000);
       loads[chosen.slot]+=target*weight;
-      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot,jobMode:mode||'selected'}));
+      assignments[chosen.slot].push(Object.assign({},job,{targetCount:target,workerSlot:chosen.slot,jobMode:mode||'selected',runId}));
     });
 
     const workers=pool.map(w=>({
@@ -5056,6 +5140,7 @@ const RemoteApp = (() => {
     const unassigned=list.filter(j=>j.assignmentError).map(j=>({row:j.row,name:j.name,error:j.assignmentError}));
     return {
       version:CFG.VERSION,
+      runId,
       mode:mode||'selected',
       retryMode:!!retryMode,
       selected:list.length,
