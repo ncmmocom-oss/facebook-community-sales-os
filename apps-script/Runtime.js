@@ -4526,7 +4526,7 @@ const RemoteApp = (() => {
     let transientError='';
     const target=Math.max(1,Math.min(
       CFG.COMMENT_MAX_PER_POST_CYCLE,
-      Number(candidate.mode==='backfill' ? CFG.COMMENT_MAX_PER_POST_CYCLE : (candidate.targetCount||candidate.totalCount||25))
+      Number(candidate.targetCount||candidate.totalCount||25)
     ));
 
     while(comments.length<target && pages<20 && Date.now()-started<CFG.COMMENT_PAGE_BUDGET_MS){
@@ -4575,8 +4575,8 @@ const RemoteApp = (() => {
 
   function commentCooldownMs_(status) {
     const st=String(status||'').trim();
-    if(/^ACCESS_UNAVAILABLE/i.test(st)) return 6*60*60*1000;
-    if(/^EMPTY_RETRY/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
+    if(/^(ACCESS_UNAVAILABLE|ACCESS_GAP)/i.test(st)) return 6*60*60*1000;
+    if(/^(EMPTY_RETRY|DELTA_GAP)/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
     if(/^ERROR/i.test(st)) return CFG.COMMENT_RETRY_COOLDOWN_MS;
     return 0;
   }
@@ -4778,7 +4778,7 @@ const RemoteApp = (() => {
         if(!fetched.comments.length){
           zeroAccessible++;
           const prev=String(c.previousStatus||'');
-          const m=prev.match(/EMPTY_RETRY\s+(\d+)/i);
+          const m=prev.match(/(?:EMPTY_RETRY|ACCESS_UNAVAILABLE).*?(\d+)/i);
           const attempts=(m?Number(m[1]):0)+1;
           updateCommentFetchState_(c,{
             handledCount:c.handledCount,
@@ -4799,8 +4799,9 @@ const RemoteApp = (() => {
         const complete=
           fetched.exhausted ||
           !fetched.nextCursor ||
-          (c.mode==='delta' && fetched.commentsRead>=Math.max(1,c.targetCount)) ||
-          (c.mode==='initial' && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE && fetched.commentsRead>=Math.max(1,c.totalCount));
+          ((c.mode==='delta' || c.mode==='delta_resume') && fetched.commentsRead>=Math.max(1,c.targetCount)) ||
+          (c.mode==='initial' && c.totalCount<=CFG.COMMENT_MAX_PER_POST_CYCLE && fetched.commentsRead>=Math.max(1,c.totalCount)) ||
+          (c.mode==='backfill' && fetched.commentsRead>=Math.max(1,c.targetCount));
 
         pending.push({
           candidate:c,
@@ -4847,10 +4848,7 @@ const RemoteApp = (() => {
             const fetchedBefore=Number(c.deltaFetched||0);
             const fetchedTotal=fetchedBefore+read;
             const expected=Math.max(1,target-base);
-            const deltaComplete=
-              x.fetched.exhausted ||
-              !x.fetched.nextCursor ||
-              fetchedTotal>=expected;
+            const deltaComplete=fetchedTotal>=expected;
 
             if(!deltaComplete && x.fetched.nextCursor){
               partial++;
@@ -4863,6 +4861,19 @@ const RemoteApp = (() => {
                 deltaBaseTotal:base,
                 deltaFetched:fetchedTotal,
                 status:'DELTA_PARTIAL • '+fetchedTotal+'/'+expected
+              });
+            } else if(!deltaComplete) {
+              // API declared no further cursor before the Facebook total delta was
+              // satisfied. Fail open for future retry; never advance observed total.
+              updateCommentFetchState_(c,{
+                handledCount:c.handledCount,
+                observedCount:c.observedCount,
+                cursor:c.backfillCursor,
+                deltaCursor:'',
+                deltaTargetTotal:0,
+                deltaBaseTotal:0,
+                deltaFetched:0,
+                status:'DELTA_GAP • read='+fetchedTotal+'/'+expected+' • sẽ retry'
               });
             } else {
               const historicalBackfillPending=!!c.backfillCursor || c.handledCount<c.observedCount;
@@ -4891,6 +4902,14 @@ const RemoteApp = (() => {
                 deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
                 status:'PARTIAL • initial read='+read+' • page='+x.fetched.pages
               });
+            } else if(read<c.totalCount) {
+              updateCommentFetchState_(c,{
+                handledCount:Math.min(c.totalCount,read),
+                observedCount:c.totalCount,
+                cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'ACCESS_GAP • initial '+read+'/'+c.totalCount+' • không có cursor'
+              });
             } else {
               updateCommentFetchState_(c,{
                 handledCount:c.totalCount,
@@ -4911,6 +4930,14 @@ const RemoteApp = (() => {
                 cursor:x.fetched.nextCursor,
                 deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
                 status:'PARTIAL • backfill '+handled+'/'+observed
+              });
+            } else if(handled<observed) {
+              updateCommentFetchState_(c,{
+                handledCount:handled,
+                observedCount:observed,
+                cursor:'',
+                deltaCursor:'',deltaTargetTotal:0,deltaBaseTotal:0,deltaFetched:0,
+                status:'ACCESS_GAP • backfill '+handled+'/'+observed+' • không có cursor'
               });
             } else {
               updateCommentFetchState_(c,{
