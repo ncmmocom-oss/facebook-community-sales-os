@@ -1,9 +1,14 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.6.5-success-note-cleanup",
+  "version": "1.9.6.6-active-row-canonical-guard",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.6.6 Active Row Canonical Guard: Quét dòng đang chọn resolves the active canonical Group before any FBAIO call.",
+    "Rows with Hoạt động=Không cannot scan independently. If they share identity with an active canonical row, manual scan redirects to that canonical row; otherwise it fails closed.",
+    "Checkbox selection uses a single canonical identity index per batch, so inactive/audit duplicates cannot create extra jobs and 200-Group selection remains efficient.",
+    "Worker stale-job guard now rejects inactive/audit rows even when they are no longer part of the active-duplicate detector.",
+    "Manual retry now requires Hoạt động=Có.",
     "V1.9.6.5 Success Note Cleanup: successful Group scans always clear Lỗi/Ghi chú even when a verified numeric alias was used.",
     "Successful numeric alias usage is shown only in Tiến độ as `Numeric ID <id>` and remains preserved in NHẬT KÝ API.",
     "THIẾU/LỖI states still retain actionable error context, including which numeric ID was used.",
