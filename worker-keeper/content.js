@@ -1,6 +1,6 @@
 (() => {
   if (globalThis.__SOCIAL_AIO_WORKER_KEEPER__) return;
-  globalThis.__SOCIAL_AIO_WORKER_KEEPER__ = '1.2.1';
+  globalThis.__SOCIAL_AIO_WORKER_KEEPER__ = '1.2.2';
 
   const STATE = {
     primary:false,
@@ -24,7 +24,8 @@
     settings:null,
     lastEventKey:'',
     lastEventAt:0,
-    checkQueued:false
+    checkQueued:false,
+    identityResolveActive:false
   };
 
   const DEFAULTS = {
@@ -377,11 +378,14 @@
           err.action
         );
       } else if (err.code === 'E_FB_GROUP_ID_RESOLVE') {
-        await emitEvent(
-          err.code,err.severity,
-          'FBAIO không resolve đúng Group ID/slug; Worker vẫn Connected.',
-          err.action
-        );
+        if (!STATE.identityResolveActive) {
+          STATE.identityResolveActive = true;
+          await emitEvent(
+            err.code,err.severity,
+            'FBAIO không resolve đúng Group ID/slug; Worker vẫn Connected.',
+            err.action
+          );
+        }
       } else if (err.code === 'E_SITE_UPDATE') {
         await emitEvent(
           err.code,err.severity,
@@ -389,6 +393,9 @@
           err.action
         );
       }
+    }
+    if (!st.errors.some(e => e.code === 'E_FB_GROUP_ID_RESOLVE')) {
+      STATE.identityResolveActive = false;
     }
   }
 
@@ -481,7 +488,7 @@
     if (!msg || !msg.type) return;
 
     if (msg.type === 'KEEPER_PING') {
-      sendResponse({ok:true,version:'1.2.1',primary:STATE.primary});
+      sendResponse({ok:true,version:'1.2.2',primary:STATE.primary});
       return;
     }
 
