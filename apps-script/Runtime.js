@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.0-comment-acquisition-core',
+    VERSION: '1.9.8.1-browser-tab-workspace',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -85,6 +85,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.1 Browser Tab Workspace: drill-down BÌNH LUẬN/TÍN HIỆU/LEAD/LOG mở tab trình duyệt tái sử dụng; manual Comment run có evidence COMMENT_UI trong NHẬT KÝ AUTO.\n' +
       'V1.9.8.0 Comment Acquisition Core: phân loại lỗi provider FBAIO, circuit breaker 10 phút, retry backoff theo Post, tự phục hồi false-HARD do dynamic module và ghi evidence Comment vào AUTO log.\n' +
       'V1.9.7.2 Auto Production UX: bỏ TEST 1 CYCLE và nút Due-only khỏi UI production; thay bằng CHẠY NGAY 1 CYCLE dùng full production pipeline Retry → Due → Comment → AI, giữ diagnostic test ẩn cho support.\n' +
       'V1.9.7.1 Auto Test Evidence HF1: TEST 1 CYCLE luôn ghi NHẬT KÝ AUTO kể cả BUSY/NO_DUE/AUTH; phân biệt scheduler idle với Worker PASS; probe quyền ScriptApp và hiển thị next due.\n' +
@@ -1036,7 +1037,8 @@ const RemoteApp = (() => {
     if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
     if (name === 'RUN_AUTO_MONITOR_TEST') return autoMonitorTick_({force:true,source:'UI_TEST',testMode:true,maxJobs:1,skipComments:true,skipAi:true});
     if (name === 'GET_COMMENT_INTELLIGENCE') return getCommentIntelligenceStats_();
-    if (name === 'RUN_COMMENT_INTELLIGENCE') return runCommentIntelligenceCycle_({limit:command.limit||CFG.COMMENT_MAX_POSTS_PER_TICK,source:'UI'});
+    if (name === 'RUN_COMMENT_INTELLIGENCE') return runCommentIntelligenceUi_(command.limit||CFG.COMMENT_MAX_POSTS_PER_TICK);
+    if (name === 'GET_WORKSPACE_LINKS') return getWorkspaceLinks_();
     if (name === 'RUN_PRODUCTION_SELF_TEST') return runProductionSelfTest_(command.repair !== false);
     if (name === 'REFRESH_SIGNAL_FEED') return refreshSignalFeed_();
     if (name === 'OPEN_SIGNAL_FEED') return openOperationalSheet_(CFG.SIGNAL_FEED_SHEET);
@@ -2083,6 +2085,37 @@ const RemoteApp = (() => {
     if(old>=2) ts.getRange(2,1,old-1,18).clearContent();
     if(out.length) ts.getRange(2,1,out.length,18).setValues(out);
     return {rows:out.length};
+  }
+
+  function workspaceSheetMap_() {
+    return {
+      groups:CFG.GROUP_SCAN_SHEET,
+      comments:CFG.COMMENT_SHEET,
+      signals:CFG.SIGNAL_FEED_SHEET,
+      leads:CFG.LEAD_SHEET,
+      opportunity:CFG.OPPORTUNITY_SHEET,
+      raw:CFG.RAW_SHEET,
+      ai_log:CFG.AI_LOG_SHEET,
+      api_log:CFG.API_DIAG_SHEET,
+      auto_log:CFG.AUTO_LOG_SHEET,
+      import_log:CFG.IMPORT_LOG_SHEET
+    };
+  }
+
+  function getWorkspaceLinks_() {
+    ensureV16Sheets_(false);
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const base=String(ss.getUrl()||'').replace(/#.*$/,'');
+    const links={};
+    const sheets={};
+    const map=workspaceSheetMap_();
+    Object.keys(map).forEach(key=>{
+      const sh=ss.getSheetByName(map[key]);
+      if(!sh) return;
+      links[key]=base+'#gid='+sh.getSheetId();
+      sheets[key]=sh.getName();
+    });
+    return {version:CFG.VERSION,links,sheets};
   }
 
   function openOperationalSheet_(sheetName) {
@@ -3936,6 +3969,51 @@ const RemoteApp = (() => {
       newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
       durationMs:Date.now()-started
     };
+  }
+
+  function runCommentIntelligenceUi_(limit) {
+    const started=Date.now();
+    const runId='comment-'+Utilities.getUuid().slice(0,10);
+    let result=null;
+    try{
+      result=runCommentIntelligenceCycle_({
+        limit:Math.max(1,Math.min(20,Number(limit||CFG.COMMENT_MAX_POSTS_PER_TICK))),
+        source:'UI'
+      });
+      const ci={
+        processed:Number(result&&result.processed||0),
+        imported:Number(result&&result.commentImported||0),
+        providerCircuitOpen:!!(result&&result.providerCircuitOpen),
+        providerRetryAt:Number(result&&result.providerRetryAt||0),
+        providerError:String(result&&result.providerError||'').slice(0,240),
+        repairedProviderHard:Number(result&&result.repairedProviderHard||0),
+        reason:String(result&&result.reason||'')
+      };
+      logAutoMonitorRun_({
+        ok:result&&result.ok!==false,
+        skipped:!!(result&&result.skipped),
+        version:CFG.VERSION,
+        runId,
+        source:'COMMENT_UI',
+        groupsProcessed:0,groupsPassed:0,groupsFailed:0,groupsSkipped:0,
+        commentsProcessed:ci.processed,
+        commentsImported:ci.imported,
+        aiAnalyzed:0,
+        durationMs:Date.now()-started,
+        reason:ci.reason,
+        message:ci.providerCircuitOpen?'Comment provider đang tạm khóa bởi circuit breaker.':'',
+        commentIntel:ci
+      });
+      return Object.assign({},result||{},{runId});
+    }catch(err){
+      logAutoMonitorRun_({
+        ok:false,version:CFG.VERSION,runId,source:'COMMENT_UI',
+        groupsProcessed:0,groupsPassed:0,groupsFailed:0,groupsSkipped:0,
+        commentsProcessed:0,commentsImported:0,aiAnalyzed:0,
+        durationMs:Date.now()-started,error:String(err&&err.message||err||'').slice(0,1000)
+      });
+      throw err;
+    }
   }
 
   function runCommentIntelligenceCycle_(options) {
