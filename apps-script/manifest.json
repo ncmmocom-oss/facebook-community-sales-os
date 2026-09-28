@@ -1,9 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.6.4-custom-scan-target",
+  "version": "1.9.6.5-success-note-cleanup",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.6.5 Success Note Cleanup: successful Group scans always clear Lỗi/Ghi chú even when a verified numeric alias was used.",
+    "Successful numeric alias usage is shown only in Tiến độ as `Numeric ID <id>` and remains preserved in NHẬT KÝ API.",
+    "THIẾU/LỖI states still retain actionable error context, including which numeric ID was used.",
     "V1.9.6.4 Custom Scan Target: Control Center replaces fixed 10/15/20/25 selector with a numeric input, default 25.",
     "Runtime accepts any whole-number Group target from 1 to 200 and clamps only the upper safety bound; invalid/blank/non-positive values fall back to 25.",
     "QUET NHOM column 'Số bài/lần' now uses numeric 1-200 validation instead of a fixed list, so per-Group cadence and manual overrides can use custom targets.",
