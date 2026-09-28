@@ -1247,16 +1247,43 @@ const RemoteApp = (() => {
 
     return analyzeNewPosts_(options);
   }
+  function getAiProgressRaw_() {
+    const raw=PropertiesService.getScriptProperties().getProperty('AI_PROGRESS_JSON');
+    if(!raw) return {active:false,version:CFG.VERSION};
+    try{return Object.assign({active:false},JSON.parse(raw),{version:CFG.VERSION});}
+    catch(_){return {active:false,version:CFG.VERSION};}
+  }
+
+  function repairStaleAiProgress_() {
+    const p=getAiProgressRaw_();
+    if(!p.active) return p;
+
+    const lease=getRuntimeLease_(CFG.AI_LEASE_KEY);
+    if(lease.active) return p;
+
+    const updatedMs=Date.parse(String(p.updatedAt||''));
+    const age=updatedMs?Math.max(0,Date.now()-updatedMs):Number.MAX_SAFE_INTEGER;
+    if(age<CFG.AI_PROGRESS_STALE_MS) return p;
+
+    const fixed=setAiProgress_(Object.assign({},p,{
+      active:false,
+      status:'STALE_RECOVERED',
+      lastError:'AI run mất heartbeat/lease; đã tự giải phóng để queue tiếp tục.',
+      staleRecoveredAt:new Date().toISOString()
+    }));
+    logAi_({
+      runId:p.runId||'',event:'STALE_RECOVERED',provider:p.provider||'',model:p.model||'',
+      batch:p.batch||0,totalBatches:p.totalBatches||0,analyzed:p.analyzed||0,total:p.total||0,
+      remaining:p.remaining||0,status:'STALE_RECOVERED',
+      message:'Không còn AI lease và heartbeat đã stale; runtime tự giải phóng run.'
+    });
+    return fixed;
+  }
+
   function getAiProgress_() {
-    const raw = PropertiesService.getScriptProperties().getProperty('AI_PROGRESS_JSON');
-    if (!raw) return { active: false, version: CFG.VERSION };
-    try {
-      const p = JSON.parse(raw);
-      p.version = CFG.VERSION;
-      return p;
-    } catch (_) {
-      return { active: false, version: CFG.VERSION };
-    }
+    const p=repairStaleAiProgress_();
+    p.version=CFG.VERSION;
+    return p;
   }
 
   function setAiProgress_(p) {
@@ -1345,13 +1372,20 @@ const RemoteApp = (() => {
     const cfg = getAiConfig_();
     if (!cfg.configured) throw new Error('Chưa cấu hình API key cho nhà cung cấp AI đang chọn.');
 
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(1000)) {
-      const p = getAiProgress_();
-      throw new Error('AI đang chạy ở phiên khác' + (p && p.runId ? ' (Run ' + p.runId + ')' : '') + '.');
+    const runId = Utilities.getUuid().slice(0, 8);
+    const prior=repairStaleAiProgress_();
+    const priorLease=getRuntimeLease_(CFG.AI_LEASE_KEY);
+    if(prior.active || priorLease.active){
+      const activeRun=String((prior&&prior.runId)||priorLease.owner||'').trim();
+      throw new Error('AI đang chạy ở phiên khác' + (activeRun ? ' (Run ' + activeRun + ')' : '') + '.');
     }
 
-    const runId = Utilities.getUuid().slice(0, 8);
+    const aiLease=acquireRuntimeLease_(CFG.AI_LEASE_KEY,runId,CFG.AI_LEASE_TTL_MS);
+    if(!aiLease.ok){
+      const p=getAiProgressRaw_();
+      throw new Error('AI đang chạy ở phiên khác' + (p&&p.runId ? ' (Run '+p.runId+')' : '') + '.');
+    }
+
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const sheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
@@ -1379,13 +1413,14 @@ const RemoteApp = (() => {
 
       rows.forEach((r, i) => {
         const rowNumber=i+2;
+        const sourceId=String(r[1]||'').trim();
         const content = String(r[7] || '').trim();
         const priorAnalyzed=[r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
         const gate=String(r[24]||'').trim();
         const status = String(r[19] || '').trim();
         const group=String(r[4]||'').trim();
 
-        if(!content || status==='Đóng') return;
+        if(!sourceId || !content || status==='Đóng') return;
         if(scope==='groups' && !groupSet.has(group)) return;
         if(scope==='selected_rows' && !rowSet.has(rowNumber)) return;
         if(scope==='source_ids' && !sourceSet.has(String(r[1]||'').trim())) return;
@@ -1400,7 +1435,7 @@ const RemoteApp = (() => {
 
         const sourceType = String(r[3] || 'Bài viết');
         candidates.push({
-          rowNumber,
+          source_id:sourceId,
           group,
           author: String(r[5] || ''),
           content: compressEvidenceForAi_(content, sourceType),
@@ -1447,6 +1482,7 @@ const RemoteApp = (() => {
         const batch = selected.slice(start, start + batchSize);
         const batchNo = Math.floor(start / batchSize) + 1;
 
+        heartbeatRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token,CFG.AI_LEASE_TTL_MS);
         setAiProgress_({
           active:true, runId, status:'RUNNING', provider:cfg.provider,
           model: PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model,
@@ -1458,9 +1494,13 @@ const RemoteApp = (() => {
             ? analyzeBatchWithGemini_(batch, cfg)
             : analyzeBatchWithOpenAi_(batch, cfg);
 
-          applyAiAnalysis_(sheet, results);
+          const applied=applyAiAnalysis_(sheet, results);
           SpreadsheetApp.flush();
-          analyzed += results.length;
+          analyzed += Number(applied&&applied.applied||0);
+          if(applied&&applied.missing){
+            errors.push('Batch '+batchNo+': '+Number(applied.missing||0)+' source_id không còn ánh xạ duy nhất; đã skip fail-closed.');
+          }
+          heartbeatRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token,CFG.AI_LEASE_TTL_MS);
 
           const actualModel = cfg.provider === 'gemini'
             ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
@@ -1520,8 +1560,23 @@ const RemoteApp = (() => {
         );
       }
       return result;
+    } catch(err) {
+      const p=getAiProgressRaw_();
+      if(p&&p.active&&String(p.runId||'')===String(runId)){
+        setAiProgress_(Object.assign({},p,{
+          active:false,status:'ERROR_ABORTED',
+          lastError:String(err&&err.message||err||'').slice(0,500)
+        }));
+        logAi_({
+          runId,event:'ABORT',provider:cfg.provider,model:p.model||cfg.model,
+          batch:p.batch||0,totalBatches:p.totalBatches||0,analyzed:p.analyzed||0,total:p.total||0,
+          remaining:p.remaining||0,status:'ERROR_ABORTED',
+          message:String(err&&err.message||err||'').slice(0,1000)
+        });
+      }
+      throw err;
     } finally {
-      try { lock.releaseLock(); } catch (_) {}
+      releaseRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token);
     }
   }
 
