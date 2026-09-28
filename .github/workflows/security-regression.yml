@@ -178,8 +178,31 @@ jobs:
 
           assert "status:'SKIP_INACTIVE'" in worker_block
           assert "resolveCanonicalGroupRow_(sheet,row)" in worker_block
+          assert "command.requireDue===true" in worker_block
 
-          print('scan-scope + canonical dispatch + FBAIO + Auto Monitor + custom target + success-note contract OK')
+          assert "function getAutoMonitorTriggerAccess_(" in runtime
+          assert "permissionOk:false" in runtime
+          assert "AUTO_AUTH_REQUIRED" in runtime
+          assert "RUN_AUTO_MONITOR_TEST" in runtime
+          assert "testMode:true,maxJobs:1,skipComments:true,skipAi:true" in runtime
+          assert "Never persist ON before the installable trigger is known-good." in runtime
+          assert "summary.jobResults.push" in runtime
+          assert "summary.queue.selected" in runtime
+
+          due_valid_start = runtime.index('function isDueJobStillValid_(')
+          due_valid_end = runtime.index('function callSocialAioApiWithClient_', due_valid_start)
+          due_valid = runtime[due_valid_start:due_valid_end]
+          assert "nextAt<=Date.now()" in due_valid
+          assert "status==='LỖI'" in due_valid and "status==='THIẾU'" in due_valid
+
+          assert "🧪 TEST 1 CYCLE" in ui
+          assert "function testAutoMonitorCycle()" in ui
+          assert "AUTH REQUIRED" in ui
+
+          bootstrap_manifest = Path('bootstrap/appsscript.json').read_text(encoding='utf-8')
+          assert "https://www.googleapis.com/auth/script.scriptapp" in bootstrap_manifest
+
+          print('scan-scope + canonical dispatch + FBAIO + Auto Monitor V2 production + custom target contract OK')
           PY
 
       - name: Reject obvious secret material
