@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify bootstrap
         run: |
-          grep -q "BOOTSTRAP_VERSION = '2.2-auto-monitor'" bootstrap/Code.gs
+          grep -q "BOOTSTRAP_VERSION = '2.3-runtime-ui-atomic'" bootstrap/Code.gs
           grep -q "MỞ CONTROL CENTER" bootstrap/Code.gs
           grep -q "openSignalFeed" bootstrap/Code.gs
           grep -q "openLeadInbox" bootstrap/Code.gs
@@ -31,7 +31,7 @@ jobs:
       - name: Upload bootstrap package
         uses: actions/upload-artifact@v4
         with:
-          name: Social_AIO_Bootstrap_V2.2_Auto_Monitor
+          name: Social_AIO_Bootstrap_V2.3_Runtime_UI_Atomic
           path: package/
           if-no-files-found: error
           retention-days: 30
