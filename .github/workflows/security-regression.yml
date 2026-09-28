@@ -38,7 +38,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-import re
+          import re
 
           runtime = Path('apps-script/Runtime.js').read_text(encoding='utf-8')
           ui = Path('apps-script/ImportDialog.html').read_text(encoding='utf-8')
