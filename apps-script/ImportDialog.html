@@ -9,15 +9,15 @@
 button,input,textarea,select{font:inherit}button{border:0;border-radius:8px;padding:9px 12px;font-weight:700;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}
 input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;color:var(--text)}input[type=file],input[type=checkbox]{width:auto}textarea{min-height:84px;resize:vertical}label{font-weight:700;color:#344054;font-size:12px}h2{margin:0;font-size:20px}h3{margin:0 0 8px;font-size:15px}p{margin:6px 0 14px;line-height:1.5}.muted{color:var(--muted)}.hidden{display:none!important}.ok{color:var(--green);font-weight:700}.warn{color:var(--amber);font-weight:700}.bad{color:var(--red);font-weight:700}
 .primary{background:#2563eb;color:#fff}.secondary{background:#e8eef8;color:#1e3a5f}.dark{background:#334155;color:#fff}.danger{background:#dc2626;color:#fff}.retry{background:#d97706;color:#fff}.monitorOn{background:#0f766e!important;color:#fff!important}
-.appShell{display:grid;grid-template-columns:216px minmax(0,1fr);min-height:100vh}.sideNav{background:linear-gradient(180deg,#0f172a,#111c36);color:#fff;padding:18px 14px;display:flex;flex-direction:column;gap:14px;position:sticky;top:0;height:100vh}.brandBlock{padding:6px 8px 12px;border-bottom:1px solid rgba(255,255,255,.1)}.brandTitle{font-size:16px;font-weight:800}.brandSub{font-size:11px;color:#93c5fd;margin-top:4px}.navList{display:flex;flex-direction:column;gap:5px}.navBtn{width:100%;display:flex;align-items:center;gap:9px;text-align:left;background:transparent;color:#cbd5e1;padding:10px 11px;border:1px solid transparent}.navBtn:hover{background:rgba(255,255,255,.06);color:#fff}.navBtn.active{background:#1d4ed8;color:#fff;border-color:#3b82f6}.navIcon{width:20px;text-align:center}.sideFoot{margin-top:auto;padding:10px 8px 2px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;color:#94a3b8;line-height:1.5}.sideFoot b{color:#e2e8f0}
-.mainPane{min-width:0;display:flex;flex-direction:column;min-height:100vh}.topbar{height:72px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:0;z-index:20}.topTitle{font-size:17px;font-weight:800}.topSub{font-size:11px;color:var(--muted);margin-top:4px}.topActions{display:flex;align-items:center;gap:8px}.healthPill,.runtimePill{border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;border:1px solid var(--line)}.healthPill{background:#f8fafc;color:#475569}.healthPill.good{background:#ecfdf5;color:#047857;border-color:#a7f3d0}.healthPill.warn{background:#fffbeb;color:#b45309;border-color:#fde68a}.healthPill.bad{background:#fef2f2;color:#b91c1c;border-color:#fecaca}.runtimePill{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
-.viewStack{padding:18px 20px 138px}.view{display:none;max-width:940px;margin:0 auto}.view.active{display:block}.viewHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:14px}.viewHead h2{font-size:19px}.viewHead p{margin:5px 0 0;color:var(--muted);font-size:12px}.sectionLabel{text-transform:uppercase;letter-spacing:.08em;font-weight:800;font-size:10px;color:#64748b;margin-bottom:6px}
+.appShell{display:block;min-height:100vh}.sideNav{background:#0f172a;color:#fff;padding:0 14px;display:flex;align-items:center;gap:14px;position:sticky;top:0;height:50px;z-index:40;border-bottom:1px solid #1e293b}.brandBlock{padding:0 12px 0 2px;border:0;border-right:1px solid rgba(255,255,255,.12);min-width:max-content}.brandTitle{font-size:13px;font-weight:800;white-space:nowrap}.brandSub{display:none}.navList{display:flex;align-items:stretch;gap:3px;overflow-x:auto;scrollbar-width:none;flex:1;height:100%}.navList::-webkit-scrollbar{display:none}.navBtn{width:auto;min-width:max-content;height:100%;display:flex;align-items:center;gap:7px;text-align:left;background:transparent;color:#cbd5e1;padding:0 11px;border:0;border-bottom:3px solid transparent;border-radius:0}.navBtn:hover{background:#172033;color:#fff}.navBtn.active{background:#172033;color:#fff;border-bottom-color:#60a5fa}.navIcon{width:auto;text-align:center}.sideFoot{display:none}
+.mainPane{min-width:0;display:flex;flex-direction:column;min-height:calc(100vh - 50px)}.topbar{height:62px;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 18px;position:sticky;top:50px;z-index:30}.topTitle{font-size:17px;font-weight:800}.topSub{font-size:11px;color:var(--muted);margin-top:4px}.topActions{display:flex;align-items:center;gap:8px}.healthPill,.runtimePill{border-radius:999px;padding:6px 9px;font-size:11px;font-weight:800;border:1px solid var(--line)}.healthPill{background:#f8fafc;color:#475569}.healthPill.good{background:#ecfdf5;color:#047857;border-color:#a7f3d0}.healthPill.warn{background:#fffbeb;color:#b45309;border-color:#fde68a}.healthPill.bad{background:#fef2f2;color:#b91c1c;border-color:#fecaca}.runtimePill{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}
+.workspaceTabs{display:flex;align-items:center;gap:6px;padding:8px 18px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:112px;z-index:29;overflow-x:auto;scrollbar-width:none}.workspaceTabs::-webkit-scrollbar{display:none}.workspaceTab{min-width:max-content;background:#f8fafc;color:#334155;border:1px solid #e2e8f0;padding:7px 10px;border-radius:9px;font-size:11px;font-weight:800}.workspaceTab:hover{background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8}.workspaceTab.home{background:#172033;color:#fff;border-color:#172033}.smartStrip{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:10px;align-items:center;padding:9px 18px;background:#f8fafc;border-bottom:1px solid var(--line);position:sticky;top:157px;z-index:28}.smartCopy{min-width:0}.smartTitle{font-size:12px;font-weight:800}.smartSub{font-size:10px;color:#64748b;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.smartAction{min-width:170px}.smartUtility{display:flex;gap:5px}.smartUtility button{padding:7px 9px;font-size:11px}.viewStack{padding:16px 18px 118px}.view{display:none;max-width:940px;margin:0 auto}.view.active{display:block}.viewHead{display:flex;justify-content:space-between;gap:12px;margin-bottom:14px}.viewHead h2{font-size:19px}.viewHead p{margin:5px 0 0;color:var(--muted);font-size:12px}.sectionLabel{text-transform:uppercase;letter-spacing:.08em;font-weight:800;font-size:10px;color:#64748b;margin-bottom:6px}
 .heroCard{background:linear-gradient(135deg,#0f172a,#1e3a8a 58%,#2563eb);color:#fff;border-radius:16px;padding:19px;margin-bottom:14px}.heroCard h2{font-size:20px}.heroCard p{color:#dbeafe;max-width:720px;margin:7px 0 14px}.heroActions{display:flex;flex-wrap:wrap;gap:7px}.heroActions button{background:#fff;color:#1e3a8a}.heroActions button.ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.2)}
 .kpiGrid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:14px}.kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.kpi span{font-size:11px;color:var(--muted);display:block}.kpi b{font-size:23px;display:block;margin-top:3px}.kpi small{font-size:10px;color:#94a3b8}.opsGrid{display:grid;grid-template-columns:1.2fr 1fr;gap:12px}.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}.panelTitle{font-size:13px;font-weight:800;margin-bottom:10px}.todoList{display:grid;gap:7px}.todoItem{display:flex;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:9px;background:#f8fafc;border:1px solid #eef2f7}.todoItem b{font-size:14px}.healthRows{display:grid;gap:8px}.healthRow{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed #e5e7eb;padding-bottom:7px}.healthRow:last-child{border-bottom:0;padding-bottom:0}
 .quickCards{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.quickCard{background:#fff;border:1px solid var(--line);border-radius:13px;padding:16px}.quickCard h3{font-size:16px}.quickCard p{color:var(--muted);min-height:38px}.quickCard .bigIcon{font-size:26px;margin-bottom:8px}
 .box{border:1px solid #d7dee8;background:#fff;border-radius:12px;padding:15px;margin-bottom:12px}.ai{border-color:#a7f3d0;background:#fcfffd}.bridge{border-color:#fde68a;background:#fffdf8}.scanctl{border-color:#ddd6fe;background:#fdfcff}.opbar{border-color:#bfdbfe;background:#fbfdff}.monitorbox{border-color:#99f6e4;background:#fbfffe}.monitorMetrics{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin:9px 0 11px}.monitorMetric{background:#fff;border:1px solid #ccfbf1;border-radius:9px;padding:8px;text-align:center}.monitorMetric b{display:block;font-size:18px;margin-top:2px}.monitorMetric small,.metric small{color:var(--muted);font-size:11px}.monitorActions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}.duepreview{max-height:105px;overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px;margin-top:9px;font-size:11px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:9px 0 11px}.metric{background:#fff;border:1px solid #dbeafe;border-radius:9px;padding:9px;text-align:center}.metric b{display:block;font-size:18px;margin-top:2px}.targetRow{display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:end}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.scanlist{max-height:145px;overflow:auto;background:#fff;border:1px solid #dbeafe;border-radius:8px;padding:8px;margin-top:8px;font-size:12px}.scanitem{padding:4px 0;border-bottom:1px dashed #e5e7eb}.scanitem:last-child{border-bottom:0}details.advanced{margin-top:10px}details.advanced>summary{cursor:pointer;font-weight:800;padding:8px 0;color:#475569}.workergrid{display:grid;gap:8px;margin-top:8px}.workercard{display:grid;grid-template-columns:36px 86px 1fr;gap:8px;align-items:center;background:#fff;border:1px solid #fed7aa;border-radius:9px;padding:9px}.workerstate{grid-column:2/4;font-size:11px;color:var(--muted)}.workerbadge{font-weight:800;text-align:center;color:#7c2d12}.poolstate{margin-top:8px;font-size:12px;font-weight:700}.progress{margin-top:10px;background:#dbeafe;border-radius:999px;height:12px;overflow:hidden}.progress>div{height:100%;width:0%;background:#2563eb;transition:width .25s ease}#progressText{margin-top:6px;font-size:11px;font-weight:700;color:#1e3a8a}
-#legacyRoot{display:none}#advancedPanel{display:none!important}.statusDock{position:fixed;left:216px;right:0;bottom:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);padding:9px 20px 11px;z-index:25}.statusDockHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:5px}.statusDockHead b{font-size:11px}#statusHeadline{font-size:11px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:68%}#status{white-space:pre-wrap;max-height:72px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:8px;padding:8px 10px;font:11px/1.42 Consolas,monospace;margin:0}.systemGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.logSource{padding:8px 10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:7px}.emptyNote{padding:12px;border:1px dashed #cbd5e1;border-radius:9px;color:#64748b;background:#f8fafc}
-@media(max-width:820px){.appShell{grid-template-columns:74px minmax(0,1fr)}.sideNav{padding:14px 8px}.brandTitle,.brandSub,.navBtn span:not(.navIcon),.sideFoot{display:none}.navBtn{justify-content:center;padding:10px 6px}.statusDock{left:74px}.kpiGrid{grid-template-columns:repeat(2,1fr)}.opsGrid,.quickCards,.systemGrid{grid-template-columns:1fr}}
+#legacyRoot{display:none}#advancedPanel{display:none!important}.statusDock{position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);padding:9px 20px 11px;z-index:25}.statusDockHead{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:5px}.statusDockHead b{font-size:11px}#statusHeadline{font-size:11px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:68%}#status{white-space:pre-wrap;max-height:72px;overflow:auto;background:#0f172a;color:#dbeafe;border-radius:8px;padding:8px 10px;font:11px/1.42 Consolas,monospace;margin:0}.systemGrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.logSource{padding:8px 10px;background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;margin-bottom:7px}.emptyNote{padding:12px;border:1px dashed #cbd5e1;border-radius:9px;color:#64748b;background:#f8fafc}
+@media(max-width:820px){.sideNav{padding:0 8px}.brandBlock{display:none}.navBtn{padding:0 9px}.navBtn span:not(.navIcon){display:none}.topbar{top:50px;padding:0 12px}.topSub{display:none}.workspaceTabs{top:112px;padding:7px 10px}.smartStrip{top:157px;padding:8px 10px;grid-template-columns:1fr auto}.smartUtility{display:none}.smartAction{min-width:140px}.kpiGrid{grid-template-columns:repeat(2,1fr)}.opsGrid,.quickCards,.systemGrid{grid-template-columns:1fr}}
 
 .opsHeroMeta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:8px}
 .opsScore{display:inline-flex;align-items:center;gap:8px;padding:8px 11px;border-radius:999px;font-weight:800;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.25)}
@@ -28,11 +28,33 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 .healthReason{padding:8px 9px;border-radius:8px;background:#f8fafc;border:1px solid #e5e7eb;margin-top:6px;font-size:11px}.healthReason.error{background:#fef2f2;border-color:#fecaca}.healthReason.warn{background:#fffbeb;border-color:#fde68a}
 .metricCritical{color:#b91c1c}.metricWarn{color:#b45309}.metricGood{color:#047857}
 @media(max-width:900px){.opsGrid3,.opsGrid2{grid-template-columns:1fr}}
+.heroActions{display:none}
+#monitorBox .monitorActions{display:none}
+.viewHead{margin-bottom:10px}
+.kpiGrid{gap:7px}
+.kpi{padding:10px}
+.kpi b{font-size:20px}
+.panel{padding:12px}
+.box{padding:12px}
+
 </style>
 </head>
 <body>
 <div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">Phase 3 • Operations Dashboard</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
 <main class="mainPane"><header class="topbar"><div><div id="topViewTitle" class="topTitle">Tổng quan vận hành</div><div id="topViewSub" class="topSub">Theo dõi Group → Signal → AI → Lead trên một luồng.</div></div><div class="topActions"><span id="systemHealthPill" class="healthPill">ĐANG ĐỌC HỆ THỐNG</span><span id="runtimeVersionPill" class="runtimePill">Runtime —</span></div></header>
+<div class="workspaceTabs" aria-label="Workspace browser tabs">
+  <button class="workspaceTab home" onclick="showPhase2View('overview')">⌂ CONTROL CENTER</button>
+  <button class="workspaceTab" onclick="openWorkspaceTab('groups','200 GROUP')">◉ 200 GROUP ↗</button>
+  <button class="workspaceTab" onclick="openWorkspaceTab('comments','BÌNH LUẬN')">💬 BÌNH LUẬN ↗</button>
+  <button class="workspaceTab" onclick="openSignalFeed()">📡 TÍN HIỆU ↗</button>
+  <button class="workspaceTab" onclick="openLeadInbox()">🎯 LEAD INBOX ↗</button>
+  <button class="workspaceTab" onclick="openWorkspaceTab('auto_log','NHẬT KÝ AUTO')">▤ AUTO LOG ↗</button>
+</div>
+<div class="smartStrip">
+  <div class="smartCopy"><div id="smartTitle" class="smartTitle">Đang xác định việc cần làm tiếp...</div><div id="smartSub" class="smartSub">Control Center sẽ chỉ nổi bật một hành động ưu tiên.</div></div>
+  <button id="smartActionBtn" class="primary smartAction" onclick="runSmartAction()">ĐANG ĐỌC...</button>
+  <div class="smartUtility"><button id="smartAutoBtn" class="secondary" onclick="toggleAutoMonitor()">⚡ AUTO</button><button class="secondary" onclick="pollMonitoring()" title="Làm mới trạng thái">↻</button></div>
+</div>
 <div class="viewStack">
 <section id="view-overview" class="view">
   <div class="heroCard">
@@ -617,9 +639,12 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     let autoMonitorEnabled=false;
     let monitorBusy=false;
     let activeScanRunId='';
+    let lastMonitoringOverview=null;
+    let smartActionMode='NONE';
 
     function renderMonitoring(o) {
       if(!o) return;
+      lastMonitoringOverview=o;
       const backendAuto=o.autoMonitor||{};
       autoMonitorEnabled=!!backendAuto.enabled;
       setAutoMonitorUi();
@@ -658,6 +683,78 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
             '</div>'
           ).join('')
         : 'Không có Group đến hạn.';
+      renderSmartAction(o);
+    }
+
+    function renderSmartAction(o) {
+      o=o||{};
+      const exceptions=Number(o.exceptions||0);
+      const due=Number(o.dueNow||0);
+      const aiBacklog=Number(o.aiBacklog||0);
+      const ci=o.commentIntel||{};
+      const provider=ci.provider||{};
+      const workers=o.workers||{};
+      const online=Number(workers.onlineCount||0);
+      const configured=Number(workers.configuredCount||0);
+      const btn=document.getElementById('smartActionBtn');
+      const title=document.getElementById('smartTitle');
+      const sub=document.getElementById('smartSub');
+
+      let mode='NONE',label='✓ KHÔNG CẦN THAO TÁC',headline='Hệ thống đang tự vận hành.',detail='';
+      if(exceptions>0){
+        mode='RETRY';
+        label='↻ XỬ LÝ '+exceptions+' EXCEPTION';
+        headline='Ưu tiên exception trước khi mở rộng queue.';
+        detail='Retry chỉ chạy LỖI/THIẾU hợp lệ; duplicate/audit vẫn bị chặn.';
+      }else if(due>0){
+        mode='CYCLE';
+        label='▶ CHẠY '+Math.min(due,4)+' DUE NGAY';
+        headline=due+' Group đang đến hạn.';
+        detail=autoMonitorEnabled?'AUTO đang ON; chỉ bấm nếu muốn chạy ngay thay vì chờ trigger.':'AUTO đang OFF; có thể chạy một cycle production ngay.';
+      }else if(provider.open){
+        mode='COMMENTS';
+        label='💬 XEM COMMENT';
+        headline='Group queue sạch; Comment provider đang cooldown.';
+        const retryAt=Number(provider.openUntil||0);
+        detail=retryAt?('FBAIO retry sau '+new Date(retryAt).toLocaleTimeString()+'. Không cần bấm quét liên tục.'):'Không cần bấm quét Comment liên tục.';
+      }else if(aiBacklog>0){
+        mode='AI';
+        label='✦ XEM '+aiBacklog+' AI BACKLOG';
+        headline='Group queue sạch; còn AI backlog.';
+        detail='Mở AI & Offer để review/điều phối, không tự chạy thêm Group.';
+      }else if(configured>0 && online===0){
+        mode='WORKER';
+        label='● KIỂM TRA WORKER';
+        headline='Không có Worker online.';
+        detail='Kiểm tra Worker/API trước khi chạy scan.';
+      }
+
+      smartActionMode=mode;
+      if(title) title.textContent=headline;
+      if(sub) sub.textContent=detail;
+      if(btn){
+        btn.textContent=label;
+        btn.disabled=mode==='NONE';
+        btn.className=(mode==='RETRY'?'retry':mode==='WORKER'?'danger':'primary')+' smartAction';
+      }
+      const autoBtn=document.getElementById('smartAutoBtn');
+      if(autoBtn){
+        autoBtn.textContent=autoMonitorEnabled?'⚡ AUTO ON':'⚡ AUTO OFF';
+        autoBtn.className=(autoMonitorEnabled?'monitorOn':'secondary');
+      }
+    }
+
+    function runSmartAction() {
+      if(smartActionMode==='RETRY') return retryFailedGroups();
+      if(smartActionMode==='CYCLE') return runAutoMonitorNow();
+      if(smartActionMode==='COMMENTS') return openWorkspaceTab('comments','BÌNH LUẬN');
+      if(smartActionMode==='AI') return showPhase2View('ai');
+      if(smartActionMode==='WORKER') return showPhase2View('workers');
+    }
+
+    function toggleAutoMonitor() {
+      if(autoMonitorEnabled) return stopAutoMonitor();
+      return startAutoMonitor();
     }
 
     function pollMonitoring() {
@@ -757,6 +854,12 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         btn.classList.toggle('monitorOn',autoMonitorEnabled);
       }
       if(typeof phase2SetText==='function') phase2SetText('p2AutoState',autoMonitorEnabled?'ON':'OFF');
+      const smart=document.getElementById('smartAutoBtn');
+      if(smart){
+        smart.textContent=autoMonitorEnabled?'⚡ AUTO ON':'⚡ AUTO OFF';
+        smart.className=autoMonitorEnabled?'monitorOn':'secondary';
+      }
+      if(lastMonitoringOverview) renderSmartAction(lastMonitoringOverview);
     }
 
     function scheduleNextAutoMonitor() {
@@ -1492,7 +1595,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     let phase2CurrentView='overview';
     function phase2SetText(id,value){const el=document.getElementById(id);if(el)el.textContent=String(value==null?'':value);}
     function phase2MoveLegacyBlocks(){const groups=document.getElementById('mount-groups'),ai=document.getElementById('mount-ai'),workers=document.getElementById('mount-workers'),data=document.getElementById('mount-data');const monitor=document.getElementById('monitorBox'),scan=document.getElementById('scanBox'),aiRun=document.getElementById('aiRunBox'),advanced=document.getElementById('advancedPanel');if(groups&&monitor)groups.appendChild(monitor);if(groups&&scan)groups.appendChild(scan);if(ai&&aiRun)ai.appendChild(aiRun);if(advanced){const inner=[...advanced.children].find(x=>x.tagName==='DIV');if(inner){const direct=[...inner.children].filter(x=>x.classList&&x.classList.contains('box'));const aiSettings=document.getElementById('aiSettingsBox'),bridge=direct.find(x=>x.classList.contains('bridge')),importBox=direct.find(x=>x!==aiSettings&&x!==bridge);if(ai&&aiSettings)ai.appendChild(aiSettings);if(workers&&bridge)workers.appendChild(bridge);if(data&&importBox)data.appendChild(importBox);}advanced.style.display='none';}const legacy=document.getElementById('legacyRoot');if(legacy)legacy.style.display='none';}
-    function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}window.scrollTo({top:0,behavior:'auto'});}
+    function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const home=document.querySelector('.workspaceTab.home');if(home)home.classList.toggle('home',key==='overview');const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}window.scrollTo({top:0,behavior:'auto'});}
     function setPhase2RuntimeVersion(version){const v=String(version||'').trim();if(!v)return;phase2SetText('runtimeVersionPill','Runtime V'+v);phase2SetText('sysRuntime','V'+v);}
     function opsAgeText(ms){
       const n=Number(ms||0);
