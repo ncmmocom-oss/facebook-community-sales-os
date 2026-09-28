@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.7.0-auto-monitor-v2-production',
+    VERSION: '1.9.7.1-auto-test-evidence-hf1',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.7.1 Auto Test Evidence HF1: TEST 1 CYCLE luôn ghi NHẬT KÝ AUTO kể cả BUSY/NO_DUE/AUTH; phân biệt scheduler idle với Worker PASS; probe quyền ScriptApp và hiển thị next due.\n' +
       'V1.9.7.0 Auto Monitor V2 Production: trigger/auth fail-closed, TEST 1 CYCLE, due revalidation đồng nhất, bounded retry/backoff, per-Group auto evidence và scheduler 5 phút chỉ bật khi trigger thật sự sẵn sàng.\n' +
       'V1.9.6.6 Active Row Canonical Guard: mọi entry point manual resolve canonical Group trước khi quét; row Hoạt động=Không/audit duplicate không thể tự gọi FBAIO; Quét dòng đang chọn redirect sang canonical active.\n' +
       'V1.9.6.5 Success Note Cleanup: scan XONG luôn để trống cột Lỗi/Ghi chú; numeric alias chỉ hiển thị trong Tiến độ và API log, không dùng wording lỗi/fallback ở kết quả thành công.\n' +
@@ -4378,6 +4379,11 @@ const RemoteApp = (() => {
       }
       const detail=[
         summary.testMode?'TEST_1_CYCLE':'',
+        summary.acceptance?('acceptance='+String(summary.acceptance)):'',
+        summary.reason?('reason='+String(summary.reason)):'',
+        summary.nextDueAt?('nextDueAt='+String(summary.nextDueAt)):'',
+        summary.triggerProbe?('auth='+(summary.triggerProbe.permissionOk?'OK':'REQUIRED')+
+          ', trigger='+Number(summary.triggerProbe.triggerCount||0)):'',
         summary.waitingWorker?'WAIT_WORKER':'',
         summary.queue?('queue retry='+Number(summary.queue.retryAvailable||0)+
           ', due='+Number(summary.queue.dueAvailable||0)+
@@ -4408,27 +4414,103 @@ const RemoteApp = (() => {
     }catch(_){}
   }
 
+  function persistAutoMonitorSummary_(summary) {
+    try{
+      summary=summary||{};
+      const now=Date.now();
+      if(!summary.durationMs && summary.startedAt){
+        const started=Date.parse(String(summary.startedAt||''));
+        if(Number.isFinite(started)) summary.durationMs=Math.max(0,now-started);
+      }
+      summary.finishedAt=summary.finishedAt||new Date(now).toISOString();
+      PropertiesService.getDocumentProperties()
+        .setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
+      logAutoMonitorRun_(summary);
+    }catch(_){}
+    return summary;
+  }
+
+  function getNextAutoDueAt_() {
+    try{
+      const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+      if(sh.getLastRow()<2) return '';
+      const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
+      const rows=sh.getRange(2,1,sh.getLastRow()-1,24).getValues();
+      let min=0;
+      rows.forEach((row,i)=>{
+        if(duplicateRows.has(i+2)) return;
+        const active=String(row[0]||'').trim();
+        const lifecycle=String(row[6]||'').trim();
+        const status=String(row[23]||'').trim();
+        const url=String(row[3]||'').trim();
+        if(active!=='Có' || !url || lifecycle==='Loại') return;
+        if(status==='ĐANG QUÉT' || status==='LỖI' || status==='THIẾU' || /^DỪNG/.test(status)) return;
+        const lastAt=row[9] instanceof Date ? row[9].getTime() : 0;
+        const nextAt=row[10] instanceof Date ? row[10].getTime() : 0;
+        if(!lastAt || !nextAt || nextAt<=Date.now()) return;
+        if(!min || nextAt<min) min=nextAt;
+      });
+      return min?new Date(min).toISOString():'';
+    }catch(_){
+      return '';
+    }
+  }
+
   function autoMonitorTick_(options) {
     options=options||{};
-    if(!options.force && !isAutoMonitorEnabled_()) return {ok:true,skipped:true,reason:'DISABLED',version:CFG.VERSION};
-
-    const lock=LockService.getScriptLock();
-    if(!lock.tryLock(1000)) return {ok:true,skipped:true,reason:'BUSY',version:CFG.VERSION};
-
     const started=Date.now();
-    const props=PropertiesService.getDocumentProperties();
     const runId='auto-'+Utilities.getUuid().slice(0,10);
     const testMode=!!options.testMode;
     const requestedMaxJobs=Number(options.maxJobs||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK);
     const maxJobs=Math.max(1,Math.min(CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,requestedMaxJobs));
     const summary={
       ok:true,version:CFG.VERSION,runId,source:options.source||'TRIGGER',testMode,
+      acceptance:testMode?'PENDING':'',
       groupsProcessed:0,groupsPassed:0,groupsFailed:0,groupsSkipped:0,hardQuarantined:0,
       commentsProcessed:0,commentsImported:0,aiAnalyzed:0,newSourceIds:[],
       queue:{retryAvailable:0,dueAvailable:0,selected:[]},
       jobResults:[],
-      startedAt:new Date().toISOString()
+      startedAt:new Date(started).toISOString()
     };
+
+    if(testMode){
+      const probe=getAutoMonitorV2State_(false);
+      summary.triggerProbe={
+        permissionOk:!!probe.permissionOk,
+        authRequired:!!probe.authRequired,
+        triggerInstalled:!!probe.triggerInstalled,
+        triggerCount:Number(probe.triggerCount||0),
+        triggerError:String(probe.triggerError||'')
+      };
+      if(!probe.permissionOk){
+        summary.ok=false;
+        summary.skipped=true;
+        summary.reason='AUTO_AUTH_REQUIRED';
+        summary.acceptance='AUTH_REQUIRED';
+        summary.message='TEST bị chặn: cần cấp quyền script.scriptapp trước khi nghiệm thu scheduler.';
+        summary.nextDueAt=getNextAutoDueAt_();
+        return persistAutoMonitorSummary_(summary);
+      }
+    }
+
+    if(!options.force && !isAutoMonitorEnabled_()){
+      summary.skipped=true;
+      summary.reason='DISABLED';
+      summary.acceptance='DISABLED';
+      summary.message='Auto Monitor đang tắt.';
+      summary.nextDueAt=getNextAutoDueAt_();
+      return persistAutoMonitorSummary_(summary);
+    }
+
+    const lock=LockService.getScriptLock();
+    if(!lock.tryLock(1000)){
+      summary.skipped=true;
+      summary.reason='BUSY';
+      summary.acceptance='BUSY';
+      summary.message='Script Lock đang bận; chưa chạy cycle.';
+      summary.nextDueAt=getNextAutoDueAt_();
+      return persistAutoMonitorSummary_(summary);
+    }
 
     try{
       const repairs=cleanupExpiredRuntimeState_(true);
@@ -4439,7 +4521,10 @@ const RemoteApp = (() => {
       if(!available.length){
         summary.ok=false;
         summary.waitingWorker=true;
+        summary.reason='WORKER_UNAVAILABLE';
+        summary.acceptance=testMode?'WORKER_UNAVAILABLE':'';
         summary.message=configured.length?'Worker hiện OFFLINE.':'Chưa cấu hình Worker.';
+        summary.nextDueAt=getNextAutoDueAt_();
         return summary;
       }
 
@@ -4463,6 +4548,9 @@ const RemoteApp = (() => {
       if(!jobs.length){
         summary.skipped=true;
         summary.reason='NO_DUE_OR_RETRY';
+        summary.acceptance=testMode?'SCHEDULER_IDLE':'';
+        summary.message='Scheduler hợp lệ; hiện chưa có Group đến hạn hoặc retry.';
+        summary.nextDueAt=getNextAutoDueAt_();
       }
 
       if(jobs.length){
@@ -4544,22 +4632,26 @@ const RemoteApp = (() => {
         }
       }
 
+      if(testMode){
+        if(summary.groupsPassed>0 && summary.groupsFailed===0) summary.acceptance='WORKER_PASS';
+        else if(summary.groupsFailed>0) summary.acceptance='WORKER_FAIL';
+        else if(summary.groupsSkipped>0 && !summary.acceptance) summary.acceptance='WORKER_SKIPPED';
+        else if(!summary.acceptance) summary.acceptance='SCHEDULER_IDLE';
+      }
       summary.durationMs=Date.now()-started;
       summary.finishedAt=new Date().toISOString();
       return summary;
     }catch(err){
       summary.ok=false;
+      summary.acceptance=testMode?'ERROR':'';
       summary.error=String(err.message||err);
       summary.durationMs=Date.now()-started;
       summary.finishedAt=new Date().toISOString();
       return summary;
     }finally{
-      try{
-        summary.durationMs=summary.durationMs||Date.now()-started;
-        summary.finishedAt=summary.finishedAt||new Date().toISOString();
-        props.setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
-        logAutoMonitorRun_(summary);
-      }catch(_){}
+      summary.durationMs=summary.durationMs||Date.now()-started;
+      summary.finishedAt=summary.finishedAt||new Date().toISOString();
+      persistAutoMonitorSummary_(summary);
       lock.releaseLock();
     }
   }
