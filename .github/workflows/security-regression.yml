@@ -107,7 +107,8 @@ jobs:
           manifest = Path('worker-keeper/manifest.json').read_text(encoding='utf-8')
           assert "E_FB_GROUP_ID_RESOLVE" in keeper
           assert "Wrong ID" in keeper
-          assert '"version": "1.2.1"' in manifest
+          assert "identityResolveActive" in keeper
+          assert '"version": "1.2.2"' in manifest
 
           assert "TIME_BUDGET" in runtime
           assert "duplicateRows=new Set(getDuplicateGroupIdentityRows_()" in runtime
