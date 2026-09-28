@@ -4872,12 +4872,16 @@ const RemoteApp = (() => {
       return persistAutoMonitorSummary_(summary);
     }
 
-    const lock=LockService.getScriptLock();
-    if(!lock.tryLock(1000)){
+    const autoLease=acquireRuntimeLease_(
+      CFG.AUTO_MONITOR_LEASE_KEY,
+      runId,
+      CFG.AUTO_MONITOR_LEASE_TTL_MS
+    );
+    if(!autoLease.ok){
       summary.skipped=true;
       summary.reason='BUSY';
       summary.acceptance='BUSY';
-      summary.message='Script Lock đang bận; chưa chạy cycle.';
+      summary.message='AUTO lane đang có cycle khác; AI/Comment/Group lane khác không bị chặn.';
       summary.nextDueAt=getNextAutoDueAt_();
       return persistAutoMonitorSummary_(summary);
     }
@@ -4944,6 +4948,7 @@ const RemoteApp = (() => {
             row:job.row,targetCount:job.targetCount,workerSlot:job.workerSlot,
             runId,jobMode:'auto_v2',requireDue:job.autoKind==='DUE'
           });
+          heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
           summary.groupsProcessed++;
 
           let outcome='FAIL';
@@ -4979,6 +4984,7 @@ const RemoteApp = (() => {
       }
 
       if(!options.skipComments && !testMode && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
+        heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
         const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
         summary.commentsProcessed=Number(cr.processed||0);
         summary.commentsImported=Number(cr.commentImported||0);
@@ -4998,6 +5004,7 @@ const RemoteApp = (() => {
 
       const aiCfg=getAiConfig_();
       if(!options.skipAi && !testMode && aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<150000){
+        heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
         try{
           const ar=analyzeNewPosts_({
             silent:true,
@@ -5031,7 +5038,7 @@ const RemoteApp = (() => {
       summary.durationMs=summary.durationMs||Date.now()-started;
       summary.finishedAt=summary.finishedAt||new Date().toISOString();
       persistAutoMonitorSummary_(summary);
-      lock.releaseLock();
+      releaseRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token);
     }
   }
 
@@ -6097,7 +6104,8 @@ const RemoteApp = (() => {
     const started=Date.now();
     const runId=String(command&&command.runId||'').trim();
     const sourceIds=saveLastScanSourceIds_((command&&command.sourceIds)||[]);
-    sortOpportunityNewestFirst_();
+    // V1.9.8.6: do not reorder CƠ HỘI in the hot path. AI writes by Source ID,
+    // and acquisition stays append-oriented for stable concurrent row identity.
     const refresh=refreshAfterScanFast_();
     const aiCfg=getAiConfig_();
     clearScanRunStop_(runId);
