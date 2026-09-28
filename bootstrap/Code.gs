@@ -4,7 +4,7 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
-const BOOTSTRAP_VERSION = '2.4-auto-monitor-auth';
+const BOOTSTRAP_VERSION = '2.4.1-auto-monitor-auth';
 
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
@@ -63,40 +63,28 @@ function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
 // Installable time-driven trigger entrypoint for Auto Monitor V2.
 function autoMonitorTick() { return callRemote_('autoMonitorTick', []); }
 
-// No-op target used only to verify ScriptApp trigger authorization.
-// The probe trigger is created and deleted immediately; it never runs in normal flow.
-function autoMonitorAuthProbe_() {}
-
 function authorizeAutoMonitor() {
   const ui=SpreadsheetApp.getUi();
-  let probe=null;
   try {
-    // Accessing and mutating installable triggers forces Apps Script to request
-    // https://www.googleapis.com/auth/script.scriptapp when the local manifest includes it.
+    // getProjectTriggers() is sufficient to prove script.scriptapp authorization.
+    // Do not create/delete a temporary trigger here: Apps Script can intermittently
+    // throw on immediate deleteTrigger() even after permission has already been granted.
+    // Real trigger creation is validated fail-closed by Runtime when AUTO is enabled.
     const existing=ScriptApp.getProjectTriggers();
-    probe=ScriptApp.newTrigger('autoMonitorAuthProbe_')
-      .timeBased()
-      .after(60 * 1000)
-      .create();
-    ScriptApp.deleteTrigger(probe);
-    probe=null;
 
     ui.alert(
       'AUTO MONITOR — QUYỀN ĐÃ SẴN SÀNG\n\n' +
       'ScriptApp: OK\n' +
-      'Trigger probe: PASS\n' +
-      'Existing project triggers: ' + existing.length + '\n\n' +
+      'Existing project triggers: ' + existing.length + '\n' +
+      'Không tạo trigger tạm. Trigger thật sẽ được Runtime kiểm tra khi bật AUTO.\n\n' +
       'Bước tiếp theo: mở Control Center → TEST 1 CYCLE.'
     );
-    return {ok:true,permissionOk:true,triggerProbe:true,existingTriggers:existing.length};
+    return {ok:true,permissionOk:true,existingTriggers:existing.length};
   } catch (err) {
-    if (probe) {
-      try { ScriptApp.deleteTrigger(probe); } catch (_) {}
-    }
     const msg=String(err && err.message || err || '');
     ui.alert(
       'AUTO MONITOR — CHƯA ĐƯỢC CẤP QUYỀN\n\n' +
-      'Project phải dùng appsscript.json Bootstrap V2.4 có scope:\n' +
+      'Project phải dùng appsscript.json Bootstrap V2.4.1 có scope:\n' +
       'https://www.googleapis.com/auth/script.scriptapp\n\n' +
       'Sau khi Save, chạy lại HỆ THỐNG → Cấp quyền AUTO MONITOR và chọn Review permissions → Allow.\n\n' +
       'Chi tiết: ' + msg
