@@ -156,7 +156,30 @@ jobs:
           assert "let status='XONG', note='';" in runtime
           assert "FBAIO vanity Group bị parse sai; đã chuyển sang numeric ID" not in runtime
 
-          print('scan-scope + FBAIO identity + Auto Monitor + custom target + success-note contract OK')
+          assert "function buildCanonicalGroupIndex_(" in runtime
+          assert "function resolveCanonicalGroupRow_(" in runtime
+          active_start = runtime.index('function scanGroupRowApiBridge_(')
+          active_end = runtime.index('function getCheckedGroupRows_()', active_start)
+          active_block = runtime[active_start:active_end]
+          assert "resolveCanonicalGroupRow_(sheet,requestedRow)" in active_block
+          assert "redirectedFromRow" in active_block
+          assert "INACTIVE_NO_CANONICAL" in active_block
+
+          selected_start_backend = runtime.index('function getCheckedGroupRows_()')
+          selected_end_backend = runtime.index('function groupPriorityRank_', selected_start_backend)
+          selected_block_backend = runtime[selected_start_backend:selected_end_backend]
+          assert "canonicalIndex=buildCanonicalGroupIndex_(sheet)" in selected_block_backend
+          assert "resolveCanonicalGroupRow_(sheet,selectedRow,canonicalIndex)" in selected_block_backend
+
+          retry_start = runtime.index('function collectRetryJobs_()')
+          retry_end = runtime.index('function prepareJobsForWorkers_', retry_start)
+          retry_block = runtime[retry_start:retry_end]
+          assert "String(r[0]||'').trim()!=='Có'" in retry_block
+
+          assert "status:'SKIP_INACTIVE'" in worker_block
+          assert "resolveCanonicalGroupRow_(sheet,row)" in worker_block
+
+          print('scan-scope + canonical dispatch + FBAIO + Auto Monitor + custom target + success-note contract OK')
           PY
 
       - name: Reject obvious secret material
