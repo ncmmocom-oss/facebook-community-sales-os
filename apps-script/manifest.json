@@ -1,9 +1,14 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.5-scan-scope-security-hf1",
+  "version": "1.9.6-fbaio-group-id-fallback",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.6 FBAIO Group ID Fallback: if FBAIO mis-parses a vanity Group slug (notably digit-leading slugs such as 3diot...) as a user/page or truncated ID, runtime detects the identity-resolution error and retries using a previously verified numeric Group ID from the same registry row.",
+    "The fallback numeric ID is derived only from verified local evidence: Group ID cell when numeric, canonical-identity note, or the last successful api_posts_<numeric-id> filename. No guessed ID is generated.",
+    "Primary identity failures, numeric fallback PASS/FAIL, and worker/direct scan failures are persisted automatically to NHAT KY API with runtime version and raw relay evidence where available.",
+    "GROUP_ID_RESOLVE is classified separately from connection/transient failures so Auto Monitor does not waste retries or mark a healthy Worker offline for a FBAIO parser defect.",
+    "Worker Keeper V1.2.1 detects Wrong ID / FB account not found and only-supports-group UI errors as WARN while keeping the connected Worker healthy.",
     "V1.9.5 Scan Scope Security HF1: manual CHECKBOX selection and scheduler DUE queue now have explicit, non-interchangeable scope contracts.",
     "Control Center fails closed if Runtime.js and ImportDialog.html are from different UI contract generations.",
     "Bootstrap V2.3 atomically refreshes Runtime + HTML whenever the Control Center opens, preventing stale cached UI from invoking a changed command contract.",
