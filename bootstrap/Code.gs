@@ -4,7 +4,7 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
-const BOOTSTRAP_VERSION = '2.2-auto-monitor';
+const BOOTSTRAP_VERSION = '2.3-runtime-ui-atomic';
 
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
@@ -38,13 +38,13 @@ function buildLocalMenu_() {
     .addToUi();
 }
 
-function showControlCenterHome() { return callRemote_('showControlCenter', ['scan']); }
+function showControlCenterHome() { return callRemote_('showControlCenter', ['scan'], true); }
 function openSignalFeed() { return callRemote_('openSignalFeed', []); }
 function openLeadInbox() { return callRemote_('openLeadInbox', []); }
 
-function showSettingsDialog() { return callRemote_('showControlCenter', ['settings']); }
-function showScanDialog() { return callRemote_('showControlCenter', ['scan']); }
-function showAiDialog() { return callRemote_('showControlCenter', ['ai']); }
+function showSettingsDialog() { return callRemote_('showControlCenter', ['settings'], true); }
+function showScanDialog() { return callRemote_('showControlCenter', ['scan'], true); }
+function showAiDialog() { return callRemote_('showControlCenter', ['ai'], true); }
 function showImportDialog() { return showSettingsDialog(); }
 function analyzePendingPosts() { return callRemote_('analyzeNewPosts', []); }
 function importJsonFiles(files) { return callRemote_('importJsonFiles', [files]); }
@@ -75,13 +75,21 @@ function githubForceUpdate() {
     'Đã tải RUNTIME mới nhất từ GitHub.\n' +
     'Runtime: ' + version + '\n' +
     'Bootstrap local: ' + BOOTSTRAP_VERSION + '\n\n' +
-    'Auto Monitor V2 dùng trigger global autoMonitorTick() trong bootstrap 2.2.\n' +
+    'Control Center dùng atomic Runtime/UI refresh để tránh lệch cache/scope.\n' +
+    'Auto Monitor V2 dùng trigger global autoMonitorTick() trong bootstrap 2.2+.\n' +
     'Lưu ý: runtime update không tự thay Code.gs/bootstrap.'
   );
 }
 
-function callRemote_(functionName, args) {
-  const app = loadRemoteApp_(false);
+function callRemote_(functionName, args, freshUi) {
+  // Control Center must load Runtime + HTML as one logical release. This prevents
+  // a cached old UI from calling commands whose meaning changed in a newer runtime.
+  if (freshUi === true) {
+    const cache = CacheService.getScriptCache();
+    cache.remove('SOCIAL_AIO_REMOTE_RUNTIME');
+    cache.remove('SOCIAL_AIO_REMOTE_HTML');
+  }
+  const app = loadRemoteApp_(freshUi === true);
   if (!app || typeof app[functionName] !== 'function') {
     throw new Error('Runtime GitHub không có hàm: ' + functionName);
   }
@@ -103,13 +111,13 @@ function loadRemoteApp_(force) {
   return app;
 }
 
-function getRemoteHtml_() {
+function getRemoteHtml_(force) {
   const cache = CacheService.getScriptCache();
   const key = 'SOCIAL_AIO_REMOTE_HTML';
-  let html = cache.get(key);
+  let html = force ? null : cache.get(key);
 
   if (!html) {
-    html = fetchGithubText_(GITHUB_RUNTIME.HTML_FILE, false);
+    html = fetchGithubText_(GITHUB_RUNTIME.HTML_FILE, force === true);
     try { cache.put(key, html, GITHUB_RUNTIME.CACHE_SECONDS); } catch (_) {}
   }
   return html;
