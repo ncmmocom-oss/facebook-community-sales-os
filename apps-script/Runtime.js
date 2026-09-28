@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.6.6-active-row-canonical-guard',
+    VERSION: '1.9.7.0-auto-monitor-v2-production',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.7.0 Auto Monitor V2 Production: trigger/auth fail-closed, TEST 1 CYCLE, due revalidation đồng nhất, bounded retry/backoff, per-Group auto evidence và scheduler 5 phút chỉ bật khi trigger thật sự sẵn sàng.\n' +
       'V1.9.6.6 Active Row Canonical Guard: mọi entry point manual resolve canonical Group trước khi quét; row Hoạt động=Không/audit duplicate không thể tự gọi FBAIO; Quét dòng đang chọn redirect sang canonical active.\n' +
       'V1.9.6.5 Success Note Cleanup: scan XONG luôn để trống cột Lỗi/Ghi chú; numeric alias chỉ hiển thị trong Tiến độ và API log, không dùng wording lỗi/fallback ở kết quả thành công.\n' +
       'V1.9.6.4 Custom Scan Target: bỏ preset 10/15/20/25; cho nhập số bài tùy ý 1–200, mặc định 25; Runtime và cột Số bài/lần dùng cùng numeric validation.\n' +
@@ -1027,6 +1028,7 @@ const RemoteApp = (() => {
     if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_(false);
     if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2_(command.enabled !== false);
     if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
+    if (name === 'RUN_AUTO_MONITOR_TEST') return autoMonitorTick_({force:true,source:'UI_TEST',testMode:true,maxJobs:1,skipComments:true,skipAi:true});
     if (name === 'GET_COMMENT_INTELLIGENCE') return getCommentIntelligenceStats_();
     if (name === 'RUN_COMMENT_INTELLIGENCE') return runCommentIntelligenceCycle_({limit:command.limit||CFG.COMMENT_MAX_POSTS_PER_TICK,source:'UI'});
     if (name === 'RUN_PRODUCTION_SELF_TEST') return runProductionSelfTest_(command.repair !== false);
@@ -4208,53 +4210,154 @@ const RemoteApp = (() => {
     return PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_MONITOR_ENABLED_KEY)==='true';
   }
 
+  function isScriptAppPermissionError_(err) {
+    const msg=String(err&&err.message||err||'');
+    return /permissions? are not sufficient|authorization required|authorize|script\.scriptapp|getProjectTriggers|newTrigger/i.test(msg);
+  }
+
+  function getAutoMonitorTriggerAccess_() {
+    try{
+      const triggers=ScriptApp.getProjectTriggers()
+        .filter(t=>t.getHandlerFunction()===CFG.AUTO_MONITOR_TRIGGER_HANDLER);
+      return {
+        permissionOk:true,authRequired:false,triggers,
+        triggerInstalled:triggers.length>0,triggerCount:triggers.length,error:''
+      };
+    }catch(err){
+      const msg=String(err&&err.message||err||'');
+      return {
+        permissionOk:false,authRequired:isScriptAppPermissionError_(err),triggers:[],
+        triggerInstalled:false,triggerCount:0,error:msg
+      };
+    }
+  }
+
   function autoMonitorTriggers_() {
-    return ScriptApp.getProjectTriggers().filter(t=>t.getHandlerFunction()===CFG.AUTO_MONITOR_TRIGGER_HANDLER);
+    return getAutoMonitorTriggerAccess_().triggers;
   }
 
   function ensureAutoMonitorTrigger_() {
-    const triggers=autoMonitorTriggers_();
-    if(triggers.length>1) triggers.slice(1).forEach(t=>ScriptApp.deleteTrigger(t));
-    if(triggers.length) return {installed:true,count:1};
-    ScriptApp.newTrigger(CFG.AUTO_MONITOR_TRIGGER_HANDLER)
-      .timeBased()
-      .everyMinutes(CFG.AUTO_MONITOR_TRIGGER_MINUTES)
-      .create();
-    return {installed:true,count:1};
+    let access=getAutoMonitorTriggerAccess_();
+    if(!access.permissionOk){
+      return {
+        installed:false,count:0,permissionOk:false,authRequired:access.authRequired,
+        error:access.error||'Không có quyền ScriptApp để quản lý trigger.'
+      };
+    }
+
+    try{
+      if(access.triggers.length>1){
+        access.triggers.slice(1).forEach(t=>ScriptApp.deleteTrigger(t));
+        access=getAutoMonitorTriggerAccess_();
+      }
+      if(access.triggers.length){
+        return {installed:true,count:1,permissionOk:true,authRequired:false,error:''};
+      }
+      ScriptApp.newTrigger(CFG.AUTO_MONITOR_TRIGGER_HANDLER)
+        .timeBased()
+        .everyMinutes(CFG.AUTO_MONITOR_TRIGGER_MINUTES)
+        .create();
+      access=getAutoMonitorTriggerAccess_();
+      return {
+        installed:access.triggerInstalled,
+        count:access.triggerCount,
+        permissionOk:access.permissionOk,
+        authRequired:access.authRequired,
+        error:access.error||''
+      };
+    }catch(err){
+      return {
+        installed:false,count:0,permissionOk:false,
+        authRequired:isScriptAppPermissionError_(err),
+        error:String(err&&err.message||err||'')
+      };
+    }
   }
 
   function removeAutoMonitorTriggers_() {
-    const triggers=autoMonitorTriggers_();
-    triggers.forEach(t=>ScriptApp.deleteTrigger(t));
-    return triggers.length;
+    const access=getAutoMonitorTriggerAccess_();
+    if(!access.permissionOk){
+      return {
+        removed:0,permissionOk:false,authRequired:access.authRequired,
+        error:access.error||'Không có quyền ScriptApp để gỡ trigger.'
+      };
+    }
+    let removed=0;
+    access.triggers.forEach(t=>{
+      try{ScriptApp.deleteTrigger(t);removed++;}catch(_){}
+    });
+    const after=getAutoMonitorTriggerAccess_();
+    return {
+      removed,permissionOk:after.permissionOk,authRequired:after.authRequired,
+      triggerInstalled:after.triggerInstalled,triggerCount:after.triggerCount,error:after.error||''
+    };
   }
 
   function getAutoMonitorV2State_(repairTrigger) {
     const props=PropertiesService.getDocumentProperties();
-    const enabled=isAutoMonitorEnabled_();
-    if(enabled && repairTrigger) ensureAutoMonitorTrigger_();
-    const triggers=autoMonitorTriggers_();
+    const requestedEnabled=isAutoMonitorEnabled_();
+    let access=getAutoMonitorTriggerAccess_();
+    let repair=null;
+
+    if(requestedEnabled && repairTrigger && (!access.triggerInstalled || access.triggerCount!==1)){
+      repair=ensureAutoMonitorTrigger_();
+      access=getAutoMonitorTriggerAccess_();
+    }
+
     let lastRun=null;
     try{lastRun=JSON.parse(props.getProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY)||'null');}catch(_){}
+    const effectiveEnabled=requestedEnabled && access.permissionOk && access.triggerInstalled && access.triggerCount===1;
+    const lastRunMs=lastRun&&lastRun.finishedAt?Date.parse(String(lastRun.finishedAt||'')):0;
+
     return {
       version:CFG.VERSION,
-      enabled,
+      enabled:effectiveEnabled,
+      requestedEnabled,
+      degraded:requestedEnabled&&!effectiveEnabled,
       backend:true,
       intervalMinutes:CFG.AUTO_MONITOR_TRIGGER_MINUTES,
-      triggerInstalled:triggers.length>0,
-      triggerCount:triggers.length,
-      lastRun
+      permissionOk:access.permissionOk,
+      authRequired:access.authRequired,
+      triggerInstalled:access.triggerInstalled,
+      triggerCount:access.triggerCount,
+      triggerError:access.error||'',
+      ready:access.permissionOk && access.triggerInstalled && access.triggerCount===1,
+      repair,
+      lastRun,
+      lastRunAgeMs:lastRunMs?Math.max(0,Date.now()-lastRunMs):null
     };
   }
 
   function setAutoMonitorV2_(enabled) {
     const props=PropertiesService.getDocumentProperties();
     const on=enabled!==false;
-    props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,on?'true':'false');
-    let trigger;
-    if(on) trigger=ensureAutoMonitorTrigger_();
-    else trigger={removed:removeAutoMonitorTriggers_()};
-    return Object.assign(getAutoMonitorV2State_(false),{changed:true,trigger});
+
+    if(!on){
+      // Fail-safe: disable execution first. A stale trigger may still fire, but tick exits DISABLED.
+      props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,'false');
+      const trigger=removeAutoMonitorTriggers_();
+      return Object.assign(getAutoMonitorV2State_(false),{
+        ok:true,changed:true,trigger
+      });
+    }
+
+    // Never persist ON before the installable trigger is known-good.
+    const trigger=ensureAutoMonitorTrigger_();
+    if(!trigger.installed || !trigger.permissionOk){
+      props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,'false');
+      return Object.assign(getAutoMonitorV2State_(false),{
+        ok:false,changed:false,trigger,
+        code:trigger.authRequired?'AUTO_AUTH_REQUIRED':'AUTO_TRIGGER_INSTALL_FAILED',
+        message:trigger.authRequired
+          ? 'Auto Monitor cần quyền ScriptApp (script.scriptapp) trước khi bật scheduler.'
+          : ('Không tạo được Auto Monitor trigger: '+String(trigger.error||'unknown'))
+      });
+    }
+
+    props.setProperty(CFG.AUTO_MONITOR_ENABLED_KEY,'true');
+    return Object.assign(getAutoMonitorV2State_(false),{
+      ok:true,changed:true,trigger
+    });
   }
 
   function flattenWorkerPlanJobs_(plan) {
@@ -4274,7 +4377,17 @@ const RemoteApp = (() => {
         sh=ss.getSheetByName(CFG.AUTO_LOG_SHEET);
       }
       const detail=[
+        summary.testMode?'TEST_1_CYCLE':'',
         summary.waitingWorker?'WAIT_WORKER':'',
+        summary.queue?('queue retry='+Number(summary.queue.retryAvailable||0)+
+          ', due='+Number(summary.queue.dueAvailable||0)+
+          ', selected='+Number((summary.queue.selected||[]).length)):'',
+        summary.jobResults&&summary.jobResults.length
+          ? ('jobs='+summary.jobResults.map(x=>
+              'r'+Number(x.row||0)+':'+String(x.kind||'')+':'+String(x.outcome||'')
+            ).join(','))
+          :'',
+        summary.hardQuarantined?('hard='+Number(summary.hardQuarantined||0)):'',
         summary.repairs?('repair lease='+Number(summary.repairs.expiredLeases||0)+
           ', stale='+Number(summary.repairs.staleRunning||0)+
           ', spill='+Number((summary.repairs.spillovers||[]).length)+
@@ -4305,10 +4418,15 @@ const RemoteApp = (() => {
     const started=Date.now();
     const props=PropertiesService.getDocumentProperties();
     const runId='auto-'+Utilities.getUuid().slice(0,10);
+    const testMode=!!options.testMode;
+    const requestedMaxJobs=Number(options.maxJobs||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK);
+    const maxJobs=Math.max(1,Math.min(CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,requestedMaxJobs));
     const summary={
-      ok:true,version:CFG.VERSION,runId,source:options.source||'TRIGGER',
-      groupsProcessed:0,groupsPassed:0,groupsFailed:0,groupsSkipped:0,
+      ok:true,version:CFG.VERSION,runId,source:options.source||'TRIGGER',testMode,
+      groupsProcessed:0,groupsPassed:0,groupsFailed:0,groupsSkipped:0,hardQuarantined:0,
       commentsProcessed:0,commentsImported:0,aiAnalyzed:0,newSourceIds:[],
+      queue:{retryAvailable:0,dueAvailable:0,selected:[]},
+      jobResults:[],
       startedAt:new Date().toISOString()
     };
 
@@ -4325,17 +4443,27 @@ const RemoteApp = (() => {
         return summary;
       }
 
-      const maxJobs=CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK;
       const retry=getAutoRetryJobs_(Math.min(2,maxJobs));
       const retryRows=new Set(retry.map(x=>x.row));
       const due=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT)
         .filter(x=>!retryRows.has(x.row))
         .map(x=>Object.assign({},x,{autoKind:'DUE'}));
 
+      summary.queue.retryAvailable=retry.length;
+      summary.queue.dueAvailable=due.length;
+
       const jobs=[];
       if(retry.length) jobs.push(retry[0]);
       due.forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
       retry.slice(1).forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
+
+      summary.queue.selected=jobs.map(j=>({
+        row:j.row,name:j.name,kind:j.autoKind||'DUE',targetCount:j.targetCount,groupKey:j.groupKey
+      }));
+      if(!jobs.length){
+        summary.skipped=true;
+        summary.reason='NO_DUE_OR_RETRY';
+      }
 
       if(jobs.length){
         const plan=prepareJobsForWorkers_(jobs,0,false,'auto_v2');
@@ -4345,31 +4473,54 @@ const RemoteApp = (() => {
           if(!options.force && !isAutoMonitorEnabled_()) break;
           const job=work[i];
 
-          if(job.autoKind==='DUE' && !isDueJobStillValid_(mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET),job.row)){
+          const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+          if(job.autoKind==='DUE' && !isDueJobStillValid_(sheet,job.row)){
             summary.groupsSkipped++;
+            summary.jobResults.push({
+              row:job.row,name:job.name,kind:'DUE',outcome:'SKIP_NOT_DUE',workerSlot:job.workerSlot
+            });
             continue;
           }
 
-          const r=runWorkerJob_({
+          const result=runWorkerJob_({
             row:job.row,targetCount:job.targetCount,workerSlot:job.workerSlot,
-            runId,jobMode:'auto_v2'
+            runId,jobMode:'auto_v2',requireDue:job.autoKind==='DUE'
           });
           summary.groupsProcessed++;
-          if(r&&r.ok&&!r.incomplete&&!r.stopped){
+
+          let outcome='FAIL';
+          if(result&&result.ok&&!result.incomplete&&!result.stopped){
             summary.groupsPassed++;
-            clearAutoRetryState_(r.groupKey||job.groupKey);
-          } else if(r&&r.busy){
+            outcome='PASS';
+            clearAutoRetryState_(result.groupKey||job.groupKey);
+          } else if(result&&(result.busy||result.skippedNotDue||result.skippedInactive||result.skippedDuplicate||result.stoppedRun)){
             summary.groupsSkipped++;
+            outcome=String(result.status||'SKIP');
           } else {
             summary.groupsFailed++;
-            if(r&&r.groupKey) summary['retry_'+r.groupKey]=setAutoRetryFailure_(r.groupKey,r.errorClass||'UNKNOWN',r.error||r.note||'');
+            const key=(result&&result.groupKey)||job.groupKey;
+            if(key){
+              const retryState=setAutoRetryFailure_(key,(result&&result.errorClass)||'UNKNOWN',(result&&(result.error||result.note))||'');
+              summary['retry_'+key]=retryState;
+              if(retryState.hard) summary.hardQuarantined++;
+            }
           }
-          const imported=r&&r.imported||{};
+
+          summary.jobResults.push({
+            row:job.row,name:job.name,kind:job.autoKind||'DUE',outcome,
+            workerSlot:job.workerSlot,
+            targetCount:job.targetCount,
+            postsRead:Number(result&&result.postsRead||0),
+            errorClass:String(result&&result.errorClass||''),
+            note:String(result&&(result.error||result.note)||'').slice(0,240)
+          });
+
+          const imported=result&&result.imported||{};
           (imported.newSourceIds||[]).forEach(id=>summary.newSourceIds.push(id));
         }
       }
 
-      if(Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
+      if(!options.skipComments && !testMode && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
         const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
         summary.commentsProcessed=Number(cr.processed||0);
         summary.commentsImported=Number(cr.commentImported||0);
@@ -4379,7 +4530,7 @@ const RemoteApp = (() => {
       summary.newSourceIds=[...new Set(summary.newSourceIds.map(x=>String(x||'').trim()).filter(Boolean))];
 
       const aiCfg=getAiConfig_();
-      if(aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<150000){
+      if(!options.skipAi && !testMode && aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<150000){
         try{
           const ar=analyzeNewPosts_({
             silent:true,
@@ -4416,7 +4567,8 @@ const RemoteApp = (() => {
   function runProductionSelfTest_(repair) {
     ensureV16Sheets_(false);
     const fixes=cleanupExpiredRuntimeState_(repair!==false);
-    if(isAutoMonitorEnabled_() && repair!==false) ensureAutoMonitorTrigger_();
+    let autoTriggerRepair=null;
+    if(isAutoMonitorEnabled_() && repair!==false) autoTriggerRepair=ensureAutoMonitorTrigger_();
 
     const overview=getMonitoringOverview_();
     const audit=auditConsistency_();
@@ -4430,7 +4582,8 @@ const RemoteApp = (() => {
       {id:'SCHEMA',severity:'P0',pass:!!SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.COMMENT_SHEET),detail:'BÌNH LUẬN tồn tại'},
       {id:'WORKER_CONFIG',severity:'P0',pass:Number(workers.configuredCount||0)>0,detail:Number(workers.configuredCount||0)+' worker configured'},
       {id:'WORKER_NOT_OFFLINE',severity:'P0',pass:Number(workers.configuredCount||0)>0 && Number(workers.offlineCount||0)<Number(workers.configuredCount||0),detail:Number(workers.onlineCount||0)+' online / '+Number(workers.staleCount||0)+' stale / '+Number(workers.offlineCount||0)+' offline'},
-      {id:'AUTO_TRIGGER',severity:'P0',pass:!auto.enabled || (auto.triggerInstalled&&auto.triggerCount===1),detail:auto.enabled?('enabled • trigger '+auto.triggerCount):'disabled'},
+      {id:'AUTO_AUTH',severity:'P0',pass:!!auto.permissionOk,detail:auto.permissionOk?'ScriptApp permission OK':('AUTH REQUIRED • '+String(auto.triggerError||'script.scriptapp'))},
+      {id:'AUTO_TRIGGER',severity:'P0',pass:!auto.requestedEnabled || (auto.triggerInstalled&&auto.triggerCount===1),detail:auto.requestedEnabled?('requested ON • trigger '+auto.triggerCount):'disabled'},
       {id:'STALE_RUNNING',severity:'P0',pass:Number(fixes.staleRunning||0)===0 || repair!==false,detail:Number(fixes.staleRunning||0)+' stale runtime row'},
       {id:'GROUP_IDENTITY',severity:'P1',pass:duplicates.length===0,detail:duplicates.length+' duplicate active identity row(s)'+(duplicates.length&&repair!==false?' quarantined':'')},
       {id:'FEED_SPILLOVER',severity:'P1',pass:(fixes.spillovers||[]).length===0 || repair!==false,detail:Number((fixes.spillovers||[]).length)+' auto-registered spillover row(s)'+((fixes.spillovers||[]).length&&repair!==false?' disabled':'')},
@@ -4444,7 +4597,7 @@ const RemoteApp = (() => {
       ok:checks.filter(x=>x.severity==='P0').every(x=>x.pass),
       version:CFG.VERSION,
       repaired:repair!==false,
-      checks,fixes,audit,autoMonitor:auto,commentIntel:comments,
+      checks,fixes,audit,autoMonitor:auto,autoTriggerRepair,commentIntel:comments,
       overview:{
         activeGroups:overview.activeGroups,dueNow:overview.dueNow,exceptions:overview.exceptions,
         health:overview.operationalHealth
@@ -5343,7 +5496,8 @@ const RemoteApp = (() => {
 
     // A Due Queue plan can become stale while another Control Center finishes
     // the same Group. Re-check immediately before execution.
-    if(jobMode==='due' && !isDueJobStillValid_(sheet,row)){
+    const requireDue=jobMode==='due' || command.requireDue===true;
+    if(requireDue && !isDueJobStillValid_(sheet,row)){
       return {
         ok:false,skippedNotDue:true,row,name,groupKey,groupUrl,targetCount:target,
         status:'SKIP_NOT_DUE',workerSlot:worker.slot,workerHealth:workerHealthState_(worker)
@@ -6291,11 +6445,18 @@ const RemoteApp = (() => {
 
   function isDueJobStillValid_(sheet,row) {
     if(!sheet || row<2 || row>sheet.getLastRow()) return false;
-    const vals=sheet.getRange(row,1,1,24).getDisplayValues()[0]||[];
+    const vals=sheet.getRange(row,1,1,24).getValues()[0]||[];
     const active=String(vals[0]||'').trim();
-    const due=String(vals[11]||'').trim();
+    const lifecycle=String(vals[6]||'').trim();
+    const lastAt=vals[9] instanceof Date ? vals[9].getTime() : 0;
+    const nextAt=vals[10] instanceof Date ? vals[10].getTime() : 0;
+    const dueText=String(vals[11]||'').trim();
     const status=String(vals[23]||'').trim();
-    return active==='Có' && due==='CẦN QUÉT' && status!=='ĐANG QUÉT';
+
+    if(active!=='Có' || lifecycle==='Loại') return false;
+    if(status==='ĐANG QUÉT' || status==='LỖI' || status==='THIẾU' || /^DỪNG/.test(status)) return false;
+
+    return !lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=Date.now();
   }
 
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {

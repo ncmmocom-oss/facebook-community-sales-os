@@ -188,6 +188,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     </div>
     <div class="monitorActions">
       <button class="primary" onclick="runDueGroups(false)">▶ QUÉT GROUP ĐẾN HẠN</button>
+      <button id="autoTestBtn" class="retry" onclick="testAutoMonitorCycle()">🧪 TEST 1 CYCLE</button>
       <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR</button>
       <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG AUTO</button>
       <button class="retry" onclick="pollMonitoring()">↻ LÀM MỚI</button><button class="secondary" onclick="runCommentIntelligenceNow()">💬 QUÉT COMMENT</button>
@@ -632,9 +633,17 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 
       const ctx='Context '+Number(o.groupsWithContext||0)+'/'+Number(o.activeGroups||0);
       const cycle='Cycle tối đa '+Number(o.dueCycleLimit||30)+' Group';
+      const triggerState=!backendAuto.permissionOk
+        ? 'AUTH REQUIRED'
+        : (backendAuto.triggerInstalled?'TRIGGER OK':'TRIGGER THIẾU');
+      const lastRun=backendAuto.lastRun||null;
+      const lastRunText=lastRun
+        ? (' • Last '+String(lastRun.source||'')+' '+String(lastRun.ok===false?'ERROR':(lastRun.skipped?'SKIP':'OK')))
+        : ' • Chưa có cycle';
       document.getElementById('monitorState').textContent=
         'Runtime V'+o.version+' • '+ctx+' • '+cycle+
-        (autoMonitorEnabled?' • AUTO đang bật':' • AUTO đang tắt');
+        (autoMonitorEnabled?' • AUTO ON':' • AUTO OFF')+
+        ' • '+triggerState+lastRunText;
 
       const due=(o.duePreview||[]);
       document.getElementById('duePreview').innerHTML=due.length
@@ -690,14 +699,55 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       autoMonitorTimer=null;
     }
 
+    function testAutoMonitorCycle() {
+      if(monitorBusy){
+        setStatus('Monitoring đang xử lý một cycle khác.');
+        return;
+      }
+      monitorBusy=true;
+      setStatus('🧪 AUTO V2 TEST: chạy tối đa 1 Group, không chạy Comment/AI...');
+      command({__command:'RUN_AUTO_MONITOR_TEST'},r=>{
+        monitorBusy=false;
+        const q=r.queue||{};
+        const jobs=r.jobResults||[];
+        const detail=jobs.length
+          ? jobs.map(x=>'Dòng '+Number(x.row||0)+' • '+String(x.kind||'')+' • '+String(x.outcome||'')).join('\n')
+          : 'Không có Group đến hạn/retry tại thời điểm test.';
+        setStatus(
+          (r.ok===false?'❌':'✅')+' AUTO V2 TEST 1 CYCLE'+
+          '\nRun: '+String(r.runId||'-')+
+          '\nQueue: '+Number(q.dueAvailable||0)+' due • '+Number(q.retryAvailable||0)+' retry'+
+          '\nProcessed/PASS/FAIL/SKIP: '+Number(r.groupsProcessed||0)+'/'+Number(r.groupsPassed||0)+'/'+Number(r.groupsFailed||0)+'/'+Number(r.groupsSkipped||0)+
+          '\n'+detail
+        );
+        pollMonitoring();
+      },e=>{
+        monitorBusy=false;
+        setStatus('AUTO V2 TEST lỗi: '+(e.message||e));
+      });
+    }
+
     function startAutoMonitor() {
       setStatus('Đang bật AUTO MONITOR V2 backend...');
       command({__command:'SET_AUTO_MONITOR_V2',enabled:true},r=>{
         autoMonitorEnabled=!!r.enabled;
         setAutoMonitorUi();
+        if(r.ok===false || !r.enabled){
+          const code=String(r.code||'AUTO_NOT_READY');
+          setStatus(
+            '❌ AUTO MONITOR V2 CHƯA BẬT'+
+            '\nMã: '+code+
+            '\nTrigger: '+(r.triggerInstalled?'CÓ':'THIẾU')+
+            '\nQuyền ScriptApp: '+(r.permissionOk?'OK':'THIẾU')+
+            '\n'+String(r.message||r.triggerError||'Kiểm tra appsscript.json và cấp lại quyền.')
+          );
+          pollMonitoring();
+          return;
+        }
         setStatus(
           '✅ AUTO MONITOR V2 ĐÃ BẬT'+
           '\nBackend trigger: '+(r.triggerInstalled?'CÓ':'THIẾU')+
+          '\nQuyền ScriptApp: '+(r.permissionOk?'OK':'THIẾU')+
           '\nChu kỳ: '+Number(r.intervalMinutes||5)+' phút'+
           '\nKhông cần giữ Control Center mở.'
         );
