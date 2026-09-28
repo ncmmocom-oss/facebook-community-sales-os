@@ -1486,7 +1486,8 @@ const RemoteApp = (() => {
       if(!options.sourceIds.length) throw new Error('Chưa có dữ liệu mới từ lần quét gần nhất.');
     } else if(scope==='source_ids') {
       options.sourceIds=(command.sourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean);
-      if(!options.sourceIds.length) throw new Error('Không có Source ID mới để AI phân tích.');
+      options.forceReanalysis=command.forceReanalysis===true;
+      if(!options.sourceIds.length) throw new Error('Không có Source ID để AI phân tích.');
     } else if(scope==='legacy_gate') {
       options.scope='legacy_gate';
     } else {
@@ -1676,6 +1677,8 @@ const RemoteApp = (() => {
           if(!priorAnalyzed || gate) return;
         } else if(scope==='selected_rows') {
           // Explicit selection is a force re-analysis action.
+        } else if(scope==='source_ids' && options&&options.forceReanalysis===true) {
+          // Sales recovery explicitly re-qualifies stable Source IDs after Offer Context changes.
         } else {
           // Normal/auto scopes process only genuinely pending sources.
           if(priorAnalyzed || gate) return;
@@ -2208,7 +2211,11 @@ const RemoteApp = (() => {
           !passiveActions.has(action);
 
         let gate='WATCH';
-        if(buyerRole==='Không' || productFit==='Không') {
+        if(buyerRole==='Không') {
+          gate='FAIL';
+        } else if(!effectiveContext) {
+          gate='CONTEXT_REQUIRED';
+        } else if(productFit==='Không') {
           gate='FAIL';
         } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
           gate='REVIEW_REQUIRED';
@@ -2301,7 +2308,7 @@ const RemoteApp = (() => {
   function normalizeAndDedupeOpportunitySheet_(sheet) {
     const last = sheet.getLastRow();
     if (last < 2) return { removed:0, repairedIds:0, rows:0 };
-    const rows = sheet.getRange(2,1,last-1,26).getValues();
+    const rows = sheet.getRange(2,1,last-1,CFG.OPPORTUNITY_TOTAL_COLS).getValues();
     const groups = [];
     const keyMap = new Map();
     let repairedIds = 0;
@@ -2332,10 +2339,10 @@ const RemoteApp = (() => {
     });
 
     const removed=rows.length-groups.length;
-    sheet.getRange(2,1,rows.length,26).clearContent();
+    sheet.getRange(2,1,rows.length,CFG.OPPORTUNITY_TOTAL_COLS).clearContent();
     if (groups.length) {
       sheet.getRange(2,2,groups.length,1).setNumberFormat('@');
-      sheet.getRange(2,1,groups.length,26).setValues(groups);
+      sheet.getRange(2,1,groups.length,CFG.OPPORTUNITY_TOTAL_COLS).setValues(groups);
     }
     return { removed, repairedIds, rows:groups.length };
   }
@@ -2825,14 +2832,12 @@ const RemoteApp = (() => {
     const leadSheet = mustSheet_(ss, CFG.LEAD_SHEET);
 
     const oppLast = oppSheet.getLastRow();
-    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,26).getValues() : [];
+    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,CFG.OPPORTUNITY_TOTAL_COLS).getValues() : [];
     const existing = loadExistingLeadState_(leadSheet);
     const oldLast=leadSheet.getLastRow();
     const oldRows=oldLast>=2 ? leadSheet.getRange(2,1,oldLast-1,21).getValues() : [];
+    const archive=archiveLegacyLeadRows_(oldRows,'V1.9.8.7 production Lead Inbox chỉ giữ Hard Gate PASS');
     const grouped = {};
-    const evaluatedKeys=new Set();
-    const pendingKeys=new Set();
-    const opportunityKeys=new Set();
 
     opp.forEach(r => {
       const sourceUrl = normalizeUrl_(r[2] || '');
@@ -2840,9 +2845,7 @@ const RemoteApp = (() => {
       const key = fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
       if (!key || key === 'ANON|') return;
 
-      opportunityKeys.add(key);
       const gate=String(r[24]||'').trim();
-      if(gate) evaluatedKeys.add(key); else pendingKeys.add(key);
       if(gate!=='PASS') return;
 
       const classification = String(r[11] || '').trim();
@@ -2859,7 +2862,6 @@ const RemoteApp = (() => {
     });
 
     const passKeys=Object.keys(grouped);
-    const passSet=new Set(passKeys);
     const newCount=passKeys.filter(key=>!existing[key] || String(existing[key].gate||'')!=='PASS').length;
     const now = new Date();
     const passRows = passKeys.map(key => {
@@ -2873,44 +2875,18 @@ const RemoteApp = (() => {
         old.conversion || r[17] || 'Chưa có', old.note || '', (String(old.gate||'')==='PASS' && old.firstLeadAt) ? old.firstLeadAt : now,
         r[21] || '', r[22] || '', 'PASS', r[23] || ''
       ];
-    });
-
-    // Preserve old derived leads only until their source/person is re-qualified.
-    // They are visibly marked LEGACY and excluded from every PASS counter.
-    const legacyRows=[];
-    oldRows.forEach(r=>{
-      const sourceUrl=normalizeUrl_(r[4]||'');
-      const fbUrl=normalizeFacebookProfileUrl_(r[1]||'');
-      const key=fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
-      if(!key || key==='ANON|' || passSet.has(key)) return;
-      // Drop LEGACY only when all currently-known opportunities for this person
-      // have been re-qualified and none PASS. If any source is still ungated,
-      // keep the legacy row so partial/manual re-analysis cannot silently lose it.
-      if(evaluatedKeys.has(key) && !pendingKeys.has(key)) return;
-      const x=r.slice(0,21);
-      while(x.length<21) x.push('');
-      x[19]='LEGACY';
-      x[20]=x[20] || 'Chưa đánh giá lại bằng Lead Qualification Hard Gate V1.8.7';
-      legacyRows.push(x);
-    });
-
-    const output=passRows.concat(legacyRows).sort((a,b)=>{
-      const ga=String(a[19]||'')==='PASS'?1:0;
-      const gb=String(b[19]||'')==='PASS'?1:0;
-      if(gb!==ga) return gb-ga;
-      return Number(b[8]||0)-Number(a[8]||0);
-    });
+    }).sort((a,b)=>Number(b[8]||0)-Number(a[8]||0));
 
     if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,21).clearContent();
-    if (output.length) {
-      leadSheet.getRange(2,1,output.length,21).setValues(output);
-      leadSheet.setRowHeights(2,output.length, CFG.SHEET_ROW_HEIGHT_PX);
-      leadSheet.getRange(2,1,output.length,21).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    if (passRows.length) {
+      leadSheet.getRange(2,1,passRows.length,21).setValues(passRows);
+      leadSheet.setRowHeights(2,passRows.length, CFG.SHEET_ROW_HEIGHT_PX);
+      leadSheet.getRange(2,1,passRows.length,21).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     }
     SpreadsheetApp.flush();
 
-    if (!silent) SpreadsheetApp.getUi().alert(`KH PASS: ${passRows.length} | Mới: ${newCount} | Legacy chờ đánh giá lại: ${legacyRows.length}.`);
-    return { count:passRows.length, newCount, legacyCount:legacyRows.length, rows:output.length };
+    if (!silent) SpreadsheetApp.getUi().alert(`KH PASS: ${passRows.length} | Mới: ${newCount} | Legacy archived: ${archive.archived||0}.`);
+    return { count:passRows.length, newCount, legacyCount:0, archivedLegacy:Number(archive.archived||0), rows:passRows.length };
   }
 
   function refreshGroupSummary_() {
@@ -2934,7 +2910,7 @@ const RemoteApp = (() => {
     const scanLast = scanSheet.getLastRow();
     const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getValues() : [];
     const oppLast = oppSheet.getLastRow();
-    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 26).getValues() : [];
+    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, CFG.OPPORTUNITY_TOTAL_COLS).getValues() : [];
     const byGroup = {};
     oppRows.forEach(r => {
       const g = String(r[4] || '').trim();
@@ -2954,7 +2930,7 @@ const RemoteApp = (() => {
         .filter(r => String(r[24] || '').trim()==='PASS')
         .sort((a,b) => Number(b[10] || 0) - Number(a[10] || 0));
       const top = leads.slice(0, 5).map(r => `${r[5] || '(ẩn danh)'} (${Number(r[10] || 0)})`).join('\n');
-      const sold = list.filter(r => String(r[17] || '').trim() === 'Đã bán').length;
+      const sold = list.filter(r => String(r[26] || '').trim() === 'Đã bán' || String(r[17] || '').trim() === 'Đã bán').length;
       const analyzed = list.filter(r => [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined)).length;
       const pending = Math.max(0, list.length - analyzed);
       const posts = list.filter(r => String(r[3]||'') === 'Bài viết').length;
@@ -6089,6 +6065,8 @@ const RemoteApp = (() => {
     const exceptions=counts.error+counts.incomplete+counts.stopped;
     const autoMonitor=getAutoMonitorV2State_(false);
     const commentIntel=getCommentIntelligenceStats_();
+    const salesPipeline=getSalesPipelineStats_();
+    const contextReadiness=getContextReadiness_();
     const operationalHealth=computeOperationalHealth_({
       workers,sla,ai,auto:autoMonitor,comments:commentIntel,
       activeGroups:counts.active,
@@ -6119,6 +6097,8 @@ const RemoteApp = (() => {
       aiOps:ai,
       autoMonitor,
       commentIntel,
+      salesPipeline,
+      contextReadiness,
       operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
@@ -6325,7 +6305,7 @@ const RemoteApp = (() => {
     const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
     if(!sh || sh.getLastRow()<3) return {rows:0};
     const n=sh.getLastRow()-1;
-    sh.getRange(2,1,n,26).sort([{column:1,ascending:false},{column:2,ascending:false}]);
+    sh.getRange(2,1,n,CFG.OPPORTUNITY_TOTAL_COLS).sort([{column:1,ascending:false},{column:2,ascending:false}]);
     return {rows:n};
   }
 
