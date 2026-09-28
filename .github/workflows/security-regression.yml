@@ -205,17 +205,60 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-sales-readiness-recovery'" in runtime
+          assert "VERSION: '1.9.8.7-HF1-context-integrity'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
-          assert "OPPORTUNITY_TOTAL_COLS: 31" in runtime
+          assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
+          assert "OPPORTUNITY_GROUP_KEY_COL: 32" in runtime
+          assert "OFFER_CONTEXT_FIELDS: ['OFFER','BUYER','PROBLEM','PRODUCT-SERVICE','VALUE','QUALIFICATION','CTA']" in runtime
           assert "SALES_STAGE_OPTIONS" in runtime
           assert "GET_SALES_RECOVERY_QUEUE" in runtime
           assert "SET_SELECTED_SALES_STAGE" in runtime
+          assert "function validateOfferContext_(" in runtime
+          assert "function loadValidatedGroupContexts_(" in runtime
+          assert "function buildSourceGroupKeyMap_(" in runtime
+          assert "function backfillOpportunityGroupKeys_(" in runtime
+          assert "'Sales Stage','Last Contact','Next Follow-up','Owner','Outcome / Value','Group Key'" in runtime
+
+          readiness_start = runtime.index('function getContextReadiness_(')
+          readiness_end = runtime.index('function saveActiveGroupContext_', readiness_start)
+          readiness_block = runtime[readiness_start:readiness_end]
+          assert "loadValidatedGroupContexts_()" in readiness_block
+          assert "missingFields" in readiness_block
+
+          save_ctx_start = runtime.index('function saveActiveGroupContext_(')
+          save_ctx_end = runtime.index('function buildSourceGroupKeyMap_', save_ctx_start)
+          save_ctx_block = runtime[save_ctx_start:save_ctx_end]
+          assert "validateOfferContext_(command.context)" in save_ctx_block
+          assert "validation.missing.join" in save_ctx_block
+
+          recovery_start = runtime.index('function getSalesRecoveryQueue_(')
+          recovery_end = runtime.index('function normalizeSalesStage_', recovery_start)
+          recovery_block = runtime[recovery_start:recovery_end]
+          assert "OPPORTUNITY_GROUP_KEY_COL" in recovery_block
+          assert "contextKeys.has(groupKey)" in recovery_block
+          assert "contextNames" not in recovery_block
+          assert "String(r[4]||'').trim()" not in recovery_block, "Recovery must not identify context by Group display name"
+
+          resolver_start = runtime.index('function resolveAiContextForGroup_(')
+          resolver_end = runtime.index('function analyzeNewPosts_', resolver_start)
+          resolver_block = runtime[resolver_start:resolver_end]
+          assert "KEY|" in resolver_block
+          assert "businessContext" not in resolver_block, "Global Business Context must not satisfy per-Group Offer Context"
+
+          prompt_start = runtime.index('function aiSystemPrompt_(')
+          prompt_end = runtime.index('function analyzeBatchWithGemini_', prompt_start)
+          prompt_block = runtime[prompt_start:prompt_end]
+          assert "nguồn DUY NHẤT để xác nhận Product Fit" in prompt_block
+          assert "không được dùng thay offerContext" in prompt_block
+          assert "Business context fallback" not in prompt_block
+
           assert "function analyzeBatchWithProviderFailover_(" in runtime
           assert "PROVIDER_FAILOVER" in runtime
           assert "id=\"salesStage\"" in ui
           assert "id=\"groupContextDraft\"" in ui
+          assert "bắt buộc đủ 7 field" in ui
+          assert "không</b> được dùng thay" in ui
           assert "REQUALIFY CONTEXT-READY" in ui
           assert "AI_LEASE_KEY" in runtime and "AUTO_MONITOR_LEASE_KEY" in runtime
           assert "LockService.getScriptLock" not in runtime, "AI/AUTO must not share a global ScriptLock"
