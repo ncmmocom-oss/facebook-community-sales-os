@@ -283,7 +283,7 @@ jobs:
           assert not re.search(r"setRowHeights\([^\n;]*,\s*42\s*\)", runtime), "Runtime must not hard-code 42px row heights"
           assert "setRowHeights(startRow, rows.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
           assert "setRowHeights(row,rows.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
-          assert "leadSheet.setRowHeights(2,output.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
+          assert "leadSheet.setRowHeights(2,passRows.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
 
           assert "function persistAutoMonitorSummary_(" in runtime
           assert "acceptance='BUSY'" in runtime
