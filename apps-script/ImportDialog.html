@@ -265,12 +265,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <div class="panelTitle">Offer Context Readiness</div>
     <div class="kpiGrid">
       <div class="kpi"><span>Group active</span><b id="ctxActive">0</b></div>
-      <div class="kpi"><span>Có Context</span><b id="ctxReady">0</b></div>
-      <div class="kpi"><span>Thiếu Context</span><b id="ctxMissing">0</b></div>
+      <div class="kpi"><span>Context VALID</span><b id="ctxReady">0</b></div>
+      <div class="kpi"><span>Thiếu / Invalid</span><b id="ctxMissing">0</b></div>
       <div class="kpi"><span>Recovery ready</span><b id="ctxRecovery">0</b></div>
     </div>
-    <label>AI Context / Offer cho Group đang chọn trong sheet QUÉT NHÓM</label>
-    <textarea id="groupContextDraft" rows="7" placeholder="OFFER:&#10;BUYER:&#10;PROBLEM:&#10;PRODUCT / SERVICE:&#10;VALUE:&#10;QUALIFICATION:&#10;CTA:"></textarea>
+    <label>AI Context / Offer cho Group đang chọn trong sheet QUÉT NHÓM — bắt buộc đủ 7 field</label>
+    <textarea id="groupContextDraft" rows="7" placeholder="OFFER: sản phẩm/dịch vụ đang bán&#10;BUYER: ai là người mua phù hợp&#10;PROBLEM: vấn đề cần giải quyết&#10;PRODUCT-SERVICE: offer cụ thể&#10;VALUE: giá trị/lợi ích chính&#10;QUALIFICATION: điều kiện phù hợp / loại trừ&#10;CTA: hành động mong muốn"></textarea>
+    <div class="muted" style="margin-top:6px"><b>Fail-closed:</b> thiếu hoặc rỗng bất kỳ field nào thì Context không VALID, không vào Recovery Queue và không thể dùng để xác nhận Product Fit.</div>
     <div class="commandActions">
       <button class="primary" onclick="saveActiveGroupContext()">LƯU CONTEXT CHO GROUP ĐANG CHỌN</button>
       <button class="secondary" onclick="openWorkspaceTab('groups','QUÉT NHÓM')">MỞ QUÉT NHÓM ↗</button>
@@ -413,8 +414,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <label>Model</label>
     <select id="model"></select>
     <label style="display:block;margin-top:8px;">Business Context — mình thực sự đang bán gì?</label>
-    <textarea id="businessContext" placeholder="Ghi cụ thể sản phẩm/dịch vụ, khu vực, nhóm khách phù hợp và trường hợp KHÔNG phù hợp. Nếu để trống, Hard Gate không cho Product Fit = Có."></textarea>
-    <div class="muted"><b>Ưu tiên context:</b> cột <b>AI Context / Offer</b> trong QUÉT NHÓM → nếu trống mới dùng Business Context toàn cục ở đây. Nếu cả hai trống, Product Fit = Chưa rõ và Lead Gate không PASS.</div>
+    <textarea id="businessContext" placeholder="Background chung về doanh nghiệp/sản phẩm. Không thay thế Offer Context riêng của từng Group."></textarea>
+    <div class="muted"><b>Nguyên tắc:</b> Business Context toàn cục chỉ là background guidance cho AI. Nó <b>không</b> được dùng thay cột <b>AI Context / Offer</b> của Group, không làm Context Ready và không thể tự xác nhận Product Fit.</div>
     <button class="secondary" onclick="saveAiConfig()">LƯU CẤU HÌNH AI</button>
     <button class="dark" onclick="testAi()">TEST AI</button>
   </div>
@@ -1147,9 +1148,14 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         phase2SetText('ctxActive',Number(r.active||0));
         phase2SetText('ctxReady',Number(r.withContext||0));
         phase2SetText('ctxMissing',Number(r.missing||0));
-        const list=(r.missingGroups||[]).slice(0,8).map(x=>'Dòng '+x.row+' — '+x.name);
+        const list=(r.missingGroups||[]).slice(0,8).map(x=>{
+          const missing=(x.missingFields||[]).join(', ');
+          return 'Dòng '+x.row+' — '+x.name+(missing?(' • thiếu: '+missing):'');
+        });
         const el=document.getElementById('contextMissingList');
-        if(el) el.textContent=list.length?('Thiếu Context: '+list.join(' | ')):'✅ Tất cả Group active đã có Context.';
+        if(el) el.textContent=list.length
+          ? ('Context chưa VALID ('+Number(r.missing||0)+'): '+list.join(' | '))
+          : '✅ Tất cả Group active đã có Context VALID đủ 7 field.';
       },e=>setStatus('Không đọc được Context readiness: '+(e.message||e)));
 
       command({__command:'GET_SALES_PIPELINE'},r=>renderSalesPipeline(r),()=>{});
@@ -1175,10 +1181,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         const ids=q.sourceIds||[];
         phase2SetText('ctxRecovery',ids.length);
         if(!ids.length){
-          setStatus('Không có source context-ready cần requalify. Context coverage: '+Number(q.groupsWithContext||0)+' Group.');
+          setStatus('Không có source context-ready cần requalify.'+
+            '\nContext VALID: '+Number(q.groupsWithContext||0)+' Group'+
+            '\nContext invalid: '+Number(q.invalidContexts||0)+
+            '\nSource thiếu Group Key: '+Number(q.identityMissing||0));
           return;
         }
-        const base='SALES RECOVERY — '+ids.length+' source • '+Number(q.groupsWithContext||0)+' Group có Context';
+        const base='SALES RECOVERY — '+ids.length+' source • '+Number(q.groupsWithContext||0)+' Group Context VALID • canonical Group Key';
         analyzeSourceIdsSequential(ids,base,r=>{
           loadSalesReadiness();
           pollMonitoring();

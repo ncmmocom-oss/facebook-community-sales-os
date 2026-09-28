@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-sales-readiness-recovery',
+    VERSION: '1.9.8.7-HF1-context-integrity',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -70,7 +70,9 @@ const RemoteApp = (() => {
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
     EMPTY_PAGE_RETRY_ATTEMPTS: 3,
-    OPPORTUNITY_TOTAL_COLS: 31,
+    OPPORTUNITY_TOTAL_COLS: 32,
+    OPPORTUNITY_GROUP_KEY_COL: 32,
+    OFFER_CONTEXT_FIELDS: ['OFFER','BUYER','PROBLEM','PRODUCT-SERVICE','VALUE','QUALIFICATION','CTA'],
     SALES_STAGE_OPTIONS: ['Qualified','Outreach','Đang hội thoại','Chờ phản hồi','Follow-up','Đã bán','Lost'],
     SHEET_ROW_HEIGHT_PX: 21,
   };
@@ -96,6 +98,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF1 Context Integrity: Context Ready chỉ khi đủ 7 field bắt buộc; Recovery/Gate map bằng Group Key canonical thay vì tên Group; global Business Context không được dùng thay Offer Context của Group; CƠ HỘI có Group Key riêng và tự backfill từ source-of-truth.\n' +
       'V1.9.8.7 Sales Readiness Recovery: repair schema NHÓM, archive Lead LEGACY khỏi production inbox, Offer Context workflow, requalification queue, Sales Stage AA:AE và AI cross-provider failover khi provider tạm 5xx/429.\n' +
       'V1.9.8.6 Concurrency Foundation: tách AI/AUTO lane lease, Source-ID AI writeback, Comment Post Lease, Worker role GROUP/COMMENT/BOTH và bỏ physical sort khỏi hot path để chuẩn bị Parallel Pipeline an toàn.\n' +
       'V1.9.8.5 Row Height Standard: khóa chiều cao hàng production ở 21 px cho import, worker append và Lead refresh; tránh Runtime làm giãn hàng trở lại sau khi Sheet đã chuẩn hóa.\n' +
@@ -306,7 +309,8 @@ const RemoteApp = (() => {
             oppRows.push([
               postDate,postId,url,'Bài viết',groupInfo.name,authorName,authorUrl,message,
               '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n'),
-              '','','','',''
+              '','','','','',
+              '','','','','',groupKey
             ]);
             postImported += 1;
             stat.postNew += 1;
@@ -332,7 +336,7 @@ const RemoteApp = (() => {
     applyPostMetadataUpdates_(rawSheet, oppSheet, postRowMap, postUpdates);
     writeRowsForImport_(rawSheet, 5, rawRows, 16, [5], workerFast);
     writeRowsForImport_(commentSheet, 2, commentRows, 27, [5,7], workerFast);
-    writeRowsForImport_(oppSheet, 2, oppRows, 26, [2], workerFast);
+    writeRowsForImport_(oppSheet, 2, oppRows, CFG.OPPORTUNITY_TOTAL_COLS, [2,CFG.OPPORTUNITY_GROUP_KEY_COL], workerFast);
 
     finalizeGroupStats_(groupStats);
     updateGroupScanStatus_(groupSheet, groupStats);
@@ -449,7 +453,8 @@ const RemoteApp = (() => {
     ctx.oppRows.push([
       eventDate,sourceId,commentUrl,'Bình luận',groupName,n.authorName,n.authorUrl,evidence,
       '','','','','','','Chưa tương tác','','','Chưa có',resultText,'Mới',mediaUrls.join('\n'),
-      '','','','',''
+      '','','','','',
+      '','','','','',groupKey
     ]);
 
     stat.commentNew += 1;
@@ -1013,14 +1018,15 @@ const RemoteApp = (() => {
       opp.getRange(1,21,1,6).setValues([[
         'Media URL','Vai trò mua','Product Fit','Bằng chứng nhu cầu','Lead Gate','Lý do Gate'
       ]]);
-      opp.getRange(1,27,1,5).setValues([[
-        'Sales Stage','Last Contact','Next Follow-up','Owner','Outcome / Value'
+      opp.getRange(1,27,1,6).setValues([[
+        'Sales Stage','Last Contact','Next Follow-up','Owner','Outcome / Value','Group Key'
       ]]);
       const stageRule=SpreadsheetApp.newDataValidation()
         .requireValueInList(CFG.SALES_STAGE_OPTIONS,true)
         .setAllowInvalid(false)
         .build();
       if(opp.getMaxRows()>=2) opp.getRange(2,27,opp.getMaxRows()-1,1).setDataValidation(stageRule);
+      backfillOpportunityGroupKeys_(opp);
     }
 
     const lead = ss.getSheetByName(CFG.LEAD_SHEET);
@@ -1103,26 +1109,151 @@ const RemoteApp = (() => {
     return {archived:out.length};
   }
 
-  function getContextReadiness_() {
-    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.GROUP_SCAN_SHEET);
-    if(!sh || sh.getLastRow()<2) return {version:CFG.VERSION,active:0,withContext:0,missing:0,missingGroups:[]};
+  function normalizeOfferContextLabel_(label) {
+    return String(label||'')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .toUpperCase().replace(/[^A-Z0-9]/g,'');
+  }
+
+  function offerContextCanonicalField_(label) {
+    const key=normalizeOfferContextLabel_(label);
+    const aliases={
+      OFFER:'OFFER',
+      BUYER:'BUYER',
+      PROBLEM:'PROBLEM',
+      PRODUCTSERVICE:'PRODUCT-SERVICE',
+      PRODUCT:'PRODUCT-SERVICE',
+      SERVICE:'PRODUCT-SERVICE',
+      VALUE:'VALUE',
+      QUALIFICATION:'QUALIFICATION',
+      CTA:'CTA'
+    };
+    return aliases[key]||'';
+  }
+
+  function isMeaningfulOfferContextValue_(value) {
+    const v=String(value||'').replace(/\s+/g,' ').trim();
+    if(v.length<2) return false;
+    return !/^(?:-|—|n\/?a|na|none|null|todo|tbd|unknown|chưa rõ|không rõ)$/i.test(v);
+  }
+
+  function validateOfferContext_(text) {
+    const raw=String(text||'').replace(/\r/g,'').trim();
+    const fields={};
+    let current='';
+    raw.split('\n').forEach(line=>{
+      const x=String(line||'').trim();
+      if(!x) return;
+      const m=x.match(/^([^:：]{2,50})\s*[:：]\s*(.*)$/);
+      if(m){
+        const key=offerContextCanonicalField_(m[1]);
+        if(key){
+          current=key;
+          fields[key]=String(m[2]||'').trim();
+          return;
+        }
+      }
+      if(current) fields[current]=(fields[current]+' '+x).trim();
+    });
+
+    const missing=CFG.OFFER_CONTEXT_FIELDS.filter(k=>!isMeaningfulOfferContextValue_(fields[k]));
+    const normalized=CFG.OFFER_CONTEXT_FIELDS
+      .map(k=>k+': '+String(fields[k]||'').trim())
+      .join('\n');
+    return {
+      valid:missing.length===0,
+      fields,
+      missing,
+      normalized,
+      raw
+    };
+  }
+
+  function canonicalGroupKeyAliasesFromScanRow_(r,rowNumber) {
+    r=r||[];
+    const url=String(r[3]||'').trim();
+    const aliases=new Set();
+    const add=v=>{
+      const x=String(v||'').trim().toLowerCase();
+      if(x && !/[eE]\+\d+$/.test(x)) aliases.add(x);
+    };
+    add(exactGroupKeyFromRow_(url,r[4]));
+    add(extractGroupKey_(url));
+    add(r[4]);
+
+    // Preserve verified historical aliases without doing O(n^2) registry scans.
+    const lastFile=String(r[12]||'').trim();
+    const note=String(r[15]||'').trim();
+    let m=lastFile.match(/^api_posts_(.+?)_\d{8}_\d{6}\.json$/i);
+    if(m) add(m[1]);
+    const re=/facebook\.com\/groups\/([^\s\/?#]+)/ig;
+    while((m=re.exec(note))!==null) add(m[1]);
+
+    return [...aliases];
+  }
+
+  function loadValidatedGroupContexts_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
+    const map={};
+    const groups=[];
+    if(!sh || sh.getLastRow()<2) return {map,groups,validCount:0,invalidCount:0};
     const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
-    let active=0,withContext=0;
-    const missing=[];
+    let validCount=0,invalidCount=0;
     rows.forEach((r,i)=>{
       if(String(r[0]||'').trim()!=='Có') return;
-      active++;
-      const ctx=String(r[26]||'').trim();
-      if(ctx) withContext++;
-      else missing.push({row:i+2,name:String(r[2]||'').trim()||('Group '+String(r[4]||i+2)),groupId:String(r[4]||'').trim()});
+      const row=i+2;
+      const aliases=canonicalGroupKeyAliasesFromScanRow_(r,row);
+      const primary=aliases[0]||'';
+      const validation=validateOfferContext_(r[26]);
+      const item={
+        row,
+        name:String(r[2]||'').trim()||('Group '+String(primary||row)),
+        groupKey:primary,
+        aliases,
+        valid:validation.valid,
+        missingFields:validation.missing,
+        context:validation.valid?validation.normalized:'',
+        rawContext:String(r[26]||'').trim()
+      };
+      groups.push(item);
+      if(validation.valid){
+        validCount++;
+        aliases.forEach(k=>{map['KEY|'+k]=validation.normalized;});
+      }else{
+        invalidCount++;
+      }
     });
-    return {version:CFG.VERSION,active,withContext,missing:Math.max(0,active-withContext),missingGroups:missing.slice(0,50)};
+    return {map,groups,validCount,invalidCount};
+  }
+
+  function getContextReadiness_() {
+    const ctx=loadValidatedGroupContexts_();
+    const active=ctx.groups.length;
+    const notReady=ctx.groups.filter(x=>!x.valid);
+    return {
+      version:CFG.VERSION,
+      active,
+      withContext:ctx.validCount,
+      invalid:ctx.invalidCount,
+      missing:notReady.length,
+      missingGroups:notReady.slice(0,50).map(x=>({
+        row:x.row,name:x.name,groupId:x.groupKey,
+        missingFields:x.missingFields,
+        hasText:!!x.rawContext
+      }))
+    };
   }
 
   function saveActiveGroupContext_(command) {
     command=command||{};
-    const text=String(command.context||'').trim();
-    if(!text) throw new Error('AI Context / Offer đang trống.');
+    const validation=validateOfferContext_(command.context);
+    if(!validation.valid){
+      throw new Error(
+        'Offer Context chưa hợp lệ. Bắt buộc đủ 7 field: '+CFG.OFFER_CONTEXT_FIELDS.join(' / ')+
+        '. Thiếu hoặc rỗng: '+validation.missing.join(', ')+'.'
+      );
+    }
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sh=ss.getActiveSheet();
     const ar=sh&&sh.getActiveRange();
@@ -1133,36 +1264,87 @@ const RemoteApp = (() => {
     if(String(sh.getRange(row,1).getDisplayValue()||'').trim()!=='Có'){
       throw new Error('Group dòng '+row+' đang không hoạt động.');
     }
-    sh.getRange(row,27).setValue(text);
+    const identity=canonicalGroupKeyAliasesFromScanRow_(sh.getRange(row,1,1,27).getDisplayValues()[0],row);
+    if(!identity.length) throw new Error('Group dòng '+row+' chưa có canonical Group Key hợp lệ.');
+    sh.getRange(row,27).setValue(validation.normalized);
     SpreadsheetApp.flush();
     return {
       ok:true,version:CFG.VERSION,row,
       name:String(sh.getRange(row,3).getDisplayValue()||'').trim(),
-      context:text,readiness:getContextReadiness_()
+      groupKey:identity[0],
+      context:validation.normalized,
+      readiness:getContextReadiness_()
     };
+  }
+
+  function buildSourceGroupKeyMap_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const out=new Map();
+
+    const raw=ss.getSheetByName(CFG.RAW_SHEET);
+    if(raw && raw.getLastRow()>=5){
+      raw.getRange(5,4,raw.getLastRow()-4,2).getDisplayValues().forEach(r=>{
+        const key=String(r[0]||'').trim().toLowerCase();
+        const sourceId=String(r[1]||'').trim();
+        if(sourceId&&key&&!out.has(sourceId)) out.set(sourceId,key);
+      });
+    }
+
+    const comments=ss.getSheetByName(CFG.COMMENT_SHEET);
+    if(comments && comments.getLastRow()>=2){
+      comments.getRange(2,4,comments.getLastRow()-1,4).getDisplayValues().forEach(r=>{
+        const key=String(r[0]||'').trim().toLowerCase();
+        const commentId=String(r[3]||'').trim();
+        const sourceId=commentId?'C:'+commentId:'';
+        if(sourceId&&key&&!out.has(sourceId)) out.set(sourceId,key);
+      });
+    }
+    return out;
+  }
+
+  function backfillOpportunityGroupKeys_(oppSheet) {
+    const sh=oppSheet||SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
+    if(!sh || sh.getLastRow()<2 || sh.getMaxColumns()<CFG.OPPORTUNITY_GROUP_KEY_COL){
+      return {rows:0,filled:0,missing:0};
+    }
+    const n=sh.getLastRow()-1;
+    const ids=sh.getRange(2,2,n,1).getDisplayValues();
+    const keys=sh.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,n,1).getDisplayValues();
+    const sourceMap=buildSourceGroupKeyMap_();
+    const out=[];
+    let filled=0,missing=0;
+    for(let i=0;i<n;i++){
+      const current=String(keys[i][0]||'').trim().toLowerCase();
+      if(current){out.push([current]);continue;}
+      const sourceId=String(ids[i][0]||'').trim();
+      const key=String(sourceMap.get(sourceId)||'').trim().toLowerCase();
+      out.push([key]);
+      if(key) filled++; else if(sourceId) missing++;
+    }
+    if(filled) sh.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,n,1).setValues(out);
+    return {rows:n,filled,missing};
   }
 
   function getSalesRecoveryQueue_() {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const opp=mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
-    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
-    const contextNames=new Set();
-    if(scan.getLastRow()>=2){
-      scan.getRange(2,1,scan.getLastRow()-1,27).getDisplayValues().forEach(r=>{
-        if(String(r[0]||'').trim()!=='Có') return;
-        if(!String(r[26]||'').trim()) return;
-        const name=String(r[2]||'').trim();
-        if(name) contextNames.add(name);
-      });
-    }
-    const rows=opp.getLastRow()>=2?opp.getRange(2,1,opp.getLastRow()-1,26).getValues():[];
+    const keyRepair=backfillOpportunityGroupKeys_(opp);
+    const contexts=loadValidatedGroupContexts_();
+    const contextKeys=new Set(
+      Object.keys(contexts.map)
+        .filter(k=>k.indexOf('KEY|')===0)
+        .map(k=>k.slice(4))
+    );
+
+    const rows=opp.getLastRow()>=2?opp.getRange(2,1,opp.getLastRow()-1,CFG.OPPORTUNITY_TOTAL_COLS).getValues():[];
     const sourceIds=[];
-    let noContext=0,legacyPotential=0,ungated=0,unclearFit=0;
+    let noContext=0,identityMissing=0,legacyPotential=0,ungated=0,unclearFit=0;
     rows.forEach(r=>{
       const sourceId=String(r[1]||'').trim();
-      const group=String(r[4]||'').trim();
+      const groupKey=String(r[CFG.OPPORTUNITY_GROUP_KEY_COL-1]||'').trim().toLowerCase();
       if(!sourceId) return;
-      if(!contextNames.has(group)){noContext++;return;}
+      if(!groupKey){identityMissing++;return;}
+      if(!contextKeys.has(groupKey)){noContext++;return;}
       const gate=String(r[24]||'').trim();
       const buyer=String(r[21]||'').trim();
       const fit=String(r[22]||'').trim();
@@ -1177,14 +1359,18 @@ const RemoteApp = (() => {
       if(needsFit) unclearFit++;
       if(!hardBuyerFail && (needsGate||needsFit)) sourceIds.push(sourceId);
     });
+    const unique=[...new Set(sourceIds)];
     return {
       version:CFG.VERSION,
-      sourceIds:[...new Set(sourceIds)].slice(0,5000),
-      ready:[...new Set(sourceIds)].length,
-      groupsWithContext:contextNames.size,
-      noContext,legacyPotential,ungated,unclearFit
+      sourceIds:unique.slice(0,5000),
+      ready:unique.length,
+      groupsWithContext:contexts.validCount,
+      invalidContexts:contexts.invalidCount,
+      noContext,identityMissing,legacyPotential,ungated,unclearFit,
+      groupKeyBackfill:keyRepair
     };
   }
+
 
   function normalizeSalesStage_(stage) {
     const raw=String(stage||'').trim();
@@ -1591,29 +1777,16 @@ const RemoteApp = (() => {
   }
 
   function loadGroupAiContextMap_() {
-    const ss=SpreadsheetApp.getActiveSpreadsheet();
-    const sh=ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
-    const out={};
-    if(!sh || sh.getLastRow()<2) return out;
-    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
-    rows.forEach(r=>{
-      const name=String(r[2]||'').trim();
-      const key=String(r[4]||extractGroupKey_(r[3])||'').trim().toLowerCase();
-      const ctx=String(r[26]||'').trim();
-      if(!ctx) return;
-      if(name) out['NAME|'+name]=ctx;
-      if(key) out['KEY|'+key]=ctx;
-    });
-    return out;
+    return loadValidatedGroupContexts_().map;
   }
 
   function resolveAiContextForGroup_(groupName,groupKey,cfg,map) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!key) return '';
     const m=map||loadGroupAiContextMap_();
-    return String(
-      m['NAME|'+String(groupName||'').trim()] ||
-      m['KEY|'+String(groupKey||'').trim().toLowerCase()] ||
-      (cfg&&cfg.businessContext) || ''
-    ).trim();
+    // Strict invariant: Group-specific Offer Context only. Global Business Context
+    // is background guidance for the model and can never satisfy Context Readiness.
+    return String(m['KEY|'+key]||'').trim();
   }
 
   function analyzeNewPosts_(options) {
@@ -1658,6 +1831,7 @@ const RemoteApp = (() => {
         rows=sheet.getRange(2,1,last-1,26).getValues();
       }
       const contextMap=loadGroupAiContextMap_();
+      const groupKeyColumn=sheet.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,last-1,1).getDisplayValues();
       const candidates = [];
 
       rows.forEach((r, i) => {
@@ -1668,6 +1842,7 @@ const RemoteApp = (() => {
         const gate=String(r[24]||'').trim();
         const status = String(r[19] || '').trim();
         const group=String(r[4]||'').trim();
+        const groupKey=String(groupKeyColumn[i]&&groupKeyColumn[i][0]||'').trim().toLowerCase();
 
         if(!sourceId || !content || status==='Đóng') return;
         if(scope==='groups' && !groupSet.has(group)) return;
@@ -1692,7 +1867,8 @@ const RemoteApp = (() => {
           content: compressEvidenceForAi_(content, sourceType),
           sourceType,
           sourceUrl: String(r[2] || ''),
-          offerContext: resolveAiContextForGroup_(group,'',cfg,contextMap),
+          groupKey,
+          offerContext: resolveAiContextForGroup_(group,groupKey,cfg,contextMap),
           engagement: String(r[18] || ''),
           postDate: r[0] instanceof Date
             ? Utilities.formatDate(r[0], Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm')
@@ -1968,9 +2144,10 @@ const RemoteApp = (() => {
       'Mỗi input có source_id. BẮT BUỘC trả lại chính xác source_id đó, không đổi, không suy diễn và không trả row_number.',
       'Mục tiêu không phải tìm mọi người có vấn đề. Mục tiêu là phân biệt: (1) người có nhu cầu, (2) người có khả năng là buyer, (3) nhu cầu có phù hợp đúng sản phẩm/dịch vụ đang bán hay không.',
       'buyer_role chỉ được dùng: Có, Không, Chưa rõ. Có = chính người đăng/comment có tín hiệu là người có thể mua/ra quyết định/sử dụng giải pháp. Không = người bán, quảng cáo, chia sẻ kiến thức hoặc không phải đối tượng mua. Chưa rõ = evidence không đủ.',
-      'Mỗi input có thể có offerContext. offerContext là ngữ cảnh bán hàng của đúng Group và được ƯU TIÊN để đánh giá Product Fit; Business context toàn cục chỉ là fallback khi offerContext trống.',
-      'product_fit chỉ được dùng: Có, Không, Chưa rõ. Có chỉ khi nhu cầu khớp trực tiếp offerContext hoặc Business context fallback. Không khi nhu cầu lệch offer/context. Chưa rõ khi cả hai context trống hoặc evidence không đủ.',
-      'Nếu cả offerContext và Business context đều trống: BẮT BUỘC product_fit = Chưa rõ. Không được tự bịa product fit.',
+      'Mỗi input có thể có offerContext. offerContext là ngữ cảnh bán hàng đã validate của đúng Group và là nguồn DUY NHẤT để xác nhận Product Fit.',
+      'Business context toàn cục chỉ là background guidance; TUYỆT ĐỐI không được dùng thay offerContext của Group và không được biến Group thiếu Context thành Product Fit = Có.',
+      'product_fit chỉ được dùng: Có, Không, Chưa rõ. Có chỉ khi nhu cầu khớp trực tiếp offerContext của Group. Không khi nhu cầu lệch offerContext. Chưa rõ khi offerContext trống hoặc evidence không đủ.',
+      'Nếu offerContext trống: BẮT BUỘC product_fit = Chưa rõ, bất kể Business context toàn cục có nội dung gì.',
       'need_evidence phải là bằng chứng ngắn, cụ thể từ nội dung cho thấy nhu cầu/ý định; nếu không có thì ghi Không có bằng chứng nhu cầu rõ.',
       'Không coi người bán/quảng cáo là khách hàng chỉ vì họ đăng sản phẩm. Nếu nội dung của họ hữu ích để tham gia thảo luận hoặc có thể chứa buyer trong comment, phân loại là Nguồn hội thoại.',
       'Comment gợi ý phải tự nhiên, hữu ích, không giả vờ đã dùng sản phẩm, không tạo testimonial giả, không spam và không chèn link bán hàng.',
@@ -2226,6 +2403,7 @@ const RemoteApp = (() => {
       const minRow=Math.min(...valid.map(x=>x.row));
       const maxRow=Math.max(...valid.map(x=>x.row));
       const values=sheet.getRange(minRow,1,maxRow-minRow+1,26).getValues();
+      const groupKeys=sheet.getRange(minRow,CFG.OPPORTUNITY_GROUP_KEY_COL,maxRow-minRow+1,1).getDisplayValues();
 
       valid.forEach(x=>{
         const a=x.a;
@@ -2244,7 +2422,8 @@ const RemoteApp = (() => {
         const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
         let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
         const rowGroup=String(r[4]||'').trim();
-        const effectiveContext=resolveAiContextForGroup_(rowGroup,'',cfg,groupContextMap);
+        const rowGroupKey=String(groupKeys[idx]&&groupKeys[idx][0]||'').trim().toLowerCase();
+        const effectiveContext=resolveAiContextForGroup_(rowGroup,rowGroupKey,cfg,groupContextMap);
         if(!effectiveContext) productFit='Chưa rõ';
 
         const needScore=clampScore_(a.need_score,0,25);
@@ -2301,7 +2480,7 @@ const RemoteApp = (() => {
         const gateReason=[
           'Buyer='+buyerRole,
           'Fit='+productFit,
-          'Context='+(effectiveContext?'Có':'Thiếu'),
+          'Context='+(effectiveContext?'VALID_GROUP_CONTEXT':'MISSING_OR_INVALID'),
           'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
           'ActionIntent='+(actionIntentPass?'PASS':'NO'),
           'Intent='+intent,
@@ -6087,7 +6266,6 @@ const RemoteApp = (() => {
 
         counts.scanUpdatesToday+=Number(r[16]||0);
         counts.newPostsToday+=Number(r[19]||0);
-        if(String(r[26]||'').trim()) counts.withContext++;
       });
     }
 
@@ -6129,6 +6307,7 @@ const RemoteApp = (() => {
     const commentIntel=getCommentIntelligenceStats_();
     const salesPipeline=getSalesPipelineStats_();
     const contextReadiness=getContextReadiness_();
+    counts.withContext=Number(contextReadiness.withContext||0);
     const operationalHealth=computeOperationalHealth_({
       workers,sla,ai,auto:autoMonitor,comments:commentIntel,
       activeGroups:counts.active,
