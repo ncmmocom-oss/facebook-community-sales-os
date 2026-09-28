@@ -5916,6 +5916,7 @@ const RemoteApp = (() => {
     const s=String(slot||'').trim().toUpperCase();
     const w=getWorkerPoolRaw_().find(x=>x.slot===s);
     if(!w || !w.enabled || !w.clientId) throw new Error('Worker '+s+' chưa được cấu hình/enable.');
+    if(!workerSupportsRole_(w,'GROUP')) throw new Error('Worker '+s+' đang role '+normalizeWorkerRole_(w.role)+' nên không nhận Group job.');
     return w;
   }
   function runWorkerJob_(command) {
@@ -7078,11 +7079,23 @@ const RemoteApp = (() => {
     throw new Error('Chưa có CLIENT_ID. Hãy cấu hình ít nhất 1 Worker trong Cấu hình nâng cao.');
   }
 
+  function normalizeWorkerRole_(role) {
+    const r=String(role||'BOTH').trim().toUpperCase();
+    return ['GROUP','COMMENT','BOTH'].indexOf(r)>=0?r:'BOTH';
+  }
+
+  function workerSupportsRole_(worker,role) {
+    const target=normalizeWorkerRole_(role);
+    const actual=normalizeWorkerRole_(worker&&worker.role);
+    return actual==='BOTH' || actual===target;
+  }
+
   function defaultWorkerPool_() {
     return [1,2,3].map(i=>({
       slot:'W'+i,
       label:'FB-0'+i,
       enabled:i===1,
+      role:'BOTH',
       clientId:'',
       profile:'',
       socialAioVersion:'',
@@ -7123,6 +7136,7 @@ const RemoteApp = (() => {
         slot:d.slot,
         label:String(x.label||d.label).trim()||d.label,
         enabled:x.enabled!==undefined ? !!x.enabled : !!d.enabled,
+        role:normalizeWorkerRole_(x.role||d.role),
         clientId:String(x.clientId||'').trim(),
         profile:String(x.profile||'').trim(),
         socialAioVersion:String(x.socialAioVersion||'').trim(),
@@ -7226,6 +7240,7 @@ const RemoteApp = (() => {
       slot:w.slot,
       label:w.label,
       enabled:!!w.enabled,
+      role:normalizeWorkerRole_(w.role),
       configured:!!w.clientId,
       clientIdMasked:w.clientId?maskBridgeClientId_(w.clientId):'',
       profile:w.profile||'',
@@ -7274,6 +7289,7 @@ const RemoteApp = (() => {
       const next=Object.assign({},prev,{
         label:String(x.label!==undefined?x.label:prev.label).trim()||prev.label,
         enabled:x.enabled!==undefined?!!x.enabled:prev.enabled,
+        role:normalizeWorkerRole_(x.role!==undefined?x.role:prev.role),
         clientId:nextClientId
       });
 
@@ -7405,9 +7421,9 @@ const RemoteApp = (() => {
     const runId=(String(mode||'selected').toLowerCase())+'-'+Utilities.getUuid().slice(0,12);
     const override=targetOverride?normalizeGroupTarget_(targetOverride):0;
     const configured=getWorkerPoolRaw_()
-      .filter(w=>w.enabled&&w.clientId)
+      .filter(w=>w.enabled&&w.clientId&&workerSupportsRole_(w,'GROUP'))
       .map(w=>Object.assign({},w,{health:workerHealthState_(w)}));
-    if(!configured.length) throw new Error('Chưa cấu hình Worker. Mở Cấu hình nâng cao → Worker Pool.');
+    if(!configured.length) throw new Error('Chưa có Worker role GROUP/BOTH khả dụng. Mở Worker Pool → Role.');
 
     const pool=configured.filter(w=>w.health!=='OFFLINE');
     if(!pool.length){
