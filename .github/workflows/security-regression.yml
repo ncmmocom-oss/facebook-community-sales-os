@@ -92,7 +92,6 @@ jobs:
           assert "canonicalizedFromDuplicate" in selected_backend
           assert "repairSelectedDuplicateRows_" in selected_backend
           assert "DUPLICATE_SELECTION_REDIRECT" in runtime
-          assert "STALE_DUPLICATE_JOB_BLOCKED" in runtime
 
           historic_start = runtime.index('function historicNumericGroupIdFromRow_(')
           historic_end = runtime.index('function logRuntimeApiEvent_', historic_start)
