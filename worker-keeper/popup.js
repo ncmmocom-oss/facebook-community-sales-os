@@ -218,7 +218,7 @@ document.getElementById('copyLog').addEventListener('click',async () => {
   const log=(r && r.log) || [];
   const state=LAST && LAST.workerState || {};
   const lines=[
-    'Social AIO Worker Keeper V1.2.0',
+    'Social AIO Worker Keeper V1.2.1',
     'Status: '+(state.status || 'UNKNOWN'),
     'Bound tab: '+(LAST && LAST.boundTabId || '—'),
     'Client: '+(state.clientIdMasked || '—'),
