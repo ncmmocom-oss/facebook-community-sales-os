@@ -1,9 +1,14 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.8.1-browser-tab-workspace",
+  "version": "1.9.8.2-tabbed-smart-cockpit",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.8.2 Tabbed Smart Cockpit: replaces the vertical sidebar with compact horizontal module tabs to recover workspace width.",
+    "Adds a reusable browser-workspace tab rail for 200 GROUP, BINH LUAN, TIN HIEU, LEAD INBOX and AUTO LOG.",
+    "Adds one context-aware Smart Action: exception retry > Due cycle > Comment cooldown view > AI backlog > Worker health; no automatic business action is executed without an operator click.",
+    "AUTO ON/OFF and refresh become secondary controls; duplicated hero/monitor action rows are hidden from the production surface.",
+    "No changes to Group scan, Due eligibility, Auto scheduler, Comment acquisition, AI, Lead Gate or persistence semantics.",
     "V1.9.8.1 Browser Tab Workspace: operational drill-down sheets open in named browser tabs that are reused instead of repeatedly switching the active Sheet or opening duplicates.",
     "TÍN HIỆU refreshes in the background while its browser tab remains open and updates live.",
     "BÌNH LUẬN, TÍN HIỆU, LEAD INBOX and log sheets can be opened directly from Control Center without changing the operator's current Sheet context.",

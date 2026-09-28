@@ -204,7 +204,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.1-browser-tab-workspace'" in runtime
+          assert "VERSION: '1.9.8.2-tabbed-smart-cockpit'" in runtime
           assert "COMMENT_PROVIDER_BREAKER_KEY" in runtime
           assert "COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000" in runtime
           assert "COMMENT_RETRY_DELAYS_MS" in runtime
@@ -233,6 +233,21 @@ jobs:
           assert "openWorkspaceTab('comments','BÌNH LUẬN')" in ui
           assert "openWorkspaceTab('api_log','NHẬT KÝ API')" in ui
           assert "Source COMMENT_UI" in ui
+          assert 'class="workspaceTabs"' in ui
+          assert "openWorkspaceTab('groups','200 GROUP')" in ui
+          assert "openWorkspaceTab('comments','BÌNH LUẬN')" in ui
+          assert "openWorkspaceTab('auto_log','NHẬT KÝ AUTO')" in ui
+          assert 'id="smartActionBtn"' in ui
+          assert "function renderSmartAction(" in ui
+          assert "function runSmartAction()" in ui
+          assert "function toggleAutoMonitor()" in ui
+          assert "smartActionMode==='RETRY'" in ui
+          assert "smartActionMode==='CYCLE'" in ui
+          assert "smartActionMode==='COMMENTS'" in ui
+          assert "smartActionMode==='AI'" in ui
+          assert ".heroActions{display:none}" in ui
+          assert "#monitorBox .monitorActions{display:none}" in ui
+          assert "grid-template-columns:216px" not in ui
           assert "function runCommentIntelligenceUi_(" in runtime
           assert "source:'COMMENT_UI'" in runtime
           assert "logAutoMonitorRun_(" in runtime
