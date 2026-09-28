@@ -17,11 +17,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify bootstrap
         run: |
-          grep -q "BOOTSTRAP_VERSION = '2.3-runtime-ui-atomic'" bootstrap/Code.gs
+          grep -q "BOOTSTRAP_VERSION = '2.4-auto-monitor-auth'" bootstrap/Code.gs
           grep -q "MỞ CONTROL CENTER" bootstrap/Code.gs
           grep -q "openSignalFeed" bootstrap/Code.gs
           grep -q "openLeadInbox" bootstrap/Code.gs
           grep -q "autoMonitorTick" bootstrap/Code.gs
+          grep -q "authorizeAutoMonitor" bootstrap/Code.gs
+          grep -q "autoMonitorAuthProbe_" bootstrap/Code.gs
           grep -q "script.scriptapp" bootstrap/appsscript.json
       - name: Stage package
         run: |
@@ -31,7 +33,7 @@ jobs:
       - name: Upload bootstrap package
         uses: actions/upload-artifact@v4
         with:
-          name: Social_AIO_Bootstrap_V2.3_Runtime_UI_Atomic
+          name: Social_AIO_Bootstrap_V2.4_Auto_Monitor_Auth
           path: package/
           if-no-files-found: error
           retention-days: 30

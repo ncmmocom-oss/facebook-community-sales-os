@@ -4,7 +4,7 @@
  * Vì vậy menu luôn xuất hiện sau khi reload Sheet.
  * Remote runtime chỉ được tải khi người dùng bấm một menu item.
  */
-const BOOTSTRAP_VERSION = '2.3-runtime-ui-atomic';
+const BOOTSTRAP_VERSION = '2.4-auto-monitor-auth';
 
 const GITHUB_RUNTIME = {
   RAW_BASE: 'https://raw.githubusercontent.com/ncmmocom-oss/facebook-community-sales-os/main/apps-script',
@@ -33,6 +33,7 @@ function buildLocalMenu_() {
     .addSubMenu(
       ui.createMenu('HỆ THỐNG')
         .addItem('🔄 Cập nhật runtime từ GitHub', 'githubForceUpdate')
+        .addItem('🔐 Cấp quyền AUTO MONITOR', 'authorizeAutoMonitor')
         .addItem('ℹ Thông tin phiên bản', 'showRuntimeInfo')
     )
     .addToUi();
@@ -62,6 +63,48 @@ function apiBridgeStatus() { return callRemote_('apiBridgeStatus', []); }
 // Installable time-driven trigger entrypoint for Auto Monitor V2.
 function autoMonitorTick() { return callRemote_('autoMonitorTick', []); }
 
+// No-op target used only to verify ScriptApp trigger authorization.
+// The probe trigger is created and deleted immediately; it never runs in normal flow.
+function autoMonitorAuthProbe_() {}
+
+function authorizeAutoMonitor() {
+  const ui=SpreadsheetApp.getUi();
+  let probe=null;
+  try {
+    // Accessing and mutating installable triggers forces Apps Script to request
+    // https://www.googleapis.com/auth/script.scriptapp when the local manifest includes it.
+    const existing=ScriptApp.getProjectTriggers();
+    probe=ScriptApp.newTrigger('autoMonitorAuthProbe_')
+      .timeBased()
+      .after(60 * 1000)
+      .create();
+    ScriptApp.deleteTrigger(probe);
+    probe=null;
+
+    ui.alert(
+      'AUTO MONITOR — QUYỀN ĐÃ SẴN SÀNG\n\n' +
+      'ScriptApp: OK\n' +
+      'Trigger probe: PASS\n' +
+      'Existing project triggers: ' + existing.length + '\n\n' +
+      'Bước tiếp theo: mở Control Center → TEST 1 CYCLE.'
+    );
+    return {ok:true,permissionOk:true,triggerProbe:true,existingTriggers:existing.length};
+  } catch (err) {
+    if (probe) {
+      try { ScriptApp.deleteTrigger(probe); } catch (_) {}
+    }
+    const msg=String(err && err.message || err || '');
+    ui.alert(
+      'AUTO MONITOR — CHƯA ĐƯỢC CẤP QUYỀN\n\n' +
+      'Project phải dùng appsscript.json Bootstrap V2.4 có scope:\n' +
+      'https://www.googleapis.com/auth/script.scriptapp\n\n' +
+      'Sau khi Save, chạy lại HỆ THỐNG → Cấp quyền AUTO MONITOR và chọn Review permissions → Allow.\n\n' +
+      'Chi tiết: ' + msg
+    );
+    throw err;
+  }
+}
+
 function githubForceUpdate() {
   const cache = CacheService.getScriptCache();
   cache.remove('SOCIAL_AIO_REMOTE_RUNTIME');
@@ -76,8 +119,9 @@ function githubForceUpdate() {
     'Runtime: ' + version + '\n' +
     'Bootstrap local: ' + BOOTSTRAP_VERSION + '\n\n' +
     'Control Center dùng atomic Runtime/UI refresh để tránh lệch cache/scope.\n' +
-    'Auto Monitor V2 dùng trigger global autoMonitorTick() trong bootstrap 2.2+.\n' +
-    'Lưu ý: runtime update không tự thay Code.gs/bootstrap.'
+    'Auto Monitor V2 dùng trigger global autoMonitorTick().\n' +
+    'Nếu AUTO_AUTH_REQUIRED: HỆ THỐNG → Cấp quyền AUTO MONITOR.\n' +
+    'Lưu ý: runtime update không tự thay Code.gs/appsscript.json.'
   );
 }
 
