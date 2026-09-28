@@ -1898,7 +1898,7 @@ const RemoteApp = (() => {
       });
 
       const valid=[];
-      let missing=0;
+      let missing=0,appliedCount=0;
       (analyses||[]).forEach(a=>{
         const sourceId=String(a&&a.source_id||'').trim();
         const row=sourceId&&!duplicateIds.has(sourceId)?Number(sourceRows.get(sourceId)||0):0;
@@ -2011,10 +2011,11 @@ const RemoteApp = (() => {
         r[23]=evidence;
         r[24]=gate;
         r[25]=gateReason;
+        appliedCount++;
       });
 
       sheet.getRange(minRow,1,values.length,26).setValues(values);
-      return {applied:Math.max(0,valid.length-missing),missing};
+      return {applied:appliedCount,missing};
     } finally {
       writeLock.releaseLock();
     }
@@ -4005,7 +4006,25 @@ const RemoteApp = (() => {
 
   function runSinglePostCommentIntelligence_(job,options) {
     options=options||{};
+    const leaseIdentity=String(job&&job.postId||job&&job.url||'').trim();
+    const leaseOwner='COMMENT|'+String(options.source||'AUTO')+'|'+Utilities.getUuid().slice(0,8);
+    const postLease=acquireRuntimeLease_(
+      commentPostLeasePropertyKey_(leaseIdentity),
+      leaseOwner,
+      CFG.COMMENT_POST_LEASE_TTL_MS
+    );
+    if(!postLease.ok){
+      return {
+        ok:false,busy:true,retry:false,hard:false,
+        postId:job&&job.postId||'',postUrl:job&&job.url||'',
+        commentsRead:0,commentImported:0,newSourceIds:[],
+        status:'SKIP_BUSY',leaseReason:postLease.reason||'POST_BUSY',
+        leaseExpiresAt:Number(postLease.expiresAt||0),durationMs:0
+      };
+    }
+
     const started=Date.now();
+    try{
     const clientId=String(options.clientId||'').trim() || getBridgeClientId_();
     const currentFetched=Math.max(0,Number(job.fetched||0));
     const expected=Math.max(0,Number(job.expected||0));
@@ -4091,8 +4110,10 @@ const RemoteApp = (() => {
       newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
       durationMs:Date.now()-started
     };
+    } finally {
+      releaseRuntimeLease_(commentPostLeasePropertyKey_(leaseIdentity),postLease.token);
+    }
   }
-
   function runCommentIntelligenceUi_(limit) {
     const started=Date.now();
     const runId='comment-'+Utilities.getUuid().slice(0,10);
@@ -4165,8 +4186,21 @@ const RemoteApp = (() => {
       repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
     };
 
-    const pool=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId&&workerHealthState_(w)!=='OFFLINE');
-    const clientId=pool.length?pool[0].clientId:getBridgeClientId_();
+    const pool=getWorkerPoolRaw_()
+      .filter(w=>w.enabled&&w.clientId&&workerSupportsRole_(w,'COMMENT')&&workerHealthState_(w)!=='OFFLINE')
+      .sort((a,b)=>{
+        const rank={ONLINE:0,UNKNOWN:1,STALE:2,OFFLINE:3};
+        const ha=rank[workerHealthState_(a)]!==undefined?rank[workerHealthState_(a)]:9;
+        const hb=rank[workerHealthState_(b)]!==undefined?rank[workerHealthState_(b)]:9;
+        if(ha!==hb) return ha-hb;
+        return Number(a.latencyMs||999999)-Number(b.latencyMs||999999);
+      });
+    if(!pool.length) return {
+      ok:true,enabled:true,skipped:true,reason:'NO_COMMENT_WORKER',
+      processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION,
+      repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
+    };
+    const clientId=pool[0].clientId;
     const results=[],sourceIds=[];
     let imported=0,providerCircuitOpen=false,providerRetryAt=0,providerError='';
 
