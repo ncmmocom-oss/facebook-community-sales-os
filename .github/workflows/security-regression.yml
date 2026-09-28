@@ -230,7 +230,7 @@ jobs:
           assert "function getWorkspaceLinks_(" in runtime
           assert "window.open(cached||'about:blank',tabName)" in ui
           assert "function openWorkspaceTab(" in ui
-          assert "loadWorkspaceLinks();" in ui
+          assert "function loadWorkspaceLinks(" in ui
           assert "SOCIAL_AIO_" in ui
           assert "openWorkspaceTab('comments','BÌNH LUẬN')" in ui
           assert "openWorkspaceTab('api_log','NHẬT KÝ API')" in ui
