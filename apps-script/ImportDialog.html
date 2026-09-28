@@ -536,6 +536,10 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       command({__command:'GET_AI_PROGRESS'}, p => renderProgress(p), () => {});
     }
 
+    function isAiBusyError(e) {
+      return /AI đang chạy ở phiên khác/i.test(String(e&&e.message||e||''));
+    }
+
     function startProgressPolling() {
       stopProgressPolling();
       pollProgressOnce();
@@ -1049,6 +1053,16 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           next();
         },e=>{
           stopProgressPolling();
+          if(isAiBusyError(e)){
+            setStatus(
+              baseStatus+
+              '\n🟡 AI BUSY HỢP LỆ: '+String(e.message||e)+
+              '\nNguồn mới vẫn giữ trạng thái Chờ AI; không tạo run trùng và không pause Auto Monitor.'
+            );
+            pollProgressOnce();
+            if(done) done({analyzed:totalAnalyzed,busy:true,pauseAuto:false});
+            return;
+          }
           setStatus(baseStatus+'\nLỗi AI ở chunk '+(Math.floor(index/chunkSize)+1)+': '+(e.message||e));
           if(done) done({error:e.message||String(e),pauseAuto:true});
         });
@@ -1071,11 +1085,12 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           '\nComment mới: '+Number(r.commentImported||0)+
           '\nComment đã lưu: '+Number(stats.storedComments||0)+
           '\nBacklog post: '+Number(stats.backlogPosts||0)+
-          '\nRetry/backoff: '+Number(stats.retryPosts||0)+' • chờ '+Number(stats.retryDeferred||0)+
+          '\nRetry/backoff Post: '+Number(stats.retryPosts||0)+' • chờ '+Number(stats.retryDeferred||0)+
+          '\nProvider wait: '+Number(stats.providerWaitPosts||0)+
           '\nHard structural: '+Number(stats.hardErrors||0)+
           '\nProvider: '+(circuit?'CIRCUIT OPEN':'OK')+
           (retryAt?('\nRetry provider sau: '+new Date(retryAt).toLocaleString()):'')+
-          (r.repairedProviderHard?('\nĐã phục hồi false-HARD: '+Number(r.repairedProviderHard||0)):'')+
+          (r.repairedProviderHard?('\nĐã tách provider-wait khỏi retry Post: '+Number(r.repairedProviderHard||0)):'')+
           '\nCoverage: '+Number(stats.coveragePct||0)+'%'+
           '\nEvidence: NHẬT KÝ AUTO → Source COMMENT_UI'
         );
@@ -1620,9 +1635,18 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         pollProgressOnce();
         stopProgressPolling();
       }, e => {
+        stopProgressPolling();
+        if(isAiBusyError(e)){
+          setStatus(
+            '🟡 AI BUSY HỢP LỆ — không tạo run trùng.'+
+            '\n'+String(e.message||e)+
+            '\nRun hiện tại tiếp tục chạy bình thường; thanh tiến trình đã đồng bộ theo run đó.'
+          );
+          pollProgressOnce();
+          return;
+        }
         setStatus('Lỗi AI: ' + (e.message || e));
         pollProgressOnce();
-        stopProgressPolling();
       });
     }
 
@@ -1811,12 +1835,22 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           ? ('CIRCUIT OPEN • '+workerTimeAgo(new Date(Number(provider.openUntil||0)).toISOString()))
           : 'OK'
       );
-      phase2SetText('commentRetry',Number(ci.retryPosts||0)+(ci.retryDeferred?(' • '+Number(ci.retryDeferred||0)+' chờ'):''));
+      phase2SetText(
+        'commentRetry',
+        'Post '+Number(ci.retryPosts||0)+
+        (ci.retryDeferred?(' • '+Number(ci.retryDeferred||0)+' chờ'):'')+
+        (ci.providerWaitPosts?(' • Provider '+Number(ci.providerWaitPosts||0)):'')
+      );
       phase2SetText('commentHard',Number(ci.hardErrors||0));
       phase2SetText('groupCommentBacklog',Number(ci.backlogPosts||0));
       phase2SetText('groupCommentStored',Number(ci.storedComments||0));
       phase2SetText('groupCommentCoverage',Number(ci.coveragePct||0)+'%');
-      phase2SetText('groupCommentRetry',Number(ci.retryPosts||0)+(ci.retryDeferred?(' • '+Number(ci.retryDeferred||0)+' chờ'):''));
+      phase2SetText(
+        'groupCommentRetry',
+        'Post '+Number(ci.retryPosts||0)+
+        (ci.retryDeferred?(' • '+Number(ci.retryDeferred||0)+' chờ'):'')+
+        (ci.providerWaitPosts?(' • Provider '+Number(ci.providerWaitPosts||0)):'')
+      );
       phase2SetText(
         'groupCommentProvider',
         provider.open
