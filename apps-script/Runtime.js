@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.6-concurrency-foundation',
+    VERSION: '1.9.8.7-sales-readiness-recovery',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -8,6 +8,7 @@ const RemoteApp = (() => {
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
     GROUP_SUMMARY_SHEET: 'NHÓM',
     LEAD_SHEET: 'KHÁCH HÀNG TIỀM NĂNG',
+    LEAD_LEGACY_ARCHIVE_SHEET: 'KH LEGACY ARCHIVE',
     COORDINATION_SHEET: 'ĐIỀU PHỐI',
     AI_LOG_SHEET: 'NHẬT KÝ AI',
     COMMENT_SHEET: 'BÌNH LUẬN',
@@ -69,6 +70,8 @@ const RemoteApp = (() => {
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
     EMPTY_PAGE_RETRY_ATTEMPTS: 3,
+    OPPORTUNITY_TOTAL_COLS: 31,
+    SALES_STAGE_OPTIONS: ['Qualified','Outreach','Đang hội thoại','Chờ phản hồi','Follow-up','Đã bán','Lost'],
     SHEET_ROW_HEIGHT_PX: 21,
   };
 
@@ -93,6 +96,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7 Sales Readiness Recovery: repair schema NHÓM, archive Lead LEGACY khỏi production inbox, Offer Context workflow, requalification queue, Sales Stage AA:AE và AI cross-provider failover khi provider tạm 5xx/429.\n' +
       'V1.9.8.6 Concurrency Foundation: tách AI/AUTO lane lease, Source-ID AI writeback, Comment Post Lease, Worker role GROUP/COMMENT/BOTH và bỏ physical sort khỏi hot path để chuẩn bị Parallel Pipeline an toàn.\n' +
       'V1.9.8.5 Row Height Standard: khóa chiều cao hàng production ở 21 px cho import, worker append và Lead refresh; tránh Runtime làm giãn hàng trở lại sau khi Sheet đã chuẩn hóa.\n' +
       'V1.9.8.4 Comment/AI Guard: tách lỗi provider-wide Comment khỏi retry theo Post để không kéo backlog vào backoff nhiều giờ; normalize PROVIDER_TRANSIENT cũ thành PROVIDER_WAIT; AI concurrent run được coi là busy hợp lệ thay vì lỗi vận hành.\n' +
@@ -1004,11 +1008,19 @@ const RemoteApp = (() => {
 
     const opp = ss.getSheetByName(CFG.OPPORTUNITY_SHEET);
     if (opp) {
-      if (opp.getMaxColumns() < 26) opp.insertColumnsAfter(opp.getMaxColumns(), 26 - opp.getMaxColumns());
+      if (opp.getMaxColumns() < CFG.OPPORTUNITY_TOTAL_COLS) opp.insertColumnsAfter(opp.getMaxColumns(), CFG.OPPORTUNITY_TOTAL_COLS - opp.getMaxColumns());
       opp.getRange(1,2).setValue('Source ID');
       opp.getRange(1,21,1,6).setValues([[
         'Media URL','Vai trò mua','Product Fit','Bằng chứng nhu cầu','Lead Gate','Lý do Gate'
       ]]);
+      opp.getRange(1,27,1,5).setValues([[
+        'Sales Stage','Last Contact','Next Follow-up','Owner','Outcome / Value'
+      ]]);
+      const stageRule=SpreadsheetApp.newDataValidation()
+        .requireValueInList(CFG.SALES_STAGE_OPTIONS,true)
+        .setAllowInvalid(false)
+        .build();
+      if(opp.getMaxRows()>=2) opp.getRange(2,27,opp.getMaxRows()-1,1).setDataValidation(stageRule);
     }
 
     const lead = ss.getSheetByName(CFG.LEAD_SHEET);
@@ -1016,6 +1028,15 @@ const RemoteApp = (() => {
       if (lead.getMaxColumns() < 21) lead.insertColumnsAfter(lead.getMaxColumns(), 21-lead.getMaxColumns());
       lead.getRange(1,17,1,5).setValues([[
         'Ngày thành KH tiềm năng','Vai trò mua','Product Fit','Lead Gate','Bằng chứng Gate'
+      ]]);
+    }
+
+    const groupSummary=ss.getSheetByName(CFG.GROUP_SUMMARY_SHEET);
+    if(groupSummary){
+      if(groupSummary.getMaxColumns()<12) groupSummary.insertColumnsAfter(groupSummary.getMaxColumns(),12-groupSummary.getMaxColumns());
+      groupSummary.getRange(1,1,1,12).setValues([[
+        'Tên nhóm','Link nhóm','Profile','Chủ đề','Điểm nhóm','Nội dung ưa thích',
+        'Pain chính','Số KH tiềm năng','KH tiềm năng nổi bật','Đã bán','Trạng thái','Ghi chú'
       ]]);
     }
 
@@ -1032,6 +1053,228 @@ const RemoteApp = (() => {
     props.setProperty(schemaKey, CFG.VERSION);
   }
 
+  function ensureLegacyLeadArchive_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    let sh=ss.getSheetByName(CFG.LEAD_LEGACY_ARCHIVE_SHEET);
+    if(!sh) sh=ss.insertSheet(CFG.LEAD_LEGACY_ARCHIVE_SHEET);
+    if(sh.getMaxColumns()<23) sh.insertColumnsAfter(sh.getMaxColumns(),23-sh.getMaxColumns());
+    sh.getRange(1,1,1,23).setValues([[
+      'Tên KH','URL Facebook','Nhóm','Loại nguồn','URL bài / comment','Nội dung nhu cầu',
+      'Pain','Intent','Điểm','Phân loại','Số cơ hội','Hành động gần nhất','Hành động tiếp theo',
+      'Follow-up','Chuyển đổi','Ghi chú','Ngày thành KH tiềm năng','Vai trò mua','Product Fit',
+      'Lead Gate','Bằng chứng Gate','Archived At','Archive Reason'
+    ]]);
+    sh.setFrozenRows(1);
+    return sh;
+  }
+
+  function legacyLeadArchiveKey_(r) {
+    const fb=normalizeFacebookProfileUrl_(r&&r[1]||'');
+    const src=normalizeUrl_(r&&r[4]||'');
+    const name=String(r&&r[0]||'').trim().toLowerCase();
+    return fb ? 'FB|'+fb : (src ? 'SRC|'+src : ('NAME|'+name));
+  }
+
+  function archiveLegacyLeadRows_(rows,reason) {
+    const legacy=(rows||[]).filter(r=>String(r&&r[19]||'').trim()==='LEGACY');
+    if(!legacy.length) return {archived:0};
+    const sh=ensureLegacyLeadArchive_();
+    const existing=new Set();
+    if(sh.getLastRow()>=2){
+      sh.getRange(2,1,sh.getLastRow()-1,21).getValues().forEach(r=>existing.add(legacyLeadArchiveKey_(r)));
+    }
+    const now=new Date();
+    const out=[];
+    legacy.forEach(r=>{
+      const key=legacyLeadArchiveKey_(r);
+      if(existing.has(key)) return;
+      existing.add(key);
+      const x=r.slice(0,21);
+      while(x.length<21) x.push('');
+      x.push(now,String(reason||'Migrated from production Lead Inbox'));
+      out.push(x);
+    });
+    if(out.length){
+      const start=Math.max(2,sh.getLastRow()+1);
+      sh.getRange(start,1,out.length,23).setValues(out);
+      sh.setRowHeights(start,out.length,CFG.SHEET_ROW_HEIGHT_PX);
+      sh.getRange(start,1,out.length,23).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    }
+    return {archived:out.length};
+  }
+
+  function getContextReadiness_() {
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.GROUP_SCAN_SHEET);
+    if(!sh || sh.getLastRow()<2) return {version:CFG.VERSION,active:0,withContext:0,missing:0,missingGroups:[]};
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
+    let active=0,withContext=0;
+    const missing=[];
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có') return;
+      active++;
+      const ctx=String(r[26]||'').trim();
+      if(ctx) withContext++;
+      else missing.push({row:i+2,name:String(r[2]||'').trim()||('Group '+String(r[4]||i+2)),groupId:String(r[4]||'').trim()});
+    });
+    return {version:CFG.VERSION,active,withContext,missing:Math.max(0,active-withContext),missingGroups:missing.slice(0,50)};
+  }
+
+  function saveActiveGroupContext_(command) {
+    command=command||{};
+    const text=String(command.context||'').trim();
+    if(!text) throw new Error('AI Context / Offer đang trống.');
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet();
+    const ar=sh&&sh.getActiveRange();
+    if(!sh || sh.getName()!==CFG.GROUP_SCAN_SHEET || !ar || ar.getRow()<2){
+      throw new Error('Hãy chọn đúng dòng Group trong sheet QUÉT NHÓM trước.');
+    }
+    const row=ar.getRow();
+    if(String(sh.getRange(row,1).getDisplayValue()||'').trim()!=='Có'){
+      throw new Error('Group dòng '+row+' đang không hoạt động.');
+    }
+    sh.getRange(row,27).setValue(text);
+    SpreadsheetApp.flush();
+    return {
+      ok:true,version:CFG.VERSION,row,
+      name:String(sh.getRange(row,3).getDisplayValue()||'').trim(),
+      context:text,readiness:getContextReadiness_()
+    };
+  }
+
+  function getSalesRecoveryQueue_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const opp=mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
+    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const contextNames=new Set();
+    if(scan.getLastRow()>=2){
+      scan.getRange(2,1,scan.getLastRow()-1,27).getDisplayValues().forEach(r=>{
+        if(String(r[0]||'').trim()!=='Có') return;
+        if(!String(r[26]||'').trim()) return;
+        const name=String(r[2]||'').trim();
+        if(name) contextNames.add(name);
+      });
+    }
+    const rows=opp.getLastRow()>=2?opp.getRange(2,1,opp.getLastRow()-1,26).getValues():[];
+    const sourceIds=[];
+    let noContext=0,legacyPotential=0,ungated=0,unclearFit=0;
+    rows.forEach(r=>{
+      const sourceId=String(r[1]||'').trim();
+      const group=String(r[4]||'').trim();
+      if(!sourceId) return;
+      if(!contextNames.has(group)){noContext++;return;}
+      const gate=String(r[24]||'').trim();
+      const buyer=String(r[21]||'').trim();
+      const fit=String(r[22]||'').trim();
+      const cls=String(r[11]||'').trim();
+      const reason=String(r[25]||'');
+      const isLegacyPotential=!gate && (cls==='Tiềm năng'||cls==='Rất tiềm năng');
+      const needsGate=!gate;
+      const needsFit=fit==='Chưa rõ' || /Context=Thiếu/i.test(reason) || gate==='CONTEXT_REQUIRED';
+      const hardBuyerFail=gate==='FAIL' && buyer==='Không';
+      if(isLegacyPotential) legacyPotential++;
+      if(needsGate) ungated++;
+      if(needsFit) unclearFit++;
+      if(!hardBuyerFail && (needsGate||needsFit)) sourceIds.push(sourceId);
+    });
+    return {
+      version:CFG.VERSION,
+      sourceIds:[...new Set(sourceIds)].slice(0,5000),
+      ready:[...new Set(sourceIds)].length,
+      groupsWithContext:contextNames.size,
+      noContext,legacyPotential,ungated,unclearFit
+    };
+  }
+
+  function normalizeSalesStage_(stage) {
+    const raw=String(stage||'').trim();
+    const match=CFG.SALES_STAGE_OPTIONS.find(x=>x.toLowerCase()===raw.toLowerCase());
+    if(!match) throw new Error('Sales Stage không hợp lệ: '+raw);
+    return match;
+  }
+
+  function salesConversionForStage_(stage) {
+    if(stage==='Đã bán') return 'Đã bán';
+    if(stage==='Lost') return 'Không chuyển đổi';
+    if(['Outreach','Đang hội thoại','Chờ phản hồi','Follow-up'].indexOf(stage)>=0) return 'Đang hội thoại';
+    return 'Chưa có';
+  }
+
+  function setSelectedOpportunitySalesStage_(command) {
+    command=command||{};
+    const stage=normalizeSalesStage_(command.stage);
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet();
+    const ar=sh&&sh.getActiveRange();
+    if(!sh || sh.getName()!==CFG.OPPORTUNITY_SHEET || !ar || ar.getRow()<2){
+      throw new Error('Hãy chọn dòng lead trong sheet CƠ HỘI trước.');
+    }
+    const start=Math.max(2,ar.getRow());
+    const end=ar.getLastRow();
+    const n=end-start+1;
+    const sourceIds=sh.getRange(start,2,n,1).getDisplayValues();
+    const gates=sh.getRange(start,25,n,1).getDisplayValues();
+    const existingStages=sh.getRange(start,27,n,5).getValues();
+    const now=new Date();
+    const days=Math.max(0,Math.min(30,Number(command.followUpDays||0)));
+    const nextFollow=days>0?new Date(now.getTime()+days*86400000):'';
+    const owner=String(command.owner||'').trim();
+    const outcome=String(command.outcome||'').trim();
+    const salesRows=[];
+    const conversions=[];
+    let updated=0,skipped=0;
+
+    for(let i=0;i<n;i++){
+      const sourceId=String(sourceIds[i][0]||'').trim();
+      const gate=String(gates[i][0]||'').trim();
+      const prev=existingStages[i]||[];
+      if(!sourceId){salesRows.push(prev);conversions.push(['']);skipped++;continue;}
+      const alreadyInSales=String(prev[0]||'').trim();
+      if(stage!=='Lost' && gate!=='PASS' && !alreadyInSales){
+        salesRows.push(prev);
+        conversions.push([sh.getRange(start+i,18).getValue()]);
+        skipped++;
+        continue;
+      }
+      salesRows.push([
+        stage,
+        now,
+        nextFollow || prev[2] || '',
+        owner || prev[3] || '',
+        outcome || prev[4] || ''
+      ]);
+      conversions.push([salesConversionForStage_(stage)]);
+      updated++;
+    }
+
+    if(updated){
+      sh.getRange(start,27,n,5).setValues(salesRows);
+      sh.getRange(start,18,n,1).setValues(conversions);
+      SpreadsheetApp.flush();
+    }
+    return {ok:true,version:CFG.VERSION,stage,updated,skipped,startRow:start,endRow:end,pipeline:getSalesPipelineStats_()};
+  }
+
+  function getSalesPipelineStats_() {
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
+    const stages={};
+    CFG.SALES_STAGE_OPTIONS.forEach(x=>stages[x]=0);
+    if(!sh || sh.getLastRow()<2) return {version:CFG.VERSION,total:0,open:0,sold:0,lost:0,unassignedPass:0,stages};
+    const n=sh.getLastRow()-1;
+    const gates=sh.getRange(2,25,n,1).getDisplayValues();
+    const sales=sh.getRange(2,27,n,1).getDisplayValues();
+    let open=0,sold=0,lost=0,unassignedPass=0;
+    sales.forEach((r,i)=>{
+      const stage=String(r[0]||'').trim();
+      if(stage&&stages[stage]!==undefined) stages[stage]++;
+      if(['Outreach','Đang hội thoại','Chờ phản hồi','Follow-up'].indexOf(stage)>=0) open++;
+      if(stage==='Đã bán') sold++;
+      if(stage==='Lost') lost++;
+      if(String(gates[i][0]||'').trim()==='PASS' && !stage) unassignedPass++;
+    });
+    return {version:CFG.VERSION,total:n,open,sold,lost,unassignedPass,stages};
+  }
+
   function handleUiCommand_(command) {
     const name = String(command.__command || '');
     if (name === 'GET_AI_CONFIG') return getAiConfig_();
@@ -1040,6 +1283,11 @@ const RemoteApp = (() => {
     if (name === 'ANALYZE_SCOPE') return analyzeByScope_(command);
     if (name === 'TEST_AI') return testAiConnection_();
     if (name === 'GET_AI_PROGRESS') return getAiProgress_();
+    if (name === 'GET_CONTEXT_READINESS') return getContextReadiness_();
+    if (name === 'SAVE_ACTIVE_GROUP_CONTEXT') return saveActiveGroupContext_(command);
+    if (name === 'GET_SALES_RECOVERY_QUEUE') return getSalesRecoveryQueue_();
+    if (name === 'GET_SALES_PIPELINE') return getSalesPipelineStats_();
+    if (name === 'SET_SELECTED_SALES_STAGE') return setSelectedOpportunitySalesStage_(command);
     if (name === 'AUDIT_CONSISTENCY') return auditConsistency_();
     if (name === 'GET_BRIDGE_CONFIG') return getApiBridgeConfig_();
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
@@ -1238,7 +1486,8 @@ const RemoteApp = (() => {
       if(!options.sourceIds.length) throw new Error('Chưa có dữ liệu mới từ lần quét gần nhất.');
     } else if(scope==='source_ids') {
       options.sourceIds=(command.sourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean);
-      if(!options.sourceIds.length) throw new Error('Không có Source ID mới để AI phân tích.');
+      options.forceReanalysis=command.forceReanalysis===true;
+      if(!options.sourceIds.length) throw new Error('Không có Source ID để AI phân tích.');
     } else if(scope==='legacy_gate') {
       options.scope='legacy_gate';
     } else {
@@ -1428,6 +1677,8 @@ const RemoteApp = (() => {
           if(!priorAnalyzed || gate) return;
         } else if(scope==='selected_rows') {
           // Explicit selection is a force re-analysis action.
+        } else if(scope==='source_ids' && options&&options.forceReanalysis===true) {
+          // Sales recovery explicitly re-qualifies stable Source IDs after Offer Context changes.
         } else {
           // Normal/auto scopes process only genuinely pending sources.
           if(priorAnalyzed || gate) return;
@@ -1490,9 +1741,9 @@ const RemoteApp = (() => {
         });
 
         try {
-          const results = cfg.provider === 'gemini'
-            ? analyzeBatchWithGemini_(batch, cfg)
-            : analyzeBatchWithOpenAi_(batch, cfg);
+          const results = analyzeBatchWithProviderFailover_(batch,cfg,{
+            runId,batch:batchNo,totalBatches,analyzed,total
+          });
 
           const applied=applyAiAnalysis_(sheet, results);
           SpreadsheetApp.flush();
@@ -1502,16 +1753,19 @@ const RemoteApp = (() => {
           }
           heartbeatRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token,CFG.AI_LEASE_TTL_MS);
 
-          const actualModel = cfg.provider === 'gemini'
-            ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
-            : cfg.model;
+          const effectiveProps=PropertiesService.getScriptProperties();
+          const actualProvider=effectiveProps.getProperty('AI_LAST_EFFECTIVE_PROVIDER') || cfg.provider;
+          const actualModel=effectiveProps.getProperty('AI_LAST_EFFECTIVE_MODEL') ||
+            (cfg.provider === 'gemini'
+              ? (effectiveProps.getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+              : cfg.model);
 
           setAiProgress_({
-            active:true, runId, status:'RUNNING', provider:cfg.provider, model:actualModel,
+            active:true, runId, status:'RUNNING', provider:actualProvider, model:actualModel,
             batch:batchNo, totalBatches, analyzed, total, remaining:Math.max(0,total-analyzed), errors:errors.length
           });
           logAi_({
-            runId, event:'BATCH_OK', provider:cfg.provider, model:actualModel, batch:batchNo, totalBatches,
+            runId, event:'BATCH_OK', provider:actualProvider, model:actualModel, batch:batchNo, totalBatches,
             analyzed, total, remaining:Math.max(0,total-analyzed), status:'OK',
             message:'Batch ' + batchNo + '/' + totalBatches + ' hoàn thành: ' + results.length + ' bài.'
           });
@@ -1535,22 +1789,25 @@ const RemoteApp = (() => {
 
       const refresh = refreshCurrentData({ silent:true, fast:true });
       const remaining = Math.max(0, candidates.length - analyzed);
-      const actualModel = cfg.provider === 'gemini'
-        ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
-        : cfg.model;
+      const finalProps=PropertiesService.getScriptProperties();
+      const actualProvider=finalProps.getProperty('AI_LAST_EFFECTIVE_PROVIDER') || cfg.provider;
+      const actualModel=finalProps.getProperty('AI_LAST_EFFECTIVE_MODEL') ||
+        (cfg.provider === 'gemini'
+          ? (finalProps.getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+          : cfg.model);
 
       setAiProgress_({
         active:false, runId, status:errors.length ? 'DONE_WITH_ERRORS' : 'DONE',
-        provider:cfg.provider, model:actualModel, batch:totalBatches, totalBatches,
+        provider:actualProvider, model:actualModel, batch:totalBatches, totalBatches,
         analyzed, total, remaining, errors:errors.length
       });
       logAi_({
-        runId, event:'DONE', provider:cfg.provider, model:actualModel, batch:totalBatches, totalBatches,
+        runId, event:'DONE', provider:actualProvider, model:actualModel, batch:totalBatches, totalBatches,
         analyzed, total, remaining, status:errors.length ? 'DONE_WITH_ERRORS' : 'DONE',
         message:errors.length ? errors.join(' | ').slice(0, 4000) : 'Hoàn thành.'
       });
 
-      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh, scope };
+      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: actualProvider, model: actualModel, refresh, scope };
 
       if (!silent) {
         SpreadsheetApp.getActive().toast(
@@ -1577,6 +1834,62 @@ const RemoteApp = (() => {
       throw err;
     } finally {
       releaseRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token);
+    }
+  }
+
+  function isTransientAiProviderError_(err) {
+    return /HTTP\s+(408|429|500|502|503|504)\b|high demand|temporar(?:y|ily)|rate limit|overloaded|unavailable/i
+      .test(String(err&&err.message||err||''));
+  }
+
+  function setLastEffectiveAiProvider_(provider,model) {
+    const p=PropertiesService.getScriptProperties();
+    p.setProperty('AI_LAST_EFFECTIVE_PROVIDER',String(provider||''));
+    p.setProperty('AI_LAST_EFFECTIVE_MODEL',String(model||''));
+  }
+
+  function analyzeBatchWithProviderFailover_(batch,cfg,meta) {
+    meta=meta||{};
+    try{
+      if(cfg.provider==='gemini'){
+        const result=callGeminiStructured_(aiSystemPrompt_(cfg),JSON.stringify(batch),analysisSchema_(),cfg);
+        if(!result.data || !Array.isArray(result.data.analyses)) throw new Error('Gemini không trả về analyses hợp lệ.');
+        setLastEffectiveAiProvider_('gemini',result.model||cfg.model);
+        return result.data.analyses;
+      }
+      const out=analyzeBatchWithOpenAi_(batch,cfg);
+      setLastEffectiveAiProvider_('openai',cfg.model);
+      return out;
+    }catch(primaryErr){
+      if(!isTransientAiProviderError_(primaryErr)) throw primaryErr;
+
+      if(cfg.provider==='gemini' && cfg.openaiConfigured){
+        const fallbackCfg=Object.assign({},cfg,{provider:'openai',model:'gpt-5.6-luna'});
+        const out=analyzeBatchWithOpenAi_(batch,fallbackCfg);
+        setLastEffectiveAiProvider_('openai',fallbackCfg.model);
+        logAi_({
+          runId:meta.runId||'',event:'PROVIDER_FAILOVER',provider:'openai',model:fallbackCfg.model,
+          batch:meta.batch||0,totalBatches:meta.totalBatches||0,analyzed:meta.analyzed||0,total:meta.total||0,
+          remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),status:'OK',
+          message:'Gemini transient -> OpenAI fallback. '+String(primaryErr.message||primaryErr).slice(0,600)
+        });
+        return out;
+      }
+
+      if(cfg.provider==='openai' && cfg.geminiConfigured){
+        const fallbackCfg=Object.assign({},cfg,{provider:'gemini',model:'gemini-auto'});
+        const result=callGeminiStructured_(aiSystemPrompt_(fallbackCfg),JSON.stringify(batch),analysisSchema_(),fallbackCfg);
+        if(!result.data || !Array.isArray(result.data.analyses)) throw new Error('Gemini fallback không trả analyses hợp lệ.');
+        setLastEffectiveAiProvider_('gemini',result.model||fallbackCfg.model);
+        logAi_({
+          runId:meta.runId||'',event:'PROVIDER_FAILOVER',provider:'gemini',model:result.model||fallbackCfg.model,
+          batch:meta.batch||0,totalBatches:meta.totalBatches||0,analyzed:meta.analyzed||0,total:meta.total||0,
+          remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),status:'OK',
+          message:'OpenAI transient -> Gemini fallback. '+String(primaryErr.message||primaryErr).slice(0,600)
+        });
+        return result.data.analyses;
+      }
+      throw primaryErr;
     }
   }
 
@@ -1960,7 +2273,11 @@ const RemoteApp = (() => {
           !passiveActions.has(action);
 
         let gate='WATCH';
-        if(buyerRole==='Không' || productFit==='Không') {
+        if(buyerRole==='Không') {
+          gate='FAIL';
+        } else if(!effectiveContext) {
+          gate='CONTEXT_REQUIRED';
+        } else if(productFit==='Không') {
           gate='FAIL';
         } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
           gate='REVIEW_REQUIRED';
@@ -2053,7 +2370,7 @@ const RemoteApp = (() => {
   function normalizeAndDedupeOpportunitySheet_(sheet) {
     const last = sheet.getLastRow();
     if (last < 2) return { removed:0, repairedIds:0, rows:0 };
-    const rows = sheet.getRange(2,1,last-1,26).getValues();
+    const rows = sheet.getRange(2,1,last-1,CFG.OPPORTUNITY_TOTAL_COLS).getValues();
     const groups = [];
     const keyMap = new Map();
     let repairedIds = 0;
@@ -2084,10 +2401,10 @@ const RemoteApp = (() => {
     });
 
     const removed=rows.length-groups.length;
-    sheet.getRange(2,1,rows.length,26).clearContent();
+    sheet.getRange(2,1,rows.length,CFG.OPPORTUNITY_TOTAL_COLS).clearContent();
     if (groups.length) {
       sheet.getRange(2,2,groups.length,1).setNumberFormat('@');
-      sheet.getRange(2,1,groups.length,26).setValues(groups);
+      sheet.getRange(2,1,groups.length,CFG.OPPORTUNITY_TOTAL_COLS).setValues(groups);
     }
     return { removed, repairedIds, rows:groups.length };
   }
@@ -2577,14 +2894,12 @@ const RemoteApp = (() => {
     const leadSheet = mustSheet_(ss, CFG.LEAD_SHEET);
 
     const oppLast = oppSheet.getLastRow();
-    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,26).getValues() : [];
+    const opp = oppLast >= 2 ? oppSheet.getRange(2,1,oppLast-1,CFG.OPPORTUNITY_TOTAL_COLS).getValues() : [];
     const existing = loadExistingLeadState_(leadSheet);
     const oldLast=leadSheet.getLastRow();
     const oldRows=oldLast>=2 ? leadSheet.getRange(2,1,oldLast-1,21).getValues() : [];
+    const archive=archiveLegacyLeadRows_(oldRows,'V1.9.8.7 production Lead Inbox chỉ giữ Hard Gate PASS');
     const grouped = {};
-    const evaluatedKeys=new Set();
-    const pendingKeys=new Set();
-    const opportunityKeys=new Set();
 
     opp.forEach(r => {
       const sourceUrl = normalizeUrl_(r[2] || '');
@@ -2592,9 +2907,7 @@ const RemoteApp = (() => {
       const key = fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
       if (!key || key === 'ANON|') return;
 
-      opportunityKeys.add(key);
       const gate=String(r[24]||'').trim();
-      if(gate) evaluatedKeys.add(key); else pendingKeys.add(key);
       if(gate!=='PASS') return;
 
       const classification = String(r[11] || '').trim();
@@ -2611,7 +2924,6 @@ const RemoteApp = (() => {
     });
 
     const passKeys=Object.keys(grouped);
-    const passSet=new Set(passKeys);
     const newCount=passKeys.filter(key=>!existing[key] || String(existing[key].gate||'')!=='PASS').length;
     const now = new Date();
     const passRows = passKeys.map(key => {
@@ -2625,44 +2937,18 @@ const RemoteApp = (() => {
         old.conversion || r[17] || 'Chưa có', old.note || '', (String(old.gate||'')==='PASS' && old.firstLeadAt) ? old.firstLeadAt : now,
         r[21] || '', r[22] || '', 'PASS', r[23] || ''
       ];
-    });
-
-    // Preserve old derived leads only until their source/person is re-qualified.
-    // They are visibly marked LEGACY and excluded from every PASS counter.
-    const legacyRows=[];
-    oldRows.forEach(r=>{
-      const sourceUrl=normalizeUrl_(r[4]||'');
-      const fbUrl=normalizeFacebookProfileUrl_(r[1]||'');
-      const key=fbUrl ? `FB|${fbUrl}` : `ANON|${sourceUrl}`;
-      if(!key || key==='ANON|' || passSet.has(key)) return;
-      // Drop LEGACY only when all currently-known opportunities for this person
-      // have been re-qualified and none PASS. If any source is still ungated,
-      // keep the legacy row so partial/manual re-analysis cannot silently lose it.
-      if(evaluatedKeys.has(key) && !pendingKeys.has(key)) return;
-      const x=r.slice(0,21);
-      while(x.length<21) x.push('');
-      x[19]='LEGACY';
-      x[20]=x[20] || 'Chưa đánh giá lại bằng Lead Qualification Hard Gate V1.8.7';
-      legacyRows.push(x);
-    });
-
-    const output=passRows.concat(legacyRows).sort((a,b)=>{
-      const ga=String(a[19]||'')==='PASS'?1:0;
-      const gb=String(b[19]||'')==='PASS'?1:0;
-      if(gb!==ga) return gb-ga;
-      return Number(b[8]||0)-Number(a[8]||0);
-    });
+    }).sort((a,b)=>Number(b[8]||0)-Number(a[8]||0));
 
     if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,21).clearContent();
-    if (output.length) {
-      leadSheet.getRange(2,1,output.length,21).setValues(output);
-      leadSheet.setRowHeights(2,output.length, CFG.SHEET_ROW_HEIGHT_PX);
-      leadSheet.getRange(2,1,output.length,21).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
+    if (passRows.length) {
+      leadSheet.getRange(2,1,passRows.length,21).setValues(passRows);
+      leadSheet.setRowHeights(2,passRows.length, CFG.SHEET_ROW_HEIGHT_PX);
+      leadSheet.getRange(2,1,passRows.length,21).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     }
     SpreadsheetApp.flush();
 
-    if (!silent) SpreadsheetApp.getUi().alert(`KH PASS: ${passRows.length} | Mới: ${newCount} | Legacy chờ đánh giá lại: ${legacyRows.length}.`);
-    return { count:passRows.length, newCount, legacyCount:legacyRows.length, rows:output.length };
+    if (!silent) SpreadsheetApp.getUi().alert(`KH PASS: ${passRows.length} | Mới: ${newCount} | Legacy archived: ${archive.archived||0}.`);
+    return { count:passRows.length, newCount, legacyCount:0, archivedLegacy:Number(archive.archived||0), rows:passRows.length };
   }
 
   function refreshGroupSummary_() {
@@ -2686,7 +2972,7 @@ const RemoteApp = (() => {
     const scanLast = scanSheet.getLastRow();
     const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getValues() : [];
     const oppLast = oppSheet.getLastRow();
-    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, 26).getValues() : [];
+    const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, CFG.OPPORTUNITY_TOTAL_COLS).getValues() : [];
     const byGroup = {};
     oppRows.forEach(r => {
       const g = String(r[4] || '').trim();
@@ -2706,7 +2992,7 @@ const RemoteApp = (() => {
         .filter(r => String(r[24] || '').trim()==='PASS')
         .sort((a,b) => Number(b[10] || 0) - Number(a[10] || 0));
       const top = leads.slice(0, 5).map(r => `${r[5] || '(ẩn danh)'} (${Number(r[10] || 0)})`).join('\n');
-      const sold = list.filter(r => String(r[17] || '').trim() === 'Đã bán').length;
+      const sold = list.filter(r => String(r[26] || '').trim() === 'Đã bán' || String(r[17] || '').trim() === 'Đã bán').length;
       const analyzed = list.filter(r => [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined)).length;
       const pending = Math.max(0, list.length - analyzed);
       const posts = list.filter(r => String(r[3]||'') === 'Bài viết').length;
@@ -5841,6 +6127,8 @@ const RemoteApp = (() => {
     const exceptions=counts.error+counts.incomplete+counts.stopped;
     const autoMonitor=getAutoMonitorV2State_(false);
     const commentIntel=getCommentIntelligenceStats_();
+    const salesPipeline=getSalesPipelineStats_();
+    const contextReadiness=getContextReadiness_();
     const operationalHealth=computeOperationalHealth_({
       workers,sla,ai,auto:autoMonitor,comments:commentIntel,
       activeGroups:counts.active,
@@ -5871,6 +6159,8 @@ const RemoteApp = (() => {
       aiOps:ai,
       autoMonitor,
       commentIntel,
+      salesPipeline,
+      contextReadiness,
       operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
@@ -6077,7 +6367,7 @@ const RemoteApp = (() => {
     const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
     if(!sh || sh.getLastRow()<3) return {rows:0};
     const n=sh.getLastRow()-1;
-    sh.getRange(2,1,n,26).sort([{column:1,ascending:false},{column:2,ascending:false}]);
+    sh.getRange(2,1,n,CFG.OPPORTUNITY_TOTAL_COLS).sort([{column:1,ascending:false},{column:2,ascending:false}]);
     return {rows:n};
   }
 
