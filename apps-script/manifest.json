@@ -4,6 +4,7 @@
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "Worker Keeper V1.2.2 edge-triggers E_FB_GROUP_ID_RESOLVE so a stale FBAIO error message cannot generate a duplicate WARN every minute.",
     "V1.9.6.2 Auto Monitor Readiness HF1: CI now asserts that checkbox-selected backend reads no Due Queue state and that stale-due revalidation exists only under jobMode=due.",
     "Partial Group scans that stop with a cursor because the per-job scan time budget is exhausted are classified TIME_BUDGET and enter bounded Auto Monitor retry/backoff instead of being stranded as UNKNOWN.",
     "Due Queue now excludes duplicate active registry rows using the existing duplicate identity detector before scheduling.",
