@@ -1,9 +1,14 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.8.0-comment-acquisition-core",
+  "version": "1.9.8.1-browser-tab-workspace",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.8.1 Browser Tab Workspace: operational drill-down sheets open in named browser tabs that are reused instead of repeatedly switching the active Sheet or opening duplicates.",
+    "TÍN HIỆU refreshes in the background while its browser tab remains open and updates live.",
+    "BÌNH LUẬN, TÍN HIỆU, LEAD INBOX and log sheets can be opened directly from Control Center without changing the operator's current Sheet context.",
+    "Manual Comment Acquisition runs now append evidence to NHẬT KÝ AUTO with Source=COMMENT_UI and a dedicated runId.",
+    "No Group scanner, Due, retry, Comment acquisition, AI or Lead Gate business logic changes.",
     "V1.9.8.0 Comment Acquisition Core: provider/module failures from FBAIO are classified as transient provider outages rather than per-Post structural failures.",
     "A 10-minute provider circuit breaker stops Comment acquisition after the first provider-wide failure so remaining Posts are not mass-quarantined.",
     "Comment Post retries use bounded backoff (5m, 15m, 1h, 3h, 6h) and backlog selection skips retries until due.",
