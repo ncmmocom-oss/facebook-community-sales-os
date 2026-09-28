@@ -1,9 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.7.1-auto-test-evidence-hf1",
+  "version": "1.9.7.2-auto-production-ux",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.7.2 Auto Production UX: removes TEST 1 CYCLE and Due-only controls from the operator surface after acceptance passed.",
+    "Adds CHAY NGAY 1 CYCLE as the only Auto manual override; it invokes the same production pipeline used by the scheduler: bounded Retry -> Due -> Comment Intelligence -> AI continuation.",
+    "Group-specific manual intervention remains QUET DA CHON in the Group scan section. Hidden RUN_AUTO_MONITOR_TEST remains available only for support diagnostics.",
+    "No scheduler, retry, due eligibility, canonical identity, pagination, Comment Intelligence or AI business logic changes.",
     "V1.9.7.1 Auto Test Evidence HF1: RUN_AUTO_MONITOR_TEST persists NHAT KY AUTO evidence for every outcome, including BUSY, AUTH_REQUIRED and NO_DUE_OR_RETRY.",
     "TEST 1 CYCLE probes ScriptApp permission before queue execution and reports AUTH_REQUIRED without mutating Group state when scheduler authorization is missing.",
     "Test acceptance is explicit: WORKER_PASS, SCHEDULER_IDLE, BUSY, WORKER_UNAVAILABLE, WORKER_FAIL, WORKER_SKIPPED, AUTH_REQUIRED or ERROR.",

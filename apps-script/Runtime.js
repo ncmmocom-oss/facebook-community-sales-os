@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.7.1-auto-test-evidence-hf1',
+    VERSION: '1.9.7.2-auto-production-ux',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.7.2 Auto Production UX: bỏ TEST 1 CYCLE và nút Due-only khỏi UI production; thay bằng CHẠY NGAY 1 CYCLE dùng full production pipeline Retry → Due → Comment → AI, giữ diagnostic test ẩn cho support.\n' +
       'V1.9.7.1 Auto Test Evidence HF1: TEST 1 CYCLE luôn ghi NHẬT KÝ AUTO kể cả BUSY/NO_DUE/AUTH; phân biệt scheduler idle với Worker PASS; probe quyền ScriptApp và hiển thị next due.\n' +
       'V1.9.7.0 Auto Monitor V2 Production: trigger/auth fail-closed, TEST 1 CYCLE, due revalidation đồng nhất, bounded retry/backoff, per-Group auto evidence và scheduler 5 phút chỉ bật khi trigger thật sự sẵn sàng.\n' +
       'V1.9.6.6 Active Row Canonical Guard: mọi entry point manual resolve canonical Group trước khi quét; row Hoạt động=Không/audit duplicate không thể tự gọi FBAIO; Quét dòng đang chọn redirect sang canonical active.\n' +

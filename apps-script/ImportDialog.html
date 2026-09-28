@@ -45,7 +45,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <span class="opsScore"><span>Fresh &lt;2h</span><b id="opsFreshHero">—</b></span>
     </div>
     <div class="heroActions" style="margin-top:13px">
-      <button onclick="runDueGroups(false)">▶ QUÉT DUE QUEUE</button>
+      <button onclick="runAutoMonitorNow()">▶ CHẠY NGAY 1 CYCLE</button>
       <button class="ghost" onclick="retryFailedGroups()">↻ RETRY EXCEPTION</button>
       <button class="ghost" onclick="openSignalFeed()">📡 TÍN HIỆU</button>
       <button class="ghost" data-goto="ai">✦ AI QUEUE</button>
@@ -109,7 +109,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <div class="panel">
       <div class="panelTitle">Overdue Queue — nguy cơ bỏ sót</div>
       <div id="opsOverdueQueue" class="opsQueue"><div class="muted">Đang đọc...</div></div>
-      <div style="margin-top:10px"><button class="primary" onclick="runDueGroups(false)">QUÉT GROUP ĐẾN HẠN</button></div>
+      <div style="margin-top:10px"><button class="primary" onclick="runAutoMonitorNow()">CHẠY NGAY 1 CYCLE</button></div>
     </div>
   </div>
 
@@ -159,7 +159,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <div class="opsMetricRow"><span>Lần chạy gần nhất</span><b id="autoLastRun">—</b></div>
       </div>
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-        <button class="primary" onclick="startAutoMonitor()">⚡ BẬT AUTO V2</button>
+        <button class="primary" onclick="runAutoMonitorNow()">▶ CHẠY NGAY 1 CYCLE</button>
+        <button class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO V2</button>
         <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG</button>
       </div>
     </div>
@@ -187,8 +188,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <div class="monitorMetric"><small>Worker online</small><b id="monWorkers">0/0</b></div>
     </div>
     <div class="monitorActions">
-      <button class="primary" onclick="runDueGroups(false)">▶ QUÉT GROUP ĐẾN HẠN</button>
-      <button id="autoTestBtn" class="retry" onclick="testAutoMonitorCycle()">🧪 TEST 1 CYCLE</button>
+      <button class="primary" onclick="runAutoMonitorNow()">▶ CHẠY NGAY 1 CYCLE</button>
       <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR</button>
       <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG AUTO</button>
       <button class="retry" onclick="pollMonitoring()">↻ LÀM MỚI</button><button class="secondary" onclick="runCommentIntelligenceNow()">💬 QUÉT COMMENT</button>
@@ -699,41 +699,38 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       autoMonitorTimer=null;
     }
 
-    function testAutoMonitorCycle() {
+    function runAutoMonitorNow() {
       if(monitorBusy){
         setStatus('Monitoring đang xử lý một cycle khác.');
         return;
       }
       monitorBusy=true;
-      setStatus('🧪 AUTO V2 TEST: chạy tối đa 1 Group, không chạy Comment/AI...');
-      command({__command:'RUN_AUTO_MONITOR_TEST'},r=>{
+      setStatus('▶ Đang chạy ngay 1 production cycle: Retry → Due → Comment → AI...');
+      command({__command:'RUN_AUTO_MONITOR_NOW'},r=>{
         monitorBusy=false;
         const q=r.queue||{};
         const jobs=r.jobResults||[];
-        const acceptance=String(r.acceptance||'UNKNOWN');
-        const icon=acceptance==='WORKER_PASS'?'✅'
-          :(acceptance==='SCHEDULER_IDLE'?'🟡'
-          :(['BUSY','WORKER_SKIPPED'].includes(acceptance)?'⚠️':'❌'));
         const detail=jobs.length
-          ? jobs.map(x=>'Dòng '+Number(x.row||0)+' • '+String(x.kind||'')+' • '+String(x.outcome||'')).join('\n')
-          : 'Không có Group đến hạn/retry tại thời điểm test.';
-        const nextDue=r.nextDueAt?('\nNext due: '+new Date(r.nextDueAt).toLocaleString()):'';
-        const auth=r.triggerProbe
-          ? ('\nScriptApp: '+(r.triggerProbe.permissionOk?'OK':'AUTH REQUIRED'))
-          :'';
+          ? jobs.map(x=>
+              'Dòng '+Number(x.row||0)+' • '+String(x.kind||'')+' • '+String(x.outcome||'')+
+              (x.postsRead?(' • '+Number(x.postsRead)+' bài'):'')
+            ).join('\n')
+          : 'Không có Group Due/Retry; cycle vẫn có thể xử lý Comment/AI nếu có backlog.';
+        const state=r.ok===false?'❌'
+          :(r.skipped?'🟡':'✅');
         setStatus(
-          icon+' AUTO V2 TEST 1 CYCLE — '+acceptance+
+          state+' PRODUCTION CYCLE — '+String(r.reason||'DONE')+
           '\nRun: '+String(r.runId||'-')+
-          '\nReason: '+String(r.reason||'-')+
           '\nQueue: '+Number(q.dueAvailable||0)+' due • '+Number(q.retryAvailable||0)+' retry'+
           '\nProcessed/PASS/FAIL/SKIP: '+Number(r.groupsProcessed||0)+'/'+Number(r.groupsPassed||0)+'/'+Number(r.groupsFailed||0)+'/'+Number(r.groupsSkipped||0)+
-          auth+nextDue+
+          '\nComment: '+Number(r.commentsProcessed||0)+' xử lý • '+Number(r.commentsImported||0)+' mới'+
+          '\nAI: '+Number(r.aiAnalyzed||0)+' analyzed'+
           '\n'+detail
         );
         pollMonitoring();
       },e=>{
         monitorBusy=false;
-        setStatus('AUTO V2 TEST lỗi: '+(e.message||e));
+        setStatus('CHẠY NGAY 1 CYCLE lỗi: '+(e.message||e));
       });
     }
 
