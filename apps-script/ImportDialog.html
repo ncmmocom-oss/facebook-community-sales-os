@@ -149,7 +149,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       </div>
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="primary" onclick="runCommentIntelligenceNow()">💬 QUÉT COMMENT NGAY</button>
-        <button class="secondary" data-goto="signals">MỞ TÍN HIỆU</button>
+        <button class="secondary" onclick="openWorkspaceTab('comments','BÌNH LUẬN')">↗ BÌNH LUẬN</button>
+        <button class="secondary" onclick="openSignalFeed()">↗ TÍN HIỆU</button>
       </div>
     </div>
     <div class="panel">
@@ -173,7 +174,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 <section id="view-ai" class="view"><div class="viewHead"><div><div class="sectionLabel">QUALIFICATION</div><h2>AI / Offer Context / Lead Gate</h2><p>Manual và Auto dùng cùng business logic; chỉ khác cách đưa source vào queue.</p></div></div><div id="mount-ai"></div></section>
 <section id="view-workers" class="view"><div class="viewHead"><div><div class="sectionLabel">INFRASTRUCTURE</div><h2>Worker Pool & API Diagnostic</h2><p>Worker Keeper giữ browser online; Control Center giữ registry, health và phân job.</p></div></div><div id="mount-workers"></div></section>
 <section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>Import / Sync / Consistency</h2><p>JSON là fallback; production ưu tiên API scan → import nội bộ → sync.</p></div></div><div id="mount-data"></div></section>
-<section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button><button class="primary" onclick="runProductionSelfTest()">✓ SELF-TEST & REPAIR</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource"><b>NHẬT KÝ API</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource"><b>NHẬT KÝ IMPORT</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource"><b>NHẬT KÝ AI</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="logSource"><b>NHẬT KÝ AUTO</b><div class="muted">Backend cycle: Group scan, retry, Comment Intelligence, AI và self-repair.</div></div><div class="emptyNote">V1.9.4: AUTO V2 chạy backend trigger + Comment Intelligence delta/pagination. Scanner, raw pagination và Lead Gate vẫn giữ business logic cũ.</div></div></section>
+<section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button><button class="primary" onclick="runProductionSelfTest()">✓ SELF-TEST & REPAIR</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('api_log','NHẬT KÝ API')" title="Mở / tái sử dụng tab NHẬT KÝ API"><b>NHẬT KÝ API ↗</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('import_log','NHẬT KÝ IMPORT')" title="Mở / tái sử dụng tab NHẬT KÝ IMPORT"><b>NHẬT KÝ IMPORT ↗</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('ai_log','NHẬT KÝ AI')" title="Mở / tái sử dụng tab NHẬT KÝ AI"><b>NHẬT KÝ AI ↗</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('auto_log','NHẬT KÝ AUTO')" title="Mở / tái sử dụng tab NHẬT KÝ AUTO"><b>NHẬT KÝ AUTO ↗</b><div class="muted">Backend cycle: Group scan, retry, Comment Intelligence, AI và self-repair.</div></div><div class="emptyNote">V1.9.4: AUTO V2 chạy backend trigger + Comment Intelligence delta/pagination. Scanner, raw pagination và Lead Gate vẫn giữ business logic cũ.</div></div></section>
 </div><div class="statusDock"><div class="statusDockHead"><b>LIVE ACTIVITY</b><span id="statusHeadline">Sẵn sàng.</span></div><div id="status">Sẵn sàng.</div></div></main></div><div id="legacyRoot">
 
   <div class="box monitorbox" id="monitorBox">
@@ -194,8 +195,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <button id="autoMonitorBtn" class="secondary" onclick="startAutoMonitor()">⚡ BẬT AUTO MONITOR</button>
       <button class="dark" onclick="stopAutoMonitor()">Ⅱ TẠM DỪNG AUTO</button>
       <button class="retry" onclick="pollMonitoring()">↻ LÀM MỚI</button><button class="secondary" onclick="runCommentIntelligenceNow()">💬 QUÉT COMMENT</button>
-      <button class="secondary" onclick="openSignalFeed()">📡 TÍN HIỆU</button>
-      <button class="dark" onclick="openLeadInbox()">🎯 LEAD INBOX</button>
+      <button class="secondary" onclick="openSignalFeed()">📡 TÍN HIỆU ↗</button>
+      <button class="dark" onclick="openLeadInbox()">🎯 LEAD INBOX ↗</button>
     </div>
     <div id="monitorState" class="muted">Đang đọc Monitoring Overview...</div>
     <div id="duePreview" class="duepreview">Chưa có Due Queue.</div>
@@ -665,19 +666,82 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       });
     }
 
+    let workspaceLinks={};
+    let workspaceSheetNames={};
+
+    function loadWorkspaceLinks(done) {
+      command({__command:'GET_WORKSPACE_LINKS'},r=>{
+        workspaceLinks=(r&&r.links)||{};
+        workspaceSheetNames=(r&&r.sheets)||{};
+        if(typeof done==='function') done(r||{});
+      },e=>{
+        if(typeof done==='function') done(null,e);
+      });
+    }
+
+    function workspaceTabName(key) {
+      return 'SOCIAL_AIO_'+String(key||'sheet').replace(/[^a-z0-9_]/gi,'_').toUpperCase();
+    }
+
+    function openWorkspaceTab(key,label) {
+      key=String(key||'').trim();
+      label=String(label||workspaceSheetNames[key]||key||'Sheet');
+      if(!key) return;
+      const tabName=workspaceTabName(key);
+      const cached=String(workspaceLinks[key]||'');
+      let tab=null;
+      try{
+        tab=window.open(cached||'about:blank',tabName);
+      }catch(_){}
+      if(!tab){
+        setStatus('⚠️ Trình duyệt đang chặn tab mới. Cho phép pop-up cho Google Sheets rồi bấm lại ↗ '+label+'.');
+        return;
+      }
+      try{tab.focus();}catch(_){}
+
+      if(cached){
+        setStatus('↗ '+label+' — đã mở/tái sử dụng tab trình duyệt.');
+        return;
+      }
+
+      try{
+        tab.document.title='Social AIO — đang mở '+label;
+        tab.document.body.innerHTML='<div style="font-family:Arial;padding:24px">Đang mở <b>'+label+'</b>...</div>';
+      }catch(_){}
+
+      loadWorkspaceLinks((r,e)=>{
+        if(e){
+          try{tab.close();}catch(_){}
+          setStatus('Không lấy được link '+label+': '+(e.message||e));
+          return;
+        }
+        const url=String(workspaceLinks[key]||'');
+        if(!url){
+          try{tab.close();}catch(_){}
+          setStatus('Không tìm thấy Sheet cho '+label+'.');
+          return;
+        }
+        try{
+          tab.location.replace(url);
+          tab.focus();
+          setStatus('↗ '+label+' — đã mở/tái sử dụng tab trình duyệt.');
+        }catch(err){
+          setStatus('Không điều hướng được tab '+label+': '+(err.message||err));
+        }
+      });
+    }
+
     function openSignalFeed() {
-      setStatus('Đang rebuild TÍN HIỆU 7 ngày...');
+      // Open immediately from the user click; rebuild runs in background and the Sheet tab updates live.
+      openWorkspaceTab('signals','TÍN HIỆU 7 NGÀY');
+      setStatus('↗ Đã mở TÍN HIỆU; đang rebuild dữ liệu 7 ngày...');
       command({__command:'REFRESH_SIGNAL_FEED'},r=>{
-        command({__command:'OPEN_SIGNAL_FEED'},()=>{
-          setStatus('✅ TÍN HIỆU: '+Number(r.groups||0)+' Group/ngày • '+Number(r.signals||0)+' candidate. Dùng dấu +/− bên trái để bung/thu Group.');
-        });
-      },e=>setStatus('Lỗi TÍN HIỆU: '+(e.message||e)));
+        setStatus('✅ TÍN HIỆU: '+Number(r.groups||0)+' Group/ngày • '+Number(r.signals||0)+' candidate. Tab TÍN HIỆU đã được tái sử dụng.');
+      },e=>setStatus('Lỗi rebuild TÍN HIỆU: '+(e.message||e)));
     }
 
     function openLeadInbox() {
-      command({__command:'OPEN_LEAD_INBOX'},()=>{
-        setStatus('✅ Đã mở KHÁCH HÀNG TIỀM NĂNG — Lead Inbox.');
-      },e=>setStatus('Không mở được Lead Inbox: '+(e.message||e)));
+      openWorkspaceTab('leads','LEAD INBOX');
     }
 
     function startMonitoringPolling() {
@@ -863,6 +927,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         const retryAt=Number(r.providerRetryAt||provider.openUntil||0);
         setStatus(
           icon+' COMMENT ACQUISITION'+
+          '\nRun: '+String(r.runId||'-')+
           '\nPost xử lý: '+Number(r.processed||0)+
           '\nComment mới: '+Number(r.commentImported||0)+
           '\nComment đã lưu: '+Number(stats.storedComments||0)+
@@ -872,7 +937,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           '\nProvider: '+(circuit?'CIRCUIT OPEN':'OK')+
           (retryAt?('\nRetry provider sau: '+new Date(retryAt).toLocaleString()):'')+
           (r.repairedProviderHard?('\nĐã phục hồi false-HARD: '+Number(r.repairedProviderHard||0)):'')+
-          '\nCoverage: '+Number(stats.coveragePct||0)+'%'
+          '\nCoverage: '+Number(stats.coveragePct||0)+'%'+
+          '\nEvidence: NHẬT KÝ AUTO → Source COMMENT_UI'
         );
         pollMonitoring();
       },e=>setStatus('Comment Acquisition lỗi: '+(e.message||e)));
@@ -1599,6 +1665,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     function activateInitialView(){return phase2CurrentView;}
 
     initPhase2Shell();
+    loadWorkspaceLinks();
     loadAiConfig();
     loadWorkerPool();
     startMonitoringPolling();
