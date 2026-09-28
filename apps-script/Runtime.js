@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.6-fbaio-group-id-fallback',
+    VERSION: '1.9.6.1-fbaio-preemptive-id',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.6.1 FBAIO Preemptive ID: với vanity Group bắt đầu bằng số và đã có numeric ID từng xác minh, gọi thẳng numeric ID để tránh FBAIO parse sai trước khi lỗi xảy ra; fallback reactive vẫn giữ cho các case khác.\n' +
       'V1.9.6 FBAIO Group ID Fallback: nhận diện vanity Group bắt đầu bằng số bị FBAIO parse sai; tự fallback numeric Group ID đã xác minh, ghi runtime failure/fallback vào NHẬT KÝ API và quarantine identity lỗi không thể repair.\n' +
       'V1.9.5 Scan Scope Security HF1: khóa tách biệt CHECKBOX SELECTED và SCHEDULER DUE, fail-closed khi UI/runtime lệch contract; bổ sung release/security regression gate.\n' +
       'V1.9.4 Auto Monitor V2 + Comment Intelligence: backend trigger 5 phút, retry/backoff + hard quarantine, comment delta queue/pagination + AI Gate, production self-test/repair; restore 4-condition Hard Gate và chặn feed identity spillover.\n' +
@@ -3288,6 +3289,21 @@ const RemoteApp = (() => {
       ? String(sourceSheet.getRange(Number(sourceRow),3).getDisplayValue()||'').trim()
       : '';
     const workerSlot=findWorkerSlotByClientId_(relayClient)||'';
+    const sourceKey=extractGroupKey_(groupUrl);
+    if(/^\d/.test(sourceKey) && !/^\d+$/.test(sourceKey)){
+      const verifiedNumericId=historicNumericGroupIdFromRow_(sourceRow,groupUrl);
+      if(verifiedNumericId && verifiedNumericId!==sourceKey){
+        fallbackUsed=true;
+        fallbackGroupId=verifiedNumericId;
+        fallbackCause='PREEMPTIVE_DIGIT_LEADING_VANITY';
+        apiGroupUrl='https://www.facebook.com/groups/'+verifiedNumericId+'/';
+        logRuntimeApiEvent_({
+          groupName:sourceGroupName,groupKey:String(groupKey||sourceKey||''),workerSlot,
+          variant:'PREEMPTIVE_NUMERIC_GROUP_ID',title:'Preemptive verified numeric Group ID',code:'R_NUMERIC_ALIAS_PREEMPT',
+          attemptedUrl:groupUrl,fallbackUrl:apiGroupUrl,error:'Digit-leading vanity slug protected before FBAIO call.'
+        });
+      }
+    }
 
     while(posts.length<target && pages<30 && (Date.now()-started)<pageBudgetMs) {
       if(runId && isScanRunStopRequested_(runId)) {
