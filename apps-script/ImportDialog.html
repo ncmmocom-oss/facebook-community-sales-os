@@ -45,7 +45,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <span class="opsScore"><span>Fresh &lt;2h</span><b id="opsFreshHero">—</b></span>
     </div>
     <div class="heroActions" style="margin-top:13px">
-      <button onclick="runDueGroups(false)">▶ QUÉT DUE QUEUE</button>
+      <button onclick="runAutoMonitorNow()">▶ CHẠY NGAY 1 CYCLE</button>
       <button class="ghost" onclick="retryFailedGroups()">↻ RETRY EXCEPTION</button>
       <button class="ghost" onclick="openSignalFeed()">📡 TÍN HIỆU</button>
       <button class="ghost" data-goto="ai">✦ AI QUEUE</button>
@@ -109,7 +109,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <div class="panel">
       <div class="panelTitle">Overdue Queue — nguy cơ bỏ sót</div>
       <div id="opsOverdueQueue" class="opsQueue"><div class="muted">Đang đọc...</div></div>
-      <div style="margin-top:10px"><button class="primary" onclick="runDueGroups(false)">QUÉT GROUP ĐẾN HẠN</button></div>
+      <div style="margin-top:10px"><button class="primary" onclick="runAutoMonitorNow()">CHẠY NGAY 1 CYCLE</button></div>
     </div>
   </div>
 
