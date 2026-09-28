@@ -80,7 +80,8 @@ jobs:
           assert due_guard in worker_block, 'Due recheck must be guarded by jobMode===due'
           assert worker_block.count('isDueJobStillValid_') == 1, 'selected/retry/auto must not inherit extra Due checks'
           assert "SKIP_DUPLICATE" in worker_block, 'stale duplicate jobs must fail closed before FBAIO'
-          assert "repairDuplicateRegistryRow_" in worker_block, 'worker must repair stale duplicate registry rows'
+          assert "SKIP_INACTIVE" in worker_block, 'inactive audit rows must fail closed before FBAIO'
+          assert "resolveCanonicalGroupRow_(sheet,row)" in worker_block, 'worker must resolve canonical identity before FBAIO'
 
           retry_start = runtime.index('function collectRetryJobs_()')
           retry_end = runtime.index('function prepareJobsForWorkers_', retry_start)
