@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.5-scan-scope-security-hf1',
+    VERSION: '1.9.6-fbaio-group-id-fallback',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.6 FBAIO Group ID Fallback: nhận diện vanity Group bắt đầu bằng số bị FBAIO parse sai; tự fallback numeric Group ID đã xác minh, ghi runtime failure/fallback vào NHẬT KÝ API và quarantine identity lỗi không thể repair.\n' +
       'V1.9.5 Scan Scope Security HF1: khóa tách biệt CHECKBOX SELECTED và SCHEDULER DUE, fail-closed khi UI/runtime lệch contract; bổ sung release/security regression gate.\n' +
       'V1.9.4 Auto Monitor V2 + Comment Intelligence: backend trigger 5 phút, retry/backoff + hard quarantine, comment delta queue/pagination + AI Gate, production self-test/repair; restore 4-condition Hard Gate và chặn feed identity spillover.\n' +
       'V1.9.3 Operations Dashboard: SLA quét + overdue/coverage + exception queue + fresh signal/AI aging + operational health score cho pilot 200 Group.\n' +
@@ -3114,7 +3115,11 @@ const RemoteApp = (() => {
     const code=res.getResponseCode();
     const text=res.getContentText('UTF-8');
     if(code<200 || code>=300){
-      throw new Error('Social AIO relay HTTP '+code+': '+text.slice(0,700));
+      const e=new Error('Social AIO relay HTTP '+code+': '+text.slice(0,700));
+      e.httpCode=code;
+      e.socialAioRaw=text.slice(0,4000);
+      e.apiParams=params||{};
+      throw e;
     }
 
     let parsed=text;
@@ -3127,7 +3132,11 @@ const RemoteApp = (() => {
           'Social AIO báo Client not connected. Mở đúng tab Social AIO > Automation > APIs, bấm Connect và giữ tab đó hoạt động. Chi tiết: '+err
         );
       }
-      throw new Error('Social AIO API lỗi: '+err);
+      const e=new Error('Social AIO API lỗi: '+err);
+      e.httpCode=code;
+      e.socialAioRaw=text.slice(0,4000);
+      e.apiParams=params||{};
+      throw e;
     }
 
     return {
@@ -3187,6 +3196,68 @@ const RemoteApp = (() => {
     return String(extractGroupKey_(groupUrl)||cellValue||'').trim().toLowerCase();
   }
 
+  function isGroupIdentityResolveError_(err) {
+    const msg=String(err&&err.message||err||'');
+    return /This api only supports group|Wrong ID\s*\/\s*FB account not found|FB account not found|only supports group/i.test(msg);
+  }
+
+  function historicNumericGroupIdFromRow_(sourceRow,groupUrl) {
+    const direct=extractGroupKey_(groupUrl);
+    if(/^\d{6,}$/.test(direct)) return direct;
+
+    const row=Number(sourceRow||0);
+    if(row<2) return '';
+    try{
+      const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+      if(row>sh.getLastRow()) return '';
+      // D:P => URL, Group ID, ..., File JSON cuối (M), ..., Ghi chú (P)
+      const v=sh.getRange(row,4,1,13).getDisplayValues()[0]||[];
+      const idCell=String(v[1]||'').replace(/\s+/g,'').trim();
+      const lastFile=String(v[9]||'').trim();
+      const note=String(v[12]||'').trim();
+      const candidates=[];
+      if(/^\d{6,}$/.test(idCell)) candidates.push(idCell);
+      let m=note.match(/facebook\.com\/groups\/(\d{6,})/i);
+      if(m) candidates.push(m[1]);
+      m=lastFile.match(/^api_posts_(\d{6,})_/i);
+      if(m) candidates.push(m[1]);
+      return candidates.find(x=>x && x!==direct) || candidates[0] || '';
+    }catch(_){
+      return '';
+    }
+  }
+
+  function logRuntimeApiEvent_(info) {
+    try{
+      info=info||{};
+      const sh=ensureApiDiagSheet_();
+      const note=[
+        info.attemptedUrl?('url='+info.attemptedUrl):'',
+        info.fallbackUrl?('fallback='+info.fallbackUrl):'',
+        info.error?('error='+String(info.error).slice(0,1200)):'',
+        info.raw?('raw='+String(info.raw).slice(0,1800)):''
+      ].filter(Boolean).join(' | ');
+      sh.insertRowsBefore(2,1);
+      sh.getRange(2,1,1,24).setValues([[
+        new Date(),
+        'runtime-'+Utilities.getUuid().slice(0,10),
+        info.groupName||'',
+        info.groupKey||'',
+        info.workerSlot||'',
+        info.variant||'RUNTIME',
+        info.httpCode||'',
+        info.durationMs||'',
+        info.bytes||'',
+        info.rawType||'runtime',
+        '','','','','','','','','','',
+        info.title||'Runtime API event',
+        info.code||'RUNTIME_API',
+        CFG.VERSION,
+        note
+      ]]);
+    }catch(_){}
+  }
+
   function scanGroupApiBridge_(groupUrl,targetCount,groupKey,clientId,workerFast,sourceRow,runId) {
     groupUrl=String(groupUrl || '').trim();
     if(!/facebook\.com\/groups\//i.test(groupUrl)) {
@@ -3207,7 +3278,16 @@ const RemoteApp = (() => {
     let stopScope='';
     let transientRetries=0;
     let transientError='';
+    let apiGroupUrl=groupUrl;
+    let fallbackUsed=false;
+    let fallbackGroupId='';
+    let fallbackCause='';
     const relayClient=String(clientId||'').trim() || getBridgeClientId_();
+    const sourceSheet=Number(sourceRow||0)>=2 ? mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET) : null;
+    const sourceGroupName=sourceSheet && Number(sourceRow)<=sourceSheet.getLastRow()
+      ? String(sourceSheet.getRange(Number(sourceRow),3).getDisplayValue()||'').trim()
+      : '';
+    const workerSlot=findWorkerSlotByClientId_(relayClient)||'';
 
     while(posts.length<target && pages<30 && (Date.now()-started)<pageBudgetMs) {
       if(runId && isScanRunStopRequested_(runId)) {
@@ -3224,17 +3304,58 @@ const RemoteApp = (() => {
       let page;
       try{
         page=fetchGroupPostsPageRaw_(relayClient,{
-          url:groupUrl,
+          url:apiGroupUrl,
           sorting:'Newest Posts',
           cursor:cursor || ''
         });
         transientRetries+=Number(page.transientRetries||0);
       }catch(err){
-        if(isTransientSocialAioError_(err) && posts.length>0){
+        if(!posts.length && !fallbackUsed && isGroupIdentityResolveError_(err)){
+          const numericId=historicNumericGroupIdFromRow_(sourceRow,groupUrl);
+          fallbackCause=String(err.message||err);
+          logRuntimeApiEvent_({
+            groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
+            variant:'PRIMARY_GROUP_ID_FAIL',title:'FBAIO Group identity parse failed',code:'D_GROUP_ID_RESOLVE',
+            attemptedUrl:apiGroupUrl,error:fallbackCause,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||''
+          });
+          if(numericId && numericId!==extractGroupKey_(apiGroupUrl)){
+            fallbackUsed=true;
+            fallbackGroupId=numericId;
+            const primaryUrl=apiGroupUrl;
+            apiGroupUrl='https://www.facebook.com/groups/'+numericId+'/';
+            try{
+              page=fetchGroupPostsPageRaw_(relayClient,{
+                url:apiGroupUrl,
+                sorting:'Newest Posts',
+                cursor:cursor || ''
+              });
+              transientRetries+=Number(page.transientRetries||0);
+              logRuntimeApiEvent_({
+                groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
+                variant:'NUMERIC_GROUP_ID_FALLBACK',title:'Numeric Group ID fallback PASS',code:'R_NUMERIC_FALLBACK_PASS',
+                attemptedUrl:primaryUrl,fallbackUrl:apiGroupUrl,error:fallbackCause
+              });
+            }catch(fallbackErr){
+              logRuntimeApiEvent_({
+                groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
+                variant:'NUMERIC_GROUP_ID_FALLBACK_FAIL',title:'Numeric Group ID fallback failed',code:'E_NUMERIC_FALLBACK_FAIL',
+                attemptedUrl:primaryUrl,fallbackUrl:apiGroupUrl,error:String(fallbackErr.message||fallbackErr),
+                httpCode:Number(fallbackErr.httpCode||0),raw:fallbackErr.socialAioRaw||''
+              });
+              throw fallbackErr;
+            }
+          }else{
+            const e=new Error('FBAIO_GROUP_ID_RESOLVE: FBAIO parse sai Group URL/slug và không có numeric Group ID đã xác minh để fallback. Gốc: '+fallbackCause);
+            e.httpCode=Number(err.httpCode||0);
+            e.socialAioRaw=err.socialAioRaw||'';
+            throw e;
+          }
+        } else if(isTransientSocialAioError_(err) && posts.length>0){
           transientError=String(err.message||err);
           break;
+        } else {
+          throw err;
         }
-        throw err;
       }
       pages++;
 
@@ -3294,7 +3415,7 @@ const RemoteApp = (() => {
     }
 
     const selectedPosts=posts.slice(0,target);
-    const fileName='api_posts_'+(extractGroupKey_(groupUrl)||'group')+'_'+
+    const fileName='api_posts_'+(String(groupKey||extractGroupKey_(groupUrl)||extractGroupKey_(apiGroupUrl)||'group').trim())+'_'+
       Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
 
     // Three workers may fetch concurrently, but Sheet dedupe/write must be serialized.
@@ -3328,6 +3449,10 @@ const RemoteApp = (() => {
       nextCursor:nextCursor||'',
       transientRetries,
       transientError,
+      fallbackUsed,
+      fallbackGroupId,
+      fallbackCause,
+      apiGroupUrl,
       imported,
       durationMs:Date.now()-started
     };
@@ -4479,11 +4604,14 @@ const RemoteApp = (() => {
         (imported.duplicates||0)+' trùng',
         (result.pages||1)+' page',
         result.transientRetries?('retry '+result.transientRetries):'',
+        result.fallbackUsed?('ID fallback '+result.fallbackGroupId):'',
         (Math.round((Date.now()-started)/100)/10)+'s'
       ].filter(Boolean).join(' • ');
 
       let status='XONG';
-      let note='';
+      let note=result.fallbackUsed
+        ? ('FBAIO vanity Group bị parse sai; đã tự fallback numeric ID '+result.fallbackGroupId+' và quét thành công.')
+        : '';
       if(stopped) {
         if(result.stopScope==='RUN'){
           status='CHỜ';
@@ -4494,10 +4622,10 @@ const RemoteApp = (() => {
         }
       } else if(result.transientError) {
         status='THIẾU';
-        note='Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
+        note=(note?note+' ':'')+'Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
       } else if((result.postsRead||0)<target) {
         status='THIẾU';
-        note='API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
+        note=(note?note+' ':'')+'API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
           (result.nextCursor ? ' trước time budget.' : ' vì không còn cursor.');
       }
 
@@ -4513,6 +4641,11 @@ const RemoteApp = (() => {
     } catch(err) {
       const msg=String(err.message||err);
       const errorClass=classifyScanError_(err);
+      logRuntimeApiEvent_({
+        groupName:name,groupKey,workerSlot:healthWorkerSlot||'',variant:'DIRECT_GROUP_SCAN_FAIL',
+        title:'Direct Group scan failed',code:errorClass||'UNKNOWN',attemptedUrl:groupUrl,
+        error:msg,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||'',durationMs:Date.now()-started
+      });
       const health=healthWorkerSlot?recordWorkerJobHealth_(healthWorkerSlot,false,Date.now()-started,msg):null;
       setGroupRowStatus_(sheet,row,'LỖI','0/'+target+' bài',msg);
       SpreadsheetApp.flush();
@@ -5038,10 +5171,13 @@ const RemoteApp = (() => {
         (imported.duplicates||0)+' trùng',
         (result.pages||1)+' page',
         result.transientRetries?('retry '+result.transientRetries):'',
+        result.fallbackUsed?('ID fallback '+result.fallbackGroupId):'',
         (Math.round((Date.now()-started)/100)/10)+'s'
       ].filter(Boolean).join(' • ');
 
-      let status='XONG', note='';
+      let status='XONG', note=result.fallbackUsed
+        ? ('FBAIO vanity Group bị parse sai; đã tự fallback numeric ID '+result.fallbackGroupId+' và quét thành công.')
+        : '';
       if(stopped){
         if(result.stopScope==='RUN'){
           status='CHỜ';
@@ -5052,10 +5188,10 @@ const RemoteApp = (() => {
         }
       } else if(result.transientError){
         status='THIẾU';
-        note='Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
+        note=(note?note+' ':'')+'Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
       } else if((result.postsRead||0)<target){
         status='THIẾU';
-        note='API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
+        note=(note?note+' ':'')+'API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
           (result.nextCursor?' trước time budget.':' vì không còn cursor.');
       }
 
@@ -5075,6 +5211,11 @@ const RemoteApp = (() => {
     }catch(err){
       const msg=String(err.message||err);
       const errorClass=classifyScanError_(err);
+      logRuntimeApiEvent_({
+        groupName:name,groupKey,workerSlot:worker.slot,variant:'WORKER_JOB_FAIL',
+        title:'Worker Group scan failed',code:errorClass||'UNKNOWN',attemptedUrl:groupUrl,
+        error:msg,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||'',durationMs:Date.now()-started
+      });
       const health=recordWorkerJobHealth_(worker.slot,false,Date.now()-started,msg);
       setGroupRowStatus_(sheet,row,'LỖI',worker.slot+' • 0/'+target+' bài',msg);
       SpreadsheetApp.flush();
@@ -5842,6 +5983,7 @@ const RemoteApp = (() => {
   function classifyScanError_(err) {
     const msg=String(err&&err.message||err||'');
     if(isWorkerConnectionError_(msg)) return 'CONNECTION';
+    if(isGroupIdentityResolveError_(msg) || /FBAIO_GROUP_ID_RESOLVE/i.test(msg)) return 'GROUP_ID_RESOLVE';
     if(isTransientSocialAioError_(msg) || /page rỗng tạm thời|HTTP 200 nhưng page đầu rỗng/i.test(msg)) return 'TRANSIENT';
     if(/không tìm thấy post/i.test(msg)) return 'NO_POSTS';
     if(/Sheet đang bận/i.test(msg)) return 'SHEET_BUSY';
