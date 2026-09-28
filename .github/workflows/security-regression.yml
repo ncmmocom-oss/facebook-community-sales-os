@@ -205,7 +205,23 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.5-row-height-standard'" in runtime
+          assert "VERSION: '1.9.8.6-concurrency-foundation'" in runtime
+          assert "AI_LEASE_KEY" in runtime and "AUTO_MONITOR_LEASE_KEY" in runtime
+          assert "LockService.getScriptLock" not in runtime, "AI/AUTO must not share a global ScriptLock"
+          assert "source_id: { type: 'string' }" in runtime
+          assert "row_number: { type: 'integer' }" not in runtime
+          assert "String(a&&a.source_id||'')" in runtime
+          assert "COMMENT_POST_LEASE_PREFIX" in runtime
+          assert "commentPostLeasePropertyKey_" in runtime
+          assert "workerSupportsRole_(w,'COMMENT')" in runtime
+          assert "workerSupportsRole_(w,'GROUP')" in runtime
+          assert "role:normalizeWorkerRole_(w.role)" in runtime
+          assert 'id="w1Role"' in ui and 'id="w2Role"' in ui and 'id="w3Role"' in ui
+
+          finalize_start = runtime.index('function finalizeWorkerBatch_(')
+          finalize_end = runtime.index('function scanCheckedGroupsApiBridge_', finalize_start)
+          finalize_block = runtime[finalize_start:finalize_end]
+          assert "sortOpportunityNewestFirst_();" not in finalize_block, "hot finalize path must not reorder CƠ HỘI while AI may run"
           assert "COMMENT_PROVIDER_BREAKER_KEY" in runtime
           assert "COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000" in runtime
           assert "COMMENT_RETRY_DELAYS_MS" in runtime

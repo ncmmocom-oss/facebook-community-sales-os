@@ -371,15 +371,16 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
   </div>
 
   <div class="box bridge">
-    <h3>3. Social AIO Worker — Pilot 1 tài khoản</h3>
+    <h3>3. Social AIO Worker — Lane Affinity</h3>
     <p>
-      Giai đoạn test chỉ dùng <b>W1</b>: 1 tài khoản/browser profile Social AIO đang mở
-      <b>Automation → APIs → Connect</b>. Khi W1 ổn định mới bật W2/W3; không cần thay đổi workflow quét.
+      Mỗi Worker có Role: <b>GROUP</b>, <b>COMMENT</b> hoặc <b>BOTH</b>.
+      Khuyến nghị khi đủ 3 Worker: <b>W1=GROUP, W2=GROUP, W3=COMMENT</b>.
+      Một Worker chỉ xử lý tuần tự job của chính nó; các Worker khác nhau có thể chạy song song.
     </p>
 
     <div class="muted">
-      Pilot: giữ tab APIs của W1 ở trạng thái Connected. CLIENT_ID cũ đang hoạt động được tự kế thừa vào W1.
-      CLIENT_ID chỉ lưu trong Document Properties, không ghi vào Sheet/GitHub.
+      Giữ tab APIs của từng Worker ở trạng thái Connected. CLIENT_ID cũ đang hoạt động được tự kế thừa vào W1.
+      Role mặc định là BOTH để tương thích cấu hình cũ; CLIENT_ID chỉ lưu trong Document Properties, không ghi vào Sheet/GitHub.
       Health dùng bằng chứng thực tế: <b>ONLINE</b> = TEST hoặc scan thành công gần đây;
       <b>CHƯA KIỂM TRA</b> = chưa có evidence; <b>STALE</b> = evidence đã quá TTL;
       <b>OFFLINE</b> = lần kiểm tra/kết nối mới nhất thất bại.
@@ -390,6 +391,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <input id="w1Enabled" type="checkbox" checked>
         <div class="workerbadge">W1</div>
         <input id="w1Label" value="FB-01" placeholder="Tên worker">
+        <div></div>
+        <div class="muted"><b>Role</b></div>
+        <select id="w1Role">
+          <option value="BOTH">BOTH — Group + Comment</option>
+          <option value="GROUP">GROUP — chỉ Quét Nhóm</option>
+          <option value="COMMENT">COMMENT — chỉ Quét Comt</option>
+        </select>
         <div></div>
         <div></div>
         <input id="w1ClientId" type="password" placeholder="CLIENT_ID Worker 1 — để trống nếu đã lưu">
@@ -404,6 +412,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <div class="workerbadge">W2</div>
         <input id="w2Label" value="FB-02" placeholder="Tên worker">
         <div></div>
+        <div class="muted"><b>Role</b></div>
+        <select id="w2Role">
+          <option value="BOTH">BOTH — Group + Comment</option>
+          <option value="GROUP">GROUP — chỉ Quét Nhóm</option>
+          <option value="COMMENT">COMMENT — chỉ Quét Comt</option>
+        </select>
+        <div></div>
         <div></div>
         <input id="w2ClientId" type="password" placeholder="CLIENT_ID Worker 2 — để trống nếu đã lưu">
         <div id="w2State" class="workerstate">Chưa kiểm tra.</div>
@@ -413,6 +428,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <input id="w3Enabled" type="checkbox">
         <div class="workerbadge">W3</div>
         <input id="w3Label" value="FB-03" placeholder="Tên worker">
+        <div></div>
+        <div class="muted"><b>Role</b></div>
+        <select id="w3Role">
+          <option value="BOTH">BOTH — Group + Comment</option>
+          <option value="GROUP">GROUP — chỉ Quét Nhóm</option>
+          <option value="COMMENT">COMMENT — chỉ Quét Comt</option>
+        </select>
         <div></div>
         <div></div>
         <input id="w3ClientId" type="password" placeholder="CLIENT_ID Worker 3 — để trống nếu đã lưu">
@@ -428,8 +450,9 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <div id="workerPoolState" class="muted">Đang đọc cấu hình Worker Pool...</div>
 
     <div class="muted" style="margin-top:8px;">
-      Cột <b>Profile</b> trong QUÉT NHÓM: để trống/AUTO = hệ thống tự chọn Worker nhanh/rảnh nhất.
-      Nếu Group chỉ dùng được một account, nhập <b>W1 / W2 / W3</b>, tên worker (FB-01...) hoặc đúng tên Profile mà TEST trả về.
+      <b>Role</b> quyết định lane chức năng. Cột <b>Profile</b> trong QUÉT NHÓM vẫn dùng affinity theo tài khoản:
+      để trống/AUTO = hệ thống tự chọn Worker role GROUP/BOTH nhanh/rảnh nhất; nếu Group chỉ dùng được một account,
+      nhập <b>W1 / W2 / W3</b>, tên worker hoặc đúng Profile TEST trả về.
     </div>
   </div>
 
@@ -1089,6 +1112,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           '\nProvider wait: '+Number(stats.providerWaitPosts||0)+
           '\nHard structural: '+Number(stats.hardErrors||0)+
           '\nProvider: '+(circuit?'CIRCUIT OPEN':'OK')+
+          (r.reason?('\nReason: '+String(r.reason)):'')+
           (retryAt?('\nRetry provider sau: '+new Date(retryAt).toLocaleString()):'')+
           (r.repairedProviderHard?('\nĐã tách provider-wait khỏi retry Post: '+Number(r.repairedProviderHard||0)):'')+
           '\nCoverage: '+Number(stats.coveragePct||0)+'%'+
@@ -1150,9 +1174,11 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         if(!n) return;
         const enabled=document.getElementById('w'+n+'Enabled');
         const label=document.getElementById('w'+n+'Label');
+        const role=document.getElementById('w'+n+'Role');
         const state=document.getElementById('w'+n+'State');
         if(enabled) enabled.checked=w.enabled!==false;
         if(label) label.value=w.label || ('FB-0'+n);
+        if(role) role.value=String(w.role||'BOTH').toUpperCase();
 
         const health=String(w.health || (w.testOk?'ONLINE':(w.configured?'UNKNOWN':'UNCONFIGURED'))).toUpperCase();
         if(w.enabled!==false && w.configured){
@@ -1169,6 +1195,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
           const lastJob=workerTimeAgo(w.lastJobAt);
           const bits=[
             workerHealthLabel(health),
+            'ROLE '+String(w.role||'BOTH').toUpperCase(),
             w.profile || '',
             w.socialAioVersion?('AIO '+w.socialAioVersion):'',
             lastOk?('OK '+lastOk):'',
@@ -1186,8 +1213,12 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       });
 
       const enabledCount=workers.filter(w=>w.enabled!==false&&w.configured).length;
+      const groupLane=workers.filter(w=>w.enabled!==false&&w.configured&&['GROUP','BOTH'].includes(String(w.role||'BOTH').toUpperCase())).length;
+      const commentLane=workers.filter(w=>w.enabled!==false&&w.configured&&['COMMENT','BOTH'].includes(String(w.role||'BOTH').toUpperCase())).length;
       const detail=[
         online+'/'+enabledCount+' online',
+        'Group lane '+groupLane,
+        'Comment lane '+commentLane,
         configured+' configured',
         stale?stale+' stale':'',
         unknown?unknown+' chưa kiểm tra':'',
@@ -1209,6 +1240,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         slot:'W'+n,
         enabled:document.getElementById('w'+n+'Enabled').checked,
         label:document.getElementById('w'+n+'Label').value.trim() || ('FB-0'+n),
+        role:document.getElementById('w'+n+'Role').value,
         clientId:document.getElementById('w'+n+'ClientId').value.trim()
       }));
     }
@@ -1234,6 +1266,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
               const icon=h==='ONLINE'?'✅':(h==='OFFLINE'?'❌':(h==='UNCONFIGURED'?'○':'⚠️'));
               const cleanLabel=workerHealthLabel(h).replace('● ','').replace('◐ ','').replace('○ ','');
               return w.slot+' '+icon+' '+cleanLabel+
+                ' • ROLE '+String(w.role||'BOTH').toUpperCase()+
                 (w.profile?(' • '+w.profile):'')+
                 (w.latencyMs?(' • '+w.latencyMs+'ms'):'')+
                 (w.error?(' • '+w.error):'');

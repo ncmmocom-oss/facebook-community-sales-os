@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.5-row-height-standard',
+    VERSION: '1.9.8.6-concurrency-foundation',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -58,6 +58,13 @@ const RemoteApp = (() => {
     COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000,
     COMMENT_HOT_WATCH_MS: 24 * 60 * 60 * 1000,
     COMMENT_HOT_RECHECK_MS: 30 * 60 * 1000,
+    AI_LEASE_KEY: 'SOCIAL_AIO_AI_LEASE_V1',
+    AI_LEASE_TTL_MS: 7 * 60 * 1000,
+    AI_PROGRESS_STALE_MS: 8 * 60 * 1000,
+    AUTO_MONITOR_LEASE_KEY: 'SOCIAL_AIO_AUTO_MONITOR_LEASE_V1',
+    AUTO_MONITOR_LEASE_TTL_MS: 10 * 60 * 1000,
+    COMMENT_POST_LEASE_PREFIX: 'SOCIAL_AIO_COMMENT_POST_LEASE_',
+    COMMENT_POST_LEASE_TTL_MS: 2 * 60 * 1000,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
@@ -86,6 +93,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.6 Concurrency Foundation: tách AI/AUTO lane lease, Source-ID AI writeback, Comment Post Lease, Worker role GROUP/COMMENT/BOTH và bỏ physical sort khỏi hot path để chuẩn bị Parallel Pipeline an toàn.\n' +
       'V1.9.8.5 Row Height Standard: khóa chiều cao hàng production ở 21 px cho import, worker append và Lead refresh; tránh Runtime làm giãn hàng trở lại sau khi Sheet đã chuẩn hóa.\n' +
       'V1.9.8.4 Comment/AI Guard: tách lỗi provider-wide Comment khỏi retry theo Post để không kéo backlog vào backoff nhiều giờ; normalize PROVIDER_TRANSIENT cũ thành PROVIDER_WAIT; AI concurrent run được coi là busy hợp lệ thay vì lỗi vận hành.\n' +
       'V1.9.8.3 Sidebar Command Tabs: khôi phục sidebar dọc làm menu hệ thống; tab ngang chỉ nằm trong 200 Group Monitoring cho Quét Nhóm / Quét Comt / AI Phân tích / Cập nhật dữ liệu / Auto Monitor; command chạy backend trực tiếp, link Sheet chỉ là viewer phụ.\n' +
@@ -1239,16 +1247,43 @@ const RemoteApp = (() => {
 
     return analyzeNewPosts_(options);
   }
+  function getAiProgressRaw_() {
+    const raw=PropertiesService.getScriptProperties().getProperty('AI_PROGRESS_JSON');
+    if(!raw) return {active:false,version:CFG.VERSION};
+    try{return Object.assign({active:false},JSON.parse(raw),{version:CFG.VERSION});}
+    catch(_){return {active:false,version:CFG.VERSION};}
+  }
+
+  function repairStaleAiProgress_() {
+    const p=getAiProgressRaw_();
+    if(!p.active) return p;
+
+    const lease=getRuntimeLease_(CFG.AI_LEASE_KEY);
+    if(lease.active) return p;
+
+    const updatedMs=Date.parse(String(p.updatedAt||''));
+    const age=updatedMs?Math.max(0,Date.now()-updatedMs):Number.MAX_SAFE_INTEGER;
+    if(age<CFG.AI_PROGRESS_STALE_MS) return p;
+
+    const fixed=setAiProgress_(Object.assign({},p,{
+      active:false,
+      status:'STALE_RECOVERED',
+      lastError:'AI run mất heartbeat/lease; đã tự giải phóng để queue tiếp tục.',
+      staleRecoveredAt:new Date().toISOString()
+    }));
+    logAi_({
+      runId:p.runId||'',event:'STALE_RECOVERED',provider:p.provider||'',model:p.model||'',
+      batch:p.batch||0,totalBatches:p.totalBatches||0,analyzed:p.analyzed||0,total:p.total||0,
+      remaining:p.remaining||0,status:'STALE_RECOVERED',
+      message:'Không còn AI lease và heartbeat đã stale; runtime tự giải phóng run.'
+    });
+    return fixed;
+  }
+
   function getAiProgress_() {
-    const raw = PropertiesService.getScriptProperties().getProperty('AI_PROGRESS_JSON');
-    if (!raw) return { active: false, version: CFG.VERSION };
-    try {
-      const p = JSON.parse(raw);
-      p.version = CFG.VERSION;
-      return p;
-    } catch (_) {
-      return { active: false, version: CFG.VERSION };
-    }
+    const p=repairStaleAiProgress_();
+    p.version=CFG.VERSION;
+    return p;
   }
 
   function setAiProgress_(p) {
@@ -1337,13 +1372,20 @@ const RemoteApp = (() => {
     const cfg = getAiConfig_();
     if (!cfg.configured) throw new Error('Chưa cấu hình API key cho nhà cung cấp AI đang chọn.');
 
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(1000)) {
-      const p = getAiProgress_();
-      throw new Error('AI đang chạy ở phiên khác' + (p && p.runId ? ' (Run ' + p.runId + ')' : '') + '.');
+    const runId = Utilities.getUuid().slice(0, 8);
+    const prior=repairStaleAiProgress_();
+    const priorLease=getRuntimeLease_(CFG.AI_LEASE_KEY);
+    if(prior.active || priorLease.active){
+      const activeRun=String((prior&&prior.runId)||priorLease.owner||'').trim();
+      throw new Error('AI đang chạy ở phiên khác' + (activeRun ? ' (Run ' + activeRun + ')' : '') + '.');
     }
 
-    const runId = Utilities.getUuid().slice(0, 8);
+    const aiLease=acquireRuntimeLease_(CFG.AI_LEASE_KEY,runId,CFG.AI_LEASE_TTL_MS);
+    if(!aiLease.ok){
+      const p=getAiProgressRaw_();
+      throw new Error('AI đang chạy ở phiên khác' + (p&&p.runId ? ' (Run '+p.runId+')' : '') + '.');
+    }
+
     try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       const sheet = mustSheet_(ss, CFG.OPPORTUNITY_SHEET);
@@ -1371,13 +1413,14 @@ const RemoteApp = (() => {
 
       rows.forEach((r, i) => {
         const rowNumber=i+2;
+        const sourceId=String(r[1]||'').trim();
         const content = String(r[7] || '').trim();
         const priorAnalyzed=[r[8], r[9], r[10], r[11]].some(v => v !== '' && v !== null && v !== undefined);
         const gate=String(r[24]||'').trim();
         const status = String(r[19] || '').trim();
         const group=String(r[4]||'').trim();
 
-        if(!content || status==='Đóng') return;
+        if(!sourceId || !content || status==='Đóng') return;
         if(scope==='groups' && !groupSet.has(group)) return;
         if(scope==='selected_rows' && !rowSet.has(rowNumber)) return;
         if(scope==='source_ids' && !sourceSet.has(String(r[1]||'').trim())) return;
@@ -1392,7 +1435,7 @@ const RemoteApp = (() => {
 
         const sourceType = String(r[3] || 'Bài viết');
         candidates.push({
-          rowNumber,
+          source_id:sourceId,
           group,
           author: String(r[5] || ''),
           content: compressEvidenceForAi_(content, sourceType),
@@ -1439,6 +1482,7 @@ const RemoteApp = (() => {
         const batch = selected.slice(start, start + batchSize);
         const batchNo = Math.floor(start / batchSize) + 1;
 
+        heartbeatRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token,CFG.AI_LEASE_TTL_MS);
         setAiProgress_({
           active:true, runId, status:'RUNNING', provider:cfg.provider,
           model: PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model,
@@ -1450,9 +1494,13 @@ const RemoteApp = (() => {
             ? analyzeBatchWithGemini_(batch, cfg)
             : analyzeBatchWithOpenAi_(batch, cfg);
 
-          applyAiAnalysis_(sheet, results);
+          const applied=applyAiAnalysis_(sheet, results);
           SpreadsheetApp.flush();
-          analyzed += results.length;
+          analyzed += Number(applied&&applied.applied||0);
+          if(applied&&applied.missing){
+            errors.push('Batch '+batchNo+': '+Number(applied.missing||0)+' source_id không còn ánh xạ duy nhất; đã skip fail-closed.');
+          }
+          heartbeatRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token,CFG.AI_LEASE_TTL_MS);
 
           const actualModel = cfg.provider === 'gemini'
             ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
@@ -1512,8 +1560,23 @@ const RemoteApp = (() => {
         );
       }
       return result;
+    } catch(err) {
+      const p=getAiProgressRaw_();
+      if(p&&p.active&&String(p.runId||'')===String(runId)){
+        setAiProgress_(Object.assign({},p,{
+          active:false,status:'ERROR_ABORTED',
+          lastError:String(err&&err.message||err||'').slice(0,500)
+        }));
+        logAi_({
+          runId,event:'ABORT',provider:cfg.provider,model:p.model||cfg.model,
+          batch:p.batch||0,totalBatches:p.totalBatches||0,analyzed:p.analyzed||0,total:p.total||0,
+          remaining:p.remaining||0,status:'ERROR_ABORTED',
+          message:String(err&&err.message||err||'').slice(0,1000)
+        });
+      }
+      throw err;
     } finally {
-      try { lock.releaseLock(); } catch (_) {}
+      releaseRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token);
     }
   }
 
@@ -1552,7 +1615,7 @@ const RemoteApp = (() => {
           items: {
             type: 'object',
             properties: {
-              row_number: { type: 'integer' },
+              source_id: { type: 'string' },
               pain: { type: 'string' },
               intent: { type: 'string' },
               buyer_role: { type: 'string' },
@@ -1572,7 +1635,7 @@ const RemoteApp = (() => {
               follow_up_days: { type: 'integer' }
             },
             required: [
-              'row_number','pain','intent','buyer_role','product_fit','need_evidence',
+              'source_id','pain','intent','buyer_role','product_fit','need_evidence',
               'need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score',
               'score','classification','value_solution','suggested_comment','next_action','follow_up_days'
             ],
@@ -1589,6 +1652,7 @@ const RemoteApp = (() => {
     return [
       'Bạn là Community Sales Intelligence Agent cho hệ thống Facebook Community Sales.',
       'Phân tích CHỈ dựa trên evidence được cung cấp; không suy đoán thuộc tính nhạy cảm hay thông tin cá nhân ngoài dữ liệu.',
+      'Mỗi input có source_id. BẮT BUỘC trả lại chính xác source_id đó, không đổi, không suy diễn và không trả row_number.',
       'Mục tiêu không phải tìm mọi người có vấn đề. Mục tiêu là phân biệt: (1) người có nhu cầu, (2) người có khả năng là buyer, (3) nhu cầu có phù hợp đúng sản phẩm/dịch vụ đang bán hay không.',
       'buyer_role chỉ được dùng: Có, Không, Chưa rõ. Có = chính người đăng/comment có tín hiệu là người có thể mua/ra quyết định/sử dụng giải pháp. Không = người bán, quảng cáo, chia sẻ kiến thức hoặc không phải đối tượng mua. Chưa rõ = evidence không đủ.',
       'Mỗi input có thể có offerContext. offerContext là ngữ cảnh bán hàng của đúng Group và được ƯU TIÊN để đánh giá Product Fit; Business context toàn cục chỉ là fallback khi offerContext trống.',
@@ -1813,109 +1877,148 @@ const RemoteApp = (() => {
     const groupContextMap=loadGroupAiContextMap_();
     const now = new Date();
 
-    const valid=(analyses||[])
-      .map(a=>({a,row:Number(a.row_number||0)}))
-      .filter(x=>x.row>=2&&x.row<=sheet.getLastRow());
-    if(!valid.length) return;
+    const writeLock=LockService.getDocumentLock();
+    writeLock.waitLock(30000);
+    try{
+      const last=sheet.getLastRow();
+      if(last<2) return {applied:0,missing:(analyses||[]).length};
 
-    const minRow=Math.min(...valid.map(x=>x.row));
-    const maxRow=Math.max(...valid.map(x=>x.row));
-    const values=sheet.getRange(minRow,1,maxRow-minRow+1,26).getValues();
+      const sourceValues=sheet.getRange(2,2,last-1,1).getDisplayValues();
+      const sourceRows=new Map();
+      const duplicateIds=new Set();
+      sourceValues.forEach((r,i)=>{
+        const id=String(r[0]||'').trim();
+        if(!id) return;
+        if(sourceRows.has(id)){
+          duplicateIds.add(id);
+          sourceRows.delete(id);
+          return;
+        }
+        if(!duplicateIds.has(id)) sourceRows.set(id,i+2);
+      });
 
-    valid.forEach(x=>{
-      const a=x.a;
-      const idx=x.row-minRow;
-      const r=values[idx];
-      const intent=allowedIntent.has(String(a.intent))?String(a.intent):'Thảo luận';
-      const suggestedClass=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
-      const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
-      const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
-      let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
-      const rowGroup=String(r[4]||'').trim();
-      const effectiveContext=resolveAiContextForGroup_(rowGroup,'',cfg,groupContextMap);
-      if(!effectiveContext) productFit='Chưa rõ';
+      const valid=[];
+      let missing=0,appliedCount=0;
+      (analyses||[]).forEach(a=>{
+        const sourceId=String(a&&a.source_id||'').trim();
+        const row=sourceId&&!duplicateIds.has(sourceId)?Number(sourceRows.get(sourceId)||0):0;
+        if(!sourceId || row<2 || row>last){
+          missing++;
+          return;
+        }
+        valid.push({a,row,sourceId});
+      });
+      if(!valid.length) return {applied:0,missing};
 
-      const needScore=clampScore_(a.need_score,0,25);
-      const fitScore=clampScore_(a.fit_score,0,25);
-      const actionScore=clampScore_(a.action_score,0,20);
-      const urgencyScore=clampScore_(a.urgency_score,0,15);
-      const reachScore=clampScore_(a.reachability_score,0,10);
-      const freshScore=clampScore_(a.freshness_score,0,5);
-      const componentsPresent=['need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score']
-        .some(k=>a[k]!==undefined&&a[k]!==null&&a[k]!=='');
-      const score=componentsPresent
-        ? needScore+fitScore+actionScore+urgencyScore+reachScore+freshScore
-        : clampScore_(a.score,0,100);
+      const minRow=Math.min(...valid.map(x=>x.row));
+      const maxRow=Math.max(...valid.map(x=>x.row));
+      const values=sheet.getRange(minRow,1,maxRow-minRow+1,26).getValues();
 
-      const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
-      const needEvidencePass=
-        !!evidence &&
-        !/^không có bằng chứng nhu cầu rõ$/i.test(evidence);
-      const actionableIntents=new Set([
-        'Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối',
-        'Muốn đổi','Muốn mua','Cần mua gấp'
-      ]);
-      const passiveActions=new Set(['Bỏ qua','Theo dõi']);
-      const actionIntentPass=
-        actionableIntents.has(intent) &&
-        !passiveActions.has(action);
+      valid.forEach(x=>{
+        const a=x.a;
+        const idx=x.row-minRow;
+        const r=values[idx];
 
-      let gate='WATCH';
-      if(buyerRole==='Không' || productFit==='Không') {
-        gate='FAIL';
-      } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
-        gate='REVIEW_REQUIRED';
-      } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) {
-        gate='PASS';
-      } else {
-        // Relevant need but no sufficiently strong action/solution intent.
-        gate='WATCH';
-      }
+        // Fail closed if the row changed between source map and range read.
+        if(String(r[1]||'').trim()!==x.sourceId){
+          missing++;
+          return;
+        }
 
-      let classification=suggestedClass;
-      if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
-      else if(gate==='FAIL') classification=suggestedClass==='Nguồn hội thoại'?'Nguồn hội thoại':'Không phải KH';
-      else if(!['Nguồn hội thoại','Không phải KH'].includes(suggestedClass)) classification='Theo dõi';
+        const intent=allowedIntent.has(String(a.intent))?String(a.intent):'Thảo luận';
+        const suggestedClass=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
+        const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
+        const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
+        let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
+        const rowGroup=String(r[4]||'').trim();
+        const effectiveContext=resolveAiContextForGroup_(rowGroup,'',cfg,groupContextMap);
+        if(!effectiveContext) productFit='Chưa rõ';
 
-      const days=Math.max(0,Math.min(30,Math.round(Number(a.follow_up_days||0))));
-      const follow=days>0?new Date(now.getTime()+days*86400000):'';
-      let status='Theo dõi';
-      if(gate==='PASS') status='Đang xử lý';
-      if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
+        const needScore=clampScore_(a.need_score,0,25);
+        const fitScore=clampScore_(a.fit_score,0,25);
+        const actionScore=clampScore_(a.action_score,0,20);
+        const urgencyScore=clampScore_(a.urgency_score,0,15);
+        const reachScore=clampScore_(a.reachability_score,0,10);
+        const freshScore=clampScore_(a.freshness_score,0,5);
+        const componentsPresent=['need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score']
+          .some(k=>a[k]!==undefined&&a[k]!==null&&a[k]!=='');
+        const score=componentsPresent
+          ? needScore+fitScore+actionScore+urgencyScore+reachScore+freshScore
+          : clampScore_(a.score,0,100);
 
-      const gateReason=[
-        'Buyer='+buyerRole,
-        'Fit='+productFit,
-        'Context='+(effectiveContext?'Có':'Thiếu'),
-        'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
-        'ActionIntent='+(actionIntentPass?'PASS':'NO'),
-        'Intent='+intent,
-        'Need '+needScore+'/25',
-        'Fit '+fitScore+'/25',
-        'Action '+actionScore+'/20',
-        'Urgency '+urgencyScore+'/15',
-        'Reach '+reachScore+'/10',
-        'Fresh '+freshScore+'/5',
-        'Total='+score
-      ].join(' | ');
+        const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
+        const needEvidencePass=
+          !!evidence &&
+          !/^không có bằng chứng nhu cầu rõ$/i.test(evidence);
+        const actionableIntents=new Set([
+          'Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối',
+          'Muốn đổi','Muốn mua','Cần mua gấp'
+        ]);
+        const passiveActions=new Set(['Bỏ qua','Theo dõi']);
+        const actionIntentPass=
+          actionableIntents.has(intent) &&
+          !passiveActions.has(action);
 
-      r[8]=String(a.pain||'');
-      r[9]=intent;
-      r[10]=score;
-      r[11]=classification;
-      r[12]=String(a.value_solution||'');
-      r[13]=String(a.suggested_comment||'');
-      r[15]=action;
-      r[16]=follow;
-      r[19]=status;
-      r[21]=buyerRole;
-      r[22]=productFit;
-      r[23]=evidence;
-      r[24]=gate;
-      r[25]=gateReason;
-    });
+        let gate='WATCH';
+        if(buyerRole==='Không' || productFit==='Không') {
+          gate='FAIL';
+        } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
+          gate='REVIEW_REQUIRED';
+        } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) {
+          gate='PASS';
+        } else {
+          gate='WATCH';
+        }
 
-    sheet.getRange(minRow,1,values.length,26).setValues(values);
+        let classification=suggestedClass;
+        if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
+        else if(gate==='FAIL') classification=suggestedClass==='Nguồn hội thoại'?'Nguồn hội thoại':'Không phải KH';
+        else if(!['Nguồn hội thoại','Không phải KH'].includes(suggestedClass)) classification='Theo dõi';
+
+        const days=Math.max(0,Math.min(30,Math.round(Number(a.follow_up_days||0))));
+        const follow=days>0?new Date(now.getTime()+days*86400000):'';
+        let status='Theo dõi';
+        if(gate==='PASS') status='Đang xử lý';
+        if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
+
+        const gateReason=[
+          'Buyer='+buyerRole,
+          'Fit='+productFit,
+          'Context='+(effectiveContext?'Có':'Thiếu'),
+          'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
+          'ActionIntent='+(actionIntentPass?'PASS':'NO'),
+          'Intent='+intent,
+          'Need '+needScore+'/25',
+          'Fit '+fitScore+'/25',
+          'Action '+actionScore+'/20',
+          'Urgency '+urgencyScore+'/15',
+          'Reach '+reachScore+'/10',
+          'Fresh '+freshScore+'/5',
+          'Total='+score
+        ].join(' | ');
+
+        r[8]=String(a.pain||'');
+        r[9]=intent;
+        r[10]=score;
+        r[11]=classification;
+        r[12]=String(a.value_solution||'');
+        r[13]=String(a.suggested_comment||'');
+        r[15]=action;
+        r[16]=follow;
+        r[19]=status;
+        r[21]=buyerRole;
+        r[22]=productFit;
+        r[23]=evidence;
+        r[24]=gate;
+        r[25]=gateReason;
+        appliedCount++;
+      });
+
+      sheet.getRange(minRow,1,values.length,26).setValues(values);
+      return {applied:appliedCount,missing};
+    } finally {
+      writeLock.releaseLock();
+    }
   }
 
   function normalizeAndDedupeCommentSheet_(sheet) {
@@ -3903,7 +4006,25 @@ const RemoteApp = (() => {
 
   function runSinglePostCommentIntelligence_(job,options) {
     options=options||{};
+    const leaseIdentity=String(job&&job.postId||job&&job.url||'').trim();
+    const leaseOwner='COMMENT|'+String(options.source||'AUTO')+'|'+Utilities.getUuid().slice(0,8);
+    const postLease=acquireRuntimeLease_(
+      commentPostLeasePropertyKey_(leaseIdentity),
+      leaseOwner,
+      CFG.COMMENT_POST_LEASE_TTL_MS
+    );
+    if(!postLease.ok){
+      return {
+        ok:false,busy:true,retry:false,hard:false,
+        postId:job&&job.postId||'',postUrl:job&&job.url||'',
+        commentsRead:0,commentImported:0,newSourceIds:[],
+        status:'SKIP_BUSY',leaseReason:postLease.reason||'POST_BUSY',
+        leaseExpiresAt:Number(postLease.expiresAt||0),durationMs:0
+      };
+    }
+
     const started=Date.now();
+    try{
     const clientId=String(options.clientId||'').trim() || getBridgeClientId_();
     const currentFetched=Math.max(0,Number(job.fetched||0));
     const expected=Math.max(0,Number(job.expected||0));
@@ -3989,8 +4110,10 @@ const RemoteApp = (() => {
       newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
       durationMs:Date.now()-started
     };
+    } finally {
+      releaseRuntimeLease_(commentPostLeasePropertyKey_(leaseIdentity),postLease.token);
+    }
   }
-
   function runCommentIntelligenceUi_(limit) {
     const started=Date.now();
     const runId='comment-'+Utilities.getUuid().slice(0,10);
@@ -4063,8 +4186,21 @@ const RemoteApp = (() => {
       repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
     };
 
-    const pool=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId&&workerHealthState_(w)!=='OFFLINE');
-    const clientId=pool.length?pool[0].clientId:getBridgeClientId_();
+    const pool=getWorkerPoolRaw_()
+      .filter(w=>w.enabled&&w.clientId&&workerSupportsRole_(w,'COMMENT')&&workerHealthState_(w)!=='OFFLINE')
+      .sort((a,b)=>{
+        const rank={ONLINE:0,UNKNOWN:1,STALE:2,OFFLINE:3};
+        const ha=rank[workerHealthState_(a)]!==undefined?rank[workerHealthState_(a)]:9;
+        const hb=rank[workerHealthState_(b)]!==undefined?rank[workerHealthState_(b)]:9;
+        if(ha!==hb) return ha-hb;
+        return Number(a.latencyMs||999999)-Number(b.latencyMs||999999);
+      });
+    if(!pool.length) return {
+      ok:true,enabled:true,skipped:true,reason:'NO_COMMENT_WORKER',
+      processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION,
+      repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
+    };
+    const clientId=pool[0].clientId;
     const results=[],sourceIds=[];
     let imported=0,providerCircuitOpen=false,providerRetryAt=0,providerError='';
 
@@ -4326,7 +4462,7 @@ const RemoteApp = (() => {
     const all=props.getProperties();
     let expiredLeases=0,expiredRunStops=0;
     Object.keys(all).forEach(k=>{
-      if(k.indexOf(CFG.GROUP_LEASE_PREFIX)===0){
+      if(k.indexOf(CFG.GROUP_LEASE_PREFIX)===0 || k.indexOf(CFG.COMMENT_POST_LEASE_PREFIX)===0 || k===CFG.AI_LEASE_KEY || k===CFG.AUTO_MONITOR_LEASE_KEY){
         try{
           const x=JSON.parse(all[k]||'{}');
           if(Number(x.expiresAt||0) && Number(x.expiresAt)<Date.now()){
@@ -4736,12 +4872,16 @@ const RemoteApp = (() => {
       return persistAutoMonitorSummary_(summary);
     }
 
-    const lock=LockService.getScriptLock();
-    if(!lock.tryLock(1000)){
+    const autoLease=acquireRuntimeLease_(
+      CFG.AUTO_MONITOR_LEASE_KEY,
+      runId,
+      CFG.AUTO_MONITOR_LEASE_TTL_MS
+    );
+    if(!autoLease.ok){
       summary.skipped=true;
       summary.reason='BUSY';
       summary.acceptance='BUSY';
-      summary.message='Script Lock đang bận; chưa chạy cycle.';
+      summary.message='AUTO lane đang có cycle khác; AI/Comment/Group lane khác không bị chặn.';
       summary.nextDueAt=getNextAutoDueAt_();
       return persistAutoMonitorSummary_(summary);
     }
@@ -4808,6 +4948,7 @@ const RemoteApp = (() => {
             row:job.row,targetCount:job.targetCount,workerSlot:job.workerSlot,
             runId,jobMode:'auto_v2',requireDue:job.autoKind==='DUE'
           });
+          heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
           summary.groupsProcessed++;
 
           let outcome='FAIL';
@@ -4843,6 +4984,7 @@ const RemoteApp = (() => {
       }
 
       if(!options.skipComments && !testMode && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
+        heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
         const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
         summary.commentsProcessed=Number(cr.processed||0);
         summary.commentsImported=Number(cr.commentImported||0);
@@ -4862,6 +5004,7 @@ const RemoteApp = (() => {
 
       const aiCfg=getAiConfig_();
       if(!options.skipAi && !testMode && aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<150000){
+        heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
         try{
           const ar=analyzeNewPosts_({
             silent:true,
@@ -4895,7 +5038,7 @@ const RemoteApp = (() => {
       summary.durationMs=summary.durationMs||Date.now()-started;
       summary.finishedAt=summary.finishedAt||new Date().toISOString();
       persistAutoMonitorSummary_(summary);
-      lock.releaseLock();
+      releaseRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token);
     }
   }
 
@@ -5780,6 +5923,7 @@ const RemoteApp = (() => {
     const s=String(slot||'').trim().toUpperCase();
     const w=getWorkerPoolRaw_().find(x=>x.slot===s);
     if(!w || !w.enabled || !w.clientId) throw new Error('Worker '+s+' chưa được cấu hình/enable.');
+    if(!workerSupportsRole_(w,'GROUP')) throw new Error('Worker '+s+' đang role '+normalizeWorkerRole_(w.role)+' nên không nhận Group job.');
     return w;
   }
   function runWorkerJob_(command) {
@@ -5960,7 +6104,8 @@ const RemoteApp = (() => {
     const started=Date.now();
     const runId=String(command&&command.runId||'').trim();
     const sourceIds=saveLastScanSourceIds_((command&&command.sourceIds)||[]);
-    sortOpportunityNewestFirst_();
+    // V1.9.8.6: do not reorder CƠ HỘI in the hot path. AI writes by Source ID,
+    // and acquisition stays append-oriented for stable concurrent row identity.
     const refresh=refreshAfterScanFast_();
     const aiCfg=getAiConfig_();
     clearScanRunStop_(runId);
@@ -6711,6 +6856,103 @@ const RemoteApp = (() => {
     throw lastErr||new Error('Social AIO transient retry failed.');
   }
 
+  function getRuntimeLease_(key) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(String(key||''))||'';
+    if(!raw) return {active:false,key:String(key||'')};
+    try{
+      const x=JSON.parse(raw);
+      return Object.assign({},x,{
+        active:Number(x.expiresAt||0)>Date.now(),
+        key:String(key||'')
+      });
+    }catch(_){
+      return {active:false,key:String(key||''),corrupt:true};
+    }
+  }
+
+  function acquireRuntimeLease_(key,owner,ttlMs) {
+    const propKey=String(key||'').trim();
+    if(!propKey) throw new Error('Runtime lease key trống.');
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return {ok:false,reason:'LEASE_LOCK_BUSY',key:propKey};
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const now=Date.now();
+      let existing=null;
+      const raw=props.getProperty(propKey);
+      if(raw){try{existing=JSON.parse(raw);}catch(_){}}
+      if(existing && Number(existing.expiresAt||0)>now){
+        return {
+          ok:false,reason:'LANE_BUSY',key:propKey,
+          owner:String(existing.owner||''),
+          token:String(existing.token||''),
+          acquiredAt:Number(existing.acquiredAt||0),
+          updatedAt:Number(existing.updatedAt||0),
+          expiresAt:Number(existing.expiresAt||0)
+        };
+      }
+      const ttl=Math.max(30000,Number(ttlMs||60000));
+      const lease={
+        token:Utilities.getUuid(),
+        owner:String(owner||'runtime'),
+        acquiredAt:now,
+        updatedAt:now,
+        expiresAt:now+ttl
+      };
+      props.setProperty(propKey,JSON.stringify(lease));
+      return Object.assign({ok:true,key:propKey},lease);
+    }finally{
+      lock.releaseLock();
+    }
+  }
+
+  function heartbeatRuntimeLease_(key,token,ttlMs) {
+    const propKey=String(key||'').trim();
+    if(!propKey || !token) return false;
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return false;
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const raw=props.getProperty(propKey)||'';
+      if(!raw) return false;
+      let x=null;
+      try{x=JSON.parse(raw);}catch(_){return false;}
+      if(String(x.token||'')!==String(token)) return false;
+      const now=Date.now();
+      x.updatedAt=now;
+      x.expiresAt=now+Math.max(30000,Number(ttlMs||60000));
+      props.setProperty(propKey,JSON.stringify(x));
+      return true;
+    }finally{
+      lock.releaseLock();
+    }
+  }
+
+  function releaseRuntimeLease_(key,token) {
+    const propKey=String(key||'').trim();
+    if(!propKey || !token) return false;
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return false;
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const raw=props.getProperty(propKey)||'';
+      if(!raw) return true;
+      let x=null;
+      try{x=JSON.parse(raw);}catch(_){props.deleteProperty(propKey);return true;}
+      if(String(x.token||'')!==String(token)) return false;
+      props.deleteProperty(propKey);
+      return true;
+    }finally{
+      lock.releaseLock();
+    }
+  }
+
+  function commentPostLeasePropertyKey_(postIdentity) {
+    const raw=String(postIdentity||'unknown').trim();
+    const safe=Utilities.base64EncodeWebSafe(raw,Utilities.Charset.UTF_8).replace(/=+$/,'').slice(0,180);
+    return CFG.COMMENT_POST_LEASE_PREFIX+safe;
+  }
+
   function groupLeasePropertyKey_(groupKey) {
     const raw=String(groupKey||'unknown').trim().toLowerCase();
     const safe=Utilities.base64EncodeWebSafe(raw,Utilities.Charset.UTF_8).replace(/=+$/,'').slice(0,180);
@@ -6845,11 +7087,23 @@ const RemoteApp = (() => {
     throw new Error('Chưa có CLIENT_ID. Hãy cấu hình ít nhất 1 Worker trong Cấu hình nâng cao.');
   }
 
+  function normalizeWorkerRole_(role) {
+    const r=String(role||'BOTH').trim().toUpperCase();
+    return ['GROUP','COMMENT','BOTH'].indexOf(r)>=0?r:'BOTH';
+  }
+
+  function workerSupportsRole_(worker,role) {
+    const target=normalizeWorkerRole_(role);
+    const actual=normalizeWorkerRole_(worker&&worker.role);
+    return actual==='BOTH' || actual===target;
+  }
+
   function defaultWorkerPool_() {
     return [1,2,3].map(i=>({
       slot:'W'+i,
       label:'FB-0'+i,
       enabled:i===1,
+      role:'BOTH',
       clientId:'',
       profile:'',
       socialAioVersion:'',
@@ -6890,6 +7144,7 @@ const RemoteApp = (() => {
         slot:d.slot,
         label:String(x.label||d.label).trim()||d.label,
         enabled:x.enabled!==undefined ? !!x.enabled : !!d.enabled,
+        role:normalizeWorkerRole_(x.role||d.role),
         clientId:String(x.clientId||'').trim(),
         profile:String(x.profile||'').trim(),
         socialAioVersion:String(x.socialAioVersion||'').trim(),
@@ -6993,6 +7248,7 @@ const RemoteApp = (() => {
       slot:w.slot,
       label:w.label,
       enabled:!!w.enabled,
+      role:normalizeWorkerRole_(w.role),
       configured:!!w.clientId,
       clientIdMasked:w.clientId?maskBridgeClientId_(w.clientId):'',
       profile:w.profile||'',
@@ -7041,6 +7297,7 @@ const RemoteApp = (() => {
       const next=Object.assign({},prev,{
         label:String(x.label!==undefined?x.label:prev.label).trim()||prev.label,
         enabled:x.enabled!==undefined?!!x.enabled:prev.enabled,
+        role:normalizeWorkerRole_(x.role!==undefined?x.role:prev.role),
         clientId:nextClientId
       });
 
@@ -7172,9 +7429,9 @@ const RemoteApp = (() => {
     const runId=(String(mode||'selected').toLowerCase())+'-'+Utilities.getUuid().slice(0,12);
     const override=targetOverride?normalizeGroupTarget_(targetOverride):0;
     const configured=getWorkerPoolRaw_()
-      .filter(w=>w.enabled&&w.clientId)
+      .filter(w=>w.enabled&&w.clientId&&workerSupportsRole_(w,'GROUP'))
       .map(w=>Object.assign({},w,{health:workerHealthState_(w)}));
-    if(!configured.length) throw new Error('Chưa cấu hình Worker. Mở Cấu hình nâng cao → Worker Pool.');
+    if(!configured.length) throw new Error('Chưa có Worker role GROUP/BOTH khả dụng. Mở Worker Pool → Role.');
 
     const pool=configured.filter(w=>w.health!=='OFFLINE');
     if(!pool.length){
