@@ -710,14 +710,24 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         monitorBusy=false;
         const q=r.queue||{};
         const jobs=r.jobResults||[];
+        const acceptance=String(r.acceptance||'UNKNOWN');
+        const icon=acceptance==='WORKER_PASS'?'✅'
+          :(acceptance==='SCHEDULER_IDLE'?'🟡'
+          :(['BUSY','WORKER_SKIPPED'].includes(acceptance)?'⚠️':'❌'));
         const detail=jobs.length
           ? jobs.map(x=>'Dòng '+Number(x.row||0)+' • '+String(x.kind||'')+' • '+String(x.outcome||'')).join('\n')
           : 'Không có Group đến hạn/retry tại thời điểm test.';
+        const nextDue=r.nextDueAt?('\nNext due: '+new Date(r.nextDueAt).toLocaleString()):'';
+        const auth=r.triggerProbe
+          ? ('\nScriptApp: '+(r.triggerProbe.permissionOk?'OK':'AUTH REQUIRED'))
+          :'';
         setStatus(
-          (r.ok===false?'❌':'✅')+' AUTO V2 TEST 1 CYCLE'+
+          icon+' AUTO V2 TEST 1 CYCLE — '+acceptance+
           '\nRun: '+String(r.runId||'-')+
+          '\nReason: '+String(r.reason||'-')+
           '\nQueue: '+Number(q.dueAvailable||0)+' due • '+Number(q.retryAvailable||0)+' retry'+
           '\nProcessed/PASS/FAIL/SKIP: '+Number(r.groupsProcessed||0)+'/'+Number(r.groupsPassed||0)+'/'+Number(r.groupsFailed||0)+'/'+Number(r.groupsSkipped||0)+
+          auth+nextDue+
           '\n'+detail
         );
         pollMonitoring();
