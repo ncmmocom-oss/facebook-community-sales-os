@@ -22,7 +22,7 @@ jobs:
           with open('worker-keeper/manifest.json', encoding='utf-8') as f:
               m=json.load(f)
           assert m['manifest_version']==3
-          assert m['version']=='1.2.1'
+          assert m['version']=='1.2.2'
           print('manifest OK', m['version'])
           PY
           node --check worker-keeper/background.js
@@ -31,7 +31,7 @@ jobs:
       - name: Upload unpacked extension package
         uses: actions/upload-artifact@v4
         with:
-          name: Social_AIO_Worker_Keeper_P1.5_V1.2.1
+          name: Social_AIO_Worker_Keeper_P1.5_V1.2.2
           path: worker-keeper/
           if-no-files-found: error
           retention-days: 30

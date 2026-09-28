@@ -66,6 +66,20 @@ jobs:
           selected_block = ui[selected_start:selected_end]
           assert 'PREPARE_DUE_WORKER_BATCH' not in selected_block, 'manual selected scan must never call Due Queue'
 
+          selected_backend_start = runtime.index('function getCheckedGroupRows_()')
+          selected_backend_end = runtime.index('function groupPriorityRank_', selected_backend_start)
+          selected_backend = runtime[selected_backend_start:selected_backend_end]
+          assert "r[22]===true" in selected_backend, 'manual selected backend must be checkbox-driven'
+          for forbidden in ['CẦN QUÉT', 'dueText', 'nextAt', 'getDueGroupRows_', 'isDueJobStillValid_']:
+              assert forbidden not in selected_backend, f'manual selected backend must not read Due state: {forbidden}'
+
+          worker_start = runtime.index('function runWorkerJob_(')
+          worker_end = runtime.index('function sortOpportunityNewestFirst_', worker_start)
+          worker_block = runtime[worker_start:worker_end]
+          due_guard = "if(jobMode==='due' && !isDueJobStillValid_(sheet,row))"
+          assert due_guard in worker_block, 'Due recheck must be guarded by jobMode===due'
+          assert worker_block.count('isDueJobStillValid_') == 1, 'selected/retry/auto must not inherit extra Due checks'
+
           due_start = ui.index('function runDueGroups(')
           due_end = ui.index('function analyzeSourceIdsSequential', due_start)
           due_block = ui[due_start:due_end]
@@ -93,9 +107,13 @@ jobs:
           manifest = Path('worker-keeper/manifest.json').read_text(encoding='utf-8')
           assert "E_FB_GROUP_ID_RESOLVE" in keeper
           assert "Wrong ID" in keeper
-          assert '"version": "1.2.1"' in manifest
+          assert "identityResolveActive" in keeper
+          assert '"version": "1.2.2"' in manifest
 
-          print('scan-scope + FBAIO identity fallback security contract OK')
+          assert "TIME_BUDGET" in runtime
+          assert "duplicateRows=new Set(getDuplicateGroupIdentityRows_()" in runtime
+
+          print('scan-scope + FBAIO identity + Auto Monitor readiness contract OK')
           PY
 
       - name: Reject obvious secret material

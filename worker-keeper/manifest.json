@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Social AIO Worker Keeper",
   "short_name": "AIO Keeper",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Production-hardened W1 keeper: sticky tab binding, auto restore/reconnect, error watch, health logs and Client ID guard.",
   "permissions": [
     "storage",
