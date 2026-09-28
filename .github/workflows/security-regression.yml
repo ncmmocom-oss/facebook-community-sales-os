@@ -5,12 +5,14 @@ on:
     paths:
       - 'apps-script/**'
       - 'bootstrap/**'
+      - 'worker-keeper/**'
       - '.github/workflows/security-regression.yml'
   push:
     branches: [main]
     paths:
       - 'apps-script/**'
       - 'bootstrap/**'
+      - 'worker-keeper/**'
       - '.github/workflows/security-regression.yml'
 
 permissions:
@@ -28,6 +30,9 @@ jobs:
           node --check /tmp/runtime.js
           cp bootstrap/Code.gs /tmp/bootstrap.js
           node --check /tmp/bootstrap.js
+          node --check worker-keeper/background.js
+          node --check worker-keeper/content.js
+          node --check worker-keeper/popup.js
 
       - name: Assert manual and Due scopes cannot cross
         run: |
@@ -71,7 +76,24 @@ jobs:
           assert "cache.remove('SOCIAL_AIO_REMOTE_HTML')" in bootstrap
           assert "loadRemoteApp_(freshUi === true)" in bootstrap
 
-          print('scan-scope security contract OK')
+          required_fbaio = [
+              "isGroupIdentityResolveError_",
+              "historicNumericGroupIdFromRow_",
+              "NUMERIC_GROUP_ID_FALLBACK",
+              "R_NUMERIC_FALLBACK_PASS",
+              "GROUP_ID_RESOLVE",
+              "socialAioRaw",
+          ]
+          for token in required_fbaio:
+              assert token in runtime, f'missing FBAIO fallback token: {token}'
+
+          keeper = Path('worker-keeper/content.js').read_text(encoding='utf-8')
+          manifest = Path('worker-keeper/manifest.json').read_text(encoding='utf-8')
+          assert "E_FB_GROUP_ID_RESOLVE" in keeper
+          assert "Wrong ID" in keeper
+          assert '"version": "1.2.1"' in manifest
+
+          print('scan-scope + FBAIO identity fallback security contract OK')
           PY
 
       - name: Reject obvious secret material
