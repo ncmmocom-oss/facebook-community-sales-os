@@ -1,9 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.7.2-auto-production-ux",
+  "version": "1.9.8.0-comment-acquisition-core",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.8.0 Comment Acquisition Core: provider/module failures from FBAIO are classified as transient provider outages rather than per-Post structural failures.",
+    "A 10-minute provider circuit breaker stops Comment acquisition after the first provider-wide failure so remaining Posts are not mass-quarantined.",
+    "Comment Post retries use bounded backoff (5m, 15m, 1h, 3h, 6h) and backlog selection skips retries until due.",
+    "False HARD rows caused by `Failed to fetch dynamically imported module` are repaired automatically to retryable provider state.",
+    "AUTO logs now expose Comment processed/imported, provider circuit state, and false-HARD repair count.",
+    "Control Center surfaces Comment provider health, retry/backoff count and structural Hard errors separately.",
     "V1.9.7.2 Auto Production UX: removes TEST 1 CYCLE and Due-only controls from the operator surface after acceptance passed.",
     "Adds CHAY NGAY 1 CYCLE as the only Auto manual override; it invokes the same production pipeline used by the scheduler: bounded Retry -> Due -> Comment Intelligence -> AI continuation.",
     "Group-specific manual intervention remains QUET DA CHON in the Group scan section. Hidden RUN_AUTO_MONITOR_TEST remains available only for support diagnostics.",
