@@ -1741,9 +1741,9 @@ const RemoteApp = (() => {
         });
 
         try {
-          const results = cfg.provider === 'gemini'
-            ? analyzeBatchWithGemini_(batch, cfg)
-            : analyzeBatchWithOpenAi_(batch, cfg);
+          const results = analyzeBatchWithProviderFailover_(batch,cfg,{
+            runId,batch:batchNo,totalBatches,analyzed,total
+          });
 
           const applied=applyAiAnalysis_(sheet, results);
           SpreadsheetApp.flush();
@@ -1753,16 +1753,19 @@ const RemoteApp = (() => {
           }
           heartbeatRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token,CFG.AI_LEASE_TTL_MS);
 
-          const actualModel = cfg.provider === 'gemini'
-            ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
-            : cfg.model;
+          const effectiveProps=PropertiesService.getScriptProperties();
+          const actualProvider=effectiveProps.getProperty('AI_LAST_EFFECTIVE_PROVIDER') || cfg.provider;
+          const actualModel=effectiveProps.getProperty('AI_LAST_EFFECTIVE_MODEL') ||
+            (cfg.provider === 'gemini'
+              ? (effectiveProps.getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+              : cfg.model);
 
           setAiProgress_({
-            active:true, runId, status:'RUNNING', provider:cfg.provider, model:actualModel,
+            active:true, runId, status:'RUNNING', provider:actualProvider, model:actualModel,
             batch:batchNo, totalBatches, analyzed, total, remaining:Math.max(0,total-analyzed), errors:errors.length
           });
           logAi_({
-            runId, event:'BATCH_OK', provider:cfg.provider, model:actualModel, batch:batchNo, totalBatches,
+            runId, event:'BATCH_OK', provider:actualProvider, model:actualModel, batch:batchNo, totalBatches,
             analyzed, total, remaining:Math.max(0,total-analyzed), status:'OK',
             message:'Batch ' + batchNo + '/' + totalBatches + ' hoàn thành: ' + results.length + ' bài.'
           });
@@ -1786,22 +1789,25 @@ const RemoteApp = (() => {
 
       const refresh = refreshCurrentData({ silent:true, fast:true });
       const remaining = Math.max(0, candidates.length - analyzed);
-      const actualModel = cfg.provider === 'gemini'
-        ? (PropertiesService.getScriptProperties().getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
-        : cfg.model;
+      const finalProps=PropertiesService.getScriptProperties();
+      const actualProvider=finalProps.getProperty('AI_LAST_EFFECTIVE_PROVIDER') || cfg.provider;
+      const actualModel=finalProps.getProperty('AI_LAST_EFFECTIVE_MODEL') ||
+        (cfg.provider === 'gemini'
+          ? (finalProps.getProperty('AI_LAST_GEMINI_MODEL') || cfg.model)
+          : cfg.model);
 
       setAiProgress_({
         active:false, runId, status:errors.length ? 'DONE_WITH_ERRORS' : 'DONE',
-        provider:cfg.provider, model:actualModel, batch:totalBatches, totalBatches,
+        provider:actualProvider, model:actualModel, batch:totalBatches, totalBatches,
         analyzed, total, remaining, errors:errors.length
       });
       logAi_({
-        runId, event:'DONE', provider:cfg.provider, model:actualModel, batch:totalBatches, totalBatches,
+        runId, event:'DONE', provider:actualProvider, model:actualModel, batch:totalBatches, totalBatches,
         analyzed, total, remaining, status:errors.length ? 'DONE_WITH_ERRORS' : 'DONE',
         message:errors.length ? errors.join(' | ').slice(0, 4000) : 'Hoàn thành.'
       });
 
-      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: cfg.provider, model: actualModel, refresh, scope };
+      const result = { version: CFG.VERSION, runId, analyzed, remaining, errors, provider: actualProvider, model: actualModel, refresh, scope };
 
       if (!silent) {
         SpreadsheetApp.getActive().toast(
@@ -1828,6 +1834,62 @@ const RemoteApp = (() => {
       throw err;
     } finally {
       releaseRuntimeLease_(CFG.AI_LEASE_KEY,aiLease.token);
+    }
+  }
+
+  function isTransientAiProviderError_(err) {
+    return /HTTP\s+(408|429|500|502|503|504)\b|high demand|temporar(?:y|ily)|rate limit|overloaded|unavailable/i
+      .test(String(err&&err.message||err||''));
+  }
+
+  function setLastEffectiveAiProvider_(provider,model) {
+    const p=PropertiesService.getScriptProperties();
+    p.setProperty('AI_LAST_EFFECTIVE_PROVIDER',String(provider||''));
+    p.setProperty('AI_LAST_EFFECTIVE_MODEL',String(model||''));
+  }
+
+  function analyzeBatchWithProviderFailover_(batch,cfg,meta) {
+    meta=meta||{};
+    try{
+      if(cfg.provider==='gemini'){
+        const result=callGeminiStructured_(aiSystemPrompt_(cfg),JSON.stringify(batch),analysisSchema_(),cfg);
+        if(!result.data || !Array.isArray(result.data.analyses)) throw new Error('Gemini không trả về analyses hợp lệ.');
+        setLastEffectiveAiProvider_('gemini',result.model||cfg.model);
+        return result.data.analyses;
+      }
+      const out=analyzeBatchWithOpenAi_(batch,cfg);
+      setLastEffectiveAiProvider_('openai',cfg.model);
+      return out;
+    }catch(primaryErr){
+      if(!isTransientAiProviderError_(primaryErr)) throw primaryErr;
+
+      if(cfg.provider==='gemini' && cfg.openaiConfigured){
+        const fallbackCfg=Object.assign({},cfg,{provider:'openai',model:'gpt-5.6-luna'});
+        const out=analyzeBatchWithOpenAi_(batch,fallbackCfg);
+        setLastEffectiveAiProvider_('openai',fallbackCfg.model);
+        logAi_({
+          runId:meta.runId||'',event:'PROVIDER_FAILOVER',provider:'openai',model:fallbackCfg.model,
+          batch:meta.batch||0,totalBatches:meta.totalBatches||0,analyzed:meta.analyzed||0,total:meta.total||0,
+          remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),status:'OK',
+          message:'Gemini transient -> OpenAI fallback. '+String(primaryErr.message||primaryErr).slice(0,600)
+        });
+        return out;
+      }
+
+      if(cfg.provider==='openai' && cfg.geminiConfigured){
+        const fallbackCfg=Object.assign({},cfg,{provider:'gemini',model:'gemini-auto'});
+        const result=callGeminiStructured_(aiSystemPrompt_(fallbackCfg),JSON.stringify(batch),analysisSchema_(),fallbackCfg);
+        if(!result.data || !Array.isArray(result.data.analyses)) throw new Error('Gemini fallback không trả analyses hợp lệ.');
+        setLastEffectiveAiProvider_('gemini',result.model||fallbackCfg.model);
+        logAi_({
+          runId:meta.runId||'',event:'PROVIDER_FAILOVER',provider:'gemini',model:result.model||fallbackCfg.model,
+          batch:meta.batch||0,totalBatches:meta.totalBatches||0,analyzed:meta.analyzed||0,total:meta.total||0,
+          remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),status:'OK',
+          message:'OpenAI transient -> Gemini fallback. '+String(primaryErr.message||primaryErr).slice(0,600)
+        });
+        return result.data.analyses;
+      }
+      throw primaryErr;
     }
   }
 
