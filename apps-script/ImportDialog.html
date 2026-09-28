@@ -230,8 +230,57 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <div id="mount-group-auto"></div>
   </div>
 </section>
-<section id="view-signals" class="view"><div class="viewHead"><div><div class="sectionLabel">INTELLIGENCE</div><h2>Tín hiệu & Lead Inbox</h2><p>Mở đúng bảng drill-down khi cần phân tích hoặc xử lý lead.</p></div></div><div class="quickCards"><div class="quickCard"><div class="bigIcon">📡</div><h3>TÍN HIỆU 7 NGÀY</h3><p>Gộp theo Group/ngày, ưu tiên PASS / WATCH / REVIEW.</p><button class="primary" onclick="openSignalFeed()">MỞ TÍN HIỆU</button></div><div class="quickCard"><div class="bigIcon">🎯</div><h3>LEAD INBOX</h3><p>Chỉ chứa khách hàng vượt Hard Gate.</p><button class="dark" onclick="openLeadInbox()">MỞ LEAD INBOX</button></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Snapshot hiện tại</div><div class="kpiGrid" style="margin-bottom:0"><div class="kpi"><span>Post mới hôm nay</span><b id="sigNew">0</b></div><div class="kpi"><span>AI backlog</span><b id="sigBacklog">0</b></div><div class="kpi"><span>Lead PASS</span><b id="sigPass">0</b></div><div class="kpi"><span>Exception</span><b id="sigExceptions">0</b></div></div></div></section>
-<section id="view-ai" class="view"><div class="viewHead"><div><div class="sectionLabel">QUALIFICATION</div><h2>AI / Offer Context / Lead Gate</h2><p>Manual và Auto dùng cùng business logic; chỉ khác cách đưa source vào queue.</p></div></div><div id="mount-ai"></div></section>
+<section id="view-signals" class="view">
+  <div class="viewHead"><div><div class="sectionLabel">SALES EXECUTION</div><h2>Tín hiệu → Lead → Hội thoại → Chuyển đổi</h2><p>Detection chỉ là đầu vào. Sales Stage là nguồn sự thật cho công việc bán hàng sau khi Lead Gate PASS.</p></div></div>
+  <div class="quickCards">
+    <div class="quickCard"><div class="bigIcon">📡</div><h3>TÍN HIỆU 7 NGÀY</h3><p>Gộp theo Group/ngày, ưu tiên PASS / WATCH / REVIEW.</p><button class="primary" onclick="openSignalFeed()">MỞ TÍN HIỆU</button></div>
+    <div class="quickCard"><div class="bigIcon">🎯</div><h3>LEAD INBOX</h3><p>Production inbox chỉ chứa Hard Gate PASS; legacy được archive riêng.</p><button class="dark" onclick="openLeadInbox()">MỞ LEAD INBOX</button></div>
+    <div class="quickCard"><div class="bigIcon">💼</div><h3>SALES PIPELINE</h3><p>Chọn dòng trong CƠ HỘI rồi cập nhật Sales Stage ở panel dưới.</p><button class="secondary" onclick="openWorkspaceTab('opportunity','CƠ HỘI')">MỞ CƠ HỘI ↗</button></div>
+  </div>
+  <div class="panel" style="margin-top:12px">
+    <div class="panelTitle">Sales Pipeline</div>
+    <div class="kpiGrid">
+      <div class="kpi"><span>Hội thoại mở</span><b id="salesOpen">0</b></div>
+      <div class="kpi"><span>Chờ phản hồi</span><b id="salesWaiting">0</b></div>
+      <div class="kpi"><span>Follow-up</span><b id="salesFollowup">0</b></div>
+      <div class="kpi"><span>Đã bán</span><b id="salesSold">0</b></div>
+      <div class="kpi"><span>PASS chưa nhận</span><b id="salesUnassigned">0</b></div>
+    </div>
+    <div class="row">
+      <div><label>Sales Stage cho dòng đang chọn ở CƠ HỘI</label><select id="salesStage"><option>Qualified</option><option>Outreach</option><option>Đang hội thoại</option><option>Chờ phản hồi</option><option>Follow-up</option><option>Đã bán</option><option>Lost</option></select></div>
+      <div><label>Follow-up sau (ngày)</label><input id="salesFollowDays" type="number" min="0" max="30" step="1" value="1"></div>
+    </div>
+    <div class="row">
+      <div><label>Owner</label><input id="salesOwner" placeholder="Tên người phụ trách"></div>
+      <div><label>Outcome / Value</label><input id="salesOutcome" placeholder="VD: đã inbox, chờ báo giá, 5.000.000đ"></div>
+    </div>
+    <button class="primary" onclick="setSelectedSalesStage()">CẬP NHẬT SALES STAGE</button>
+    <div class="muted" style="margin-top:8px">Mặc định chỉ nguồn <b>Lead Gate PASS</b> mới được vào Sales Pipeline. Dòng đã ở pipeline có thể chuyển sang Lost để đóng.</div>
+  </div>
+  <div class="panel" style="margin-top:12px"><div class="panelTitle">Snapshot acquisition</div><div class="kpiGrid" style="margin-bottom:0"><div class="kpi"><span>Post mới hôm nay</span><b id="sigNew">0</b></div><div class="kpi"><span>AI backlog</span><b id="sigBacklog">0</b></div><div class="kpi"><span>Lead PASS</span><b id="sigPass">0</b></div><div class="kpi"><span>Exception</span><b id="sigExceptions">0</b></div></div></div>
+</section>
+<section id="view-ai" class="view">
+  <div class="viewHead"><div><div class="sectionLabel">QUALIFICATION</div><h2>AI / Offer Context / Lead Gate</h2><p>Không có Offer Context thì hệ thống không được giả vờ biết Product Fit; Gate sẽ dừng ở CONTEXT_REQUIRED.</p></div></div>
+  <div class="panel" style="margin-bottom:12px">
+    <div class="panelTitle">Offer Context Readiness</div>
+    <div class="kpiGrid">
+      <div class="kpi"><span>Group active</span><b id="ctxActive">0</b></div>
+      <div class="kpi"><span>Có Context</span><b id="ctxReady">0</b></div>
+      <div class="kpi"><span>Thiếu Context</span><b id="ctxMissing">0</b></div>
+      <div class="kpi"><span>Recovery ready</span><b id="ctxRecovery">0</b></div>
+    </div>
+    <label>AI Context / Offer cho Group đang chọn trong sheet QUÉT NHÓM</label>
+    <textarea id="groupContextDraft" rows="7" placeholder="OFFER:&#10;BUYER:&#10;PROBLEM:&#10;PRODUCT / SERVICE:&#10;VALUE:&#10;QUALIFICATION:&#10;CTA:"></textarea>
+    <div class="commandActions">
+      <button class="primary" onclick="saveActiveGroupContext()">LƯU CONTEXT CHO GROUP ĐANG CHỌN</button>
+      <button class="secondary" onclick="openWorkspaceTab('groups','QUÉT NHÓM')">MỞ QUÉT NHÓM ↗</button>
+      <button class="retry" onclick="loadSalesReadiness()">↻ KIỂM TRA COVERAGE</button>
+      <button class="dark" onclick="runSalesRecovery()">▶ REQUALIFY CONTEXT-READY</button>
+    </div>
+    <div id="contextMissingList" class="muted" style="margin-top:8px">Đang đọc Context coverage...</div>
+  </div>
+  <div id="mount-ai"></div>
+</section>
 <section id="view-workers" class="view"><div class="viewHead"><div><div class="sectionLabel">INFRASTRUCTURE</div><h2>Worker Pool & API Diagnostic</h2><p>Worker Keeper giữ browser online; Control Center giữ registry, health và phân job.</p></div></div><div id="mount-workers"></div></section>
 <section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>Import / Sync / Consistency</h2><p>JSON là fallback; production ưu tiên API scan → import nội bộ → sync.</p></div></div><div id="mount-data"></div></section>
 <section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button><button class="primary" onclick="runProductionSelfTest()">✓ SELF-TEST & REPAIR</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('api_log','NHẬT KÝ API')" title="Mở / tái sử dụng tab NHẬT KÝ API"><b>NHẬT KÝ API ↗</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('import_log','NHẬT KÝ IMPORT')" title="Mở / tái sử dụng tab NHẬT KÝ IMPORT"><b>NHẬT KÝ IMPORT ↗</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('ai_log','NHẬT KÝ AI')" title="Mở / tái sử dụng tab NHẬT KÝ AI"><b>NHẬT KÝ AI ↗</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('auto_log','NHẬT KÝ AUTO')" title="Mở / tái sử dụng tab NHẬT KÝ AUTO"><b>NHẬT KÝ AUTO ↗</b><div class="muted">Backend cycle: Group scan, retry, Comment Intelligence, AI và self-repair.</div></div><div class="emptyNote">V1.9.4: AUTO V2 chạy backend trigger + Comment Intelligence delta/pagination. Scanner, raw pagination và Lead Gate vẫn giữ business logic cũ.</div></div></section>
@@ -1041,7 +1090,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       });
     }
 
-    function analyzeSourceIdsSequential(sourceIds,baseStatus,done) {
+    function analyzeSourceIdsSequential(sourceIds,baseStatus,done,forceReanalysis) {
       const ids=[...new Set((sourceIds||[]).map(x=>String(x||'').trim()).filter(Boolean))];
       const chunkSize=150;
       let index=0,totalAnalyzed=0,totalPassNew=0,lastPass='-';
@@ -1066,7 +1115,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 
         const chunk=ids.slice(index,index+chunkSize);
         setStatus(baseStatus+'\nAI AUTO: '+Math.min(index+chunk.length,ids.length)+'/'+ids.length+' nguồn...');
-        command({__command:'ANALYZE_SCOPE',scope:'source_ids',sourceIds:chunk},r=>{
+        command({__command:'ANALYZE_SCOPE',scope:'source_ids',sourceIds:chunk,forceReanalysis:forceReanalysis===true},r=>{
           totalAnalyzed+=Number(r.analyzed||0);
           if(r.refresh){
             totalPassNew+=Number(r.refresh.newLeads||0);
@@ -1091,6 +1140,76 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         });
       };
       next();
+    }
+
+    function loadSalesReadiness() {
+      command({__command:'GET_CONTEXT_READINESS'},r=>{
+        phase2SetText('ctxActive',Number(r.active||0));
+        phase2SetText('ctxReady',Number(r.withContext||0));
+        phase2SetText('ctxMissing',Number(r.missing||0));
+        const list=(r.missingGroups||[]).slice(0,8).map(x=>'Dòng '+x.row+' — '+x.name);
+        const el=document.getElementById('contextMissingList');
+        if(el) el.textContent=list.length?('Thiếu Context: '+list.join(' | ')):'✅ Tất cả Group active đã có Context.';
+      },e=>setStatus('Không đọc được Context readiness: '+(e.message||e)));
+
+      command({__command:'GET_SALES_PIPELINE'},r=>renderSalesPipeline(r),()=>{});
+      command({__command:'GET_SALES_RECOVERY_QUEUE'},r=>phase2SetText('ctxRecovery',Number(r.ready||0)),()=>{});
+    }
+
+    function saveActiveGroupContext() {
+      const context=String(document.getElementById('groupContextDraft').value||'').trim();
+      if(!context){setStatus('AI Context / Offer đang trống.');return;}
+      setStatus('Đang lưu Offer Context cho Group đang chọn...');
+      command({__command:'SAVE_ACTIVE_GROUP_CONTEXT',context},r=>{
+        setStatus('✅ Đã lưu Context cho dòng '+r.row+' — '+String(r.name||'')+
+          '\nCoverage: '+Number(r.readiness&&r.readiness.withContext||0)+'/'+Number(r.readiness&&r.readiness.active||0));
+        document.getElementById('groupContextDraft').value='';
+        loadSalesReadiness();
+        pollMonitoring();
+      },e=>setStatus('Lưu Context lỗi: '+(e.message||e)));
+    }
+
+    function runSalesRecovery() {
+      setStatus('Đang lập queue requalification từ các Group đã có Offer Context...');
+      command({__command:'GET_SALES_RECOVERY_QUEUE'},q=>{
+        const ids=q.sourceIds||[];
+        phase2SetText('ctxRecovery',ids.length);
+        if(!ids.length){
+          setStatus('Không có source context-ready cần requalify. Context coverage: '+Number(q.groupsWithContext||0)+' Group.');
+          return;
+        }
+        const base='SALES RECOVERY — '+ids.length+' source • '+Number(q.groupsWithContext||0)+' Group có Context';
+        analyzeSourceIdsSequential(ids,base,r=>{
+          loadSalesReadiness();
+          pollMonitoring();
+        },true);
+      },e=>setStatus('Không lập được Sales Recovery queue: '+(e.message||e)));
+    }
+
+    function renderSalesPipeline(p) {
+      p=p||{}; const s=p.stages||{};
+      phase2SetText('salesOpen',Number(p.open||0));
+      phase2SetText('salesWaiting',Number(s['Chờ phản hồi']||0));
+      phase2SetText('salesFollowup',Number(s['Follow-up']||0));
+      phase2SetText('salesSold',Number(p.sold||0));
+      phase2SetText('salesUnassigned',Number(p.unassignedPass||0));
+    }
+
+    function setSelectedSalesStage() {
+      const stage=document.getElementById('salesStage').value;
+      const followUpDays=Number(document.getElementById('salesFollowDays').value||0);
+      const owner=document.getElementById('salesOwner').value.trim();
+      const outcome=document.getElementById('salesOutcome').value.trim();
+      setStatus('Đang cập nhật Sales Stage cho dòng đang chọn ở CƠ HỘI...');
+      command({__command:'SET_SELECTED_SALES_STAGE',stage,followUpDays,owner,outcome},r=>{
+        renderSalesPipeline(r.pipeline||{});
+        setStatus('✅ SALES STAGE: '+r.stage+
+          '\nĐã cập nhật: '+Number(r.updated||0)+
+          '\nBỏ qua: '+Number(r.skipped||0)+
+          '\nDòng: '+r.startRow+'–'+r.endRow+
+          (r.skipped?'\nLưu ý: nguồn chưa PASS và chưa ở pipeline sẽ bị chặn.':''));
+        pollMonitoring();
+      },e=>setStatus('Sales Stage lỗi: '+(e.message||e)));
     }
 
     function runCommentIntelligenceNow() {
@@ -1729,7 +1848,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       else if(key==='comments'||key==='auto'){pollMonitoring();}
       else if(key==='ai'){pollProgressOnce();}
     }
-    function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}window.scrollTo({top:0,behavior:'auto'});}
+    function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}if(key==='ai'||key==='signals')loadSalesReadiness();window.scrollTo({top:0,behavior:'auto'});}
     function setPhase2RuntimeVersion(version){const v=String(version||'').trim();if(!v)return;phase2SetText('runtimeVersionPill','Runtime V'+v);phase2SetText('sysRuntime','V'+v);}
     function opsAgeText(ms){
       const n=Number(ms||0);
@@ -1829,6 +1948,11 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       phase2SetText('sigBacklog',backlog);
       phase2SetText('sigPass',pass);
       phase2SetText('sigExceptions',exceptions);
+      renderSalesPipeline(o.salesPipeline||{});
+      const cr=o.contextReadiness||{};
+      phase2SetText('ctxActive',Number(cr.active||active));
+      phase2SetText('ctxReady',Number(cr.withContext||context));
+      phase2SetText('ctxMissing',Number(cr.missing||Math.max(0,active-context)));
 
       phase2SetText('opsOverdue2h',Number(sla.overdue2h||0));
       phase2SetText('opsFresh2h',Number(ai.freshSources2h||0));
