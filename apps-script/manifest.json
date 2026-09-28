@@ -1,9 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.6.3-canonical-group-dispatch-hf1",
+  "version": "1.9.6.4-custom-scan-target",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.6.4 Custom Scan Target: Control Center replaces fixed 10/15/20/25 selector with a numeric input, default 25.",
+    "Runtime accepts any whole-number Group target from 1 to 200 and clamps only the upper safety bound; invalid/blank/non-positive values fall back to 25.",
+    "QUET NHOM column 'Số bài/lần' now uses numeric 1-200 validation instead of a fixed list, so per-Group cadence and manual overrides can use custom targets.",
     "V1.9.6.3 Canonical Group Dispatch HF1: checkbox-selected duplicate registry rows are resolved to one canonical Group row before Worker assignment, preserving manual intent without issuing duplicate FBAIO requests.",
     "Duplicate rows selected manually are disabled, unchecked, and retained only for audit with DUPLICATE_SELECTION_REDIRECT evidence.",
     "Manual retry excludes duplicate rows; stale Worker jobs targeting a duplicate fail closed as SKIP_DUPLICATE before any Social AIO/FBAIO call.",

@@ -132,7 +132,25 @@ jobs:
           assert "TIME_BUDGET" in runtime
           assert "duplicateRows=new Set(getDuplicateGroupIdentityRows_()" in runtime
 
-          print('scan-scope + FBAIO identity + Auto Monitor readiness contract OK')
+          normalize_start = runtime.index('function normalizeGroupTarget_(')
+          normalize_end = runtime.index('function callGroupPostsRawOnce_', normalize_start)
+          normalize_block = runtime[normalize_start:normalize_end]
+          assert "Math.min(200,n)" in normalize_block
+          assert "if(n<=10)" not in normalize_block
+          assert "if(n<=15)" not in normalize_block
+          assert "if(n<=20)" not in normalize_block
+
+          assert '<input id="groupTarget" type="number"' in ui
+          assert 'value="25"' in ui
+          assert 'min="1"' in ui and 'max="200"' in ui
+          assert '<select id="groupTarget">' not in ui
+          for fixed in ['10 bài','15 bài','20 bài','25 bài</option>']:
+              assert fixed not in ui, f'fixed scan target option must be removed: {fixed}'
+
+          assert "requireNumberBetween(1,200)" in runtime
+          assert "requireValueInList(['10','15','20','25']" not in runtime
+
+          print('scan-scope + FBAIO identity + Auto Monitor + custom scan target contract OK')
           PY
 
       - name: Reject obvious secret material

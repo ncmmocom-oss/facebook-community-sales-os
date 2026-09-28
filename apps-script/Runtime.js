@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.6.3-canonical-group-dispatch-hf1',
+    VERSION: '1.9.6.4-custom-scan-target',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.6.4 Custom Scan Target: bỏ preset 10/15/20/25; cho nhập số bài tùy ý 1–200, mặc định 25; Runtime và cột Số bài/lần dùng cùng numeric validation.\n' +
       'V1.9.6.3 Canonical Group Dispatch HF1: manual/retry/worker canonicalize duplicate registry identity trước FBAIO; tick duplicate tự redirect về canonical row; stale duplicate job fail-closed; numeric ID có thể kế thừa từ sibling canonical đã xác minh.\n' +
       'V1.9.6.2 Auto Monitor Readiness HF1: manual selected được khóa CI không đọc Due state; partial scan do time budget được retry có kiểm soát; Due Queue bỏ duplicate registry rows; log time-budget rõ ràng.\n' +
       'V1.9.6.1 FBAIO Preemptive ID: với vanity Group bắt đầu bằng số và đã có numeric ID từng xác minh, gọi thẳng numeric ID để tránh FBAIO parse sai trước khi lỗi xảy ra; fallback reactive vẫn giữ cho các case khác.\n' +
@@ -3091,11 +3092,11 @@ const RemoteApp = (() => {
   }
 
   function normalizeGroupTarget_(value) {
-    const n=Number(value||25);
-    if(n<=10) return 10;
-    if(n<=15) return 15;
-    if(n<=20) return 20;
-    return 25;
+    const raw=Number(value);
+    if(!Number.isFinite(raw)) return 25;
+    const n=Math.floor(raw);
+    if(n<1) return 25;
+    return Math.min(200,n);
   }
 
   function callGroupPostsRawOnce_(clientId,params) {
@@ -4459,19 +4460,21 @@ const RemoteApp = (() => {
       .build();
     sheet.getRange(2,2,n,1).setDataValidation(profileRule);
 
-    // Operator target: only 10/15/20/25 posts per selected Group.
+    // Operator target: free numeric input, 1-200 posts per Group, default 25.
     const targetRule=SpreadsheetApp.newDataValidation()
-      .requireValueInList(['10','15','20','25'], true)
+      .requireNumberBetween(1,200)
       .setAllowInvalid(false)
+      .setHelpText('Nhập số bài muốn quét từ 1 đến 200. Mặc định 25.')
       .build();
     const targetRange=sheet.getRange(2,9,n,1);
     targetRange.setDataValidation(targetRule);
     const targetValues=targetRange.getValues();
     let targetDirty=false;
-    targetValues.forEach(r=>{
-      const v=Number(r[0]||0);
-      if(![10,15,20,25].includes(v)) {
-        r[0]=25;
+    targetValues.forEach(row=>{
+      const raw=Number(row[0]);
+      const normalized=normalizeGroupTarget_(raw);
+      if(!Number.isFinite(raw) || raw<1 || raw>200 || Math.floor(raw)!==raw) {
+        row[0]=normalized;
         targetDirty=true;
       }
     });
