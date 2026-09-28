@@ -204,6 +204,26 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
+          assert "VERSION: '1.9.8.0-comment-acquisition-core'" in runtime
+          assert "COMMENT_PROVIDER_BREAKER_KEY" in runtime
+          assert "COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000" in runtime
+          assert "COMMENT_RETRY_DELAYS_MS" in runtime
+          assert "function isCommentProviderTransientError_(" in runtime
+          assert "failed to fetch dynamically imported module" in runtime.lower()
+          assert "function repairCommentProviderHardQuarantine_(" in runtime
+          assert "PROVIDER_TRANSIENT recovered" in runtime
+          assert "function getCommentProviderBreaker_(" in runtime
+          assert "providerCircuitOpen" in runtime
+          assert "break; // provider-wide outage" in runtime
+          assert "commentRetryDue_" in runtime
+          assert "summary.commentIntel" in runtime
+          assert "repairedHard=" in runtime
+
+          assert 'id="commentProvider"' in ui
+          assert 'id="commentRetry"' in ui
+          assert "CIRCUIT OPEN" in ui
+          assert "Hard structural" in ui
+
           assert "function persistAutoMonitorSummary_(" in runtime
           assert "acceptance='BUSY'" in runtime
           assert "acceptance='SCHEDULER_IDLE'" in runtime
