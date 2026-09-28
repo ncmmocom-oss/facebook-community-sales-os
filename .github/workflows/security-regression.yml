@@ -198,6 +198,16 @@ jobs:
           assert "🧪 TEST 1 CYCLE" in ui
           assert "function testAutoMonitorCycle()" in ui
           assert "AUTH REQUIRED" in ui
+          assert "SCHEDULER_IDLE" in ui
+          assert "WORKER_PASS" in ui
+
+          assert "function persistAutoMonitorSummary_(" in runtime
+          assert "acceptance='BUSY'" in runtime
+          assert "acceptance='SCHEDULER_IDLE'" in runtime
+          assert "acceptance='WORKER_PASS'" in runtime
+          assert "acceptance='AUTH_REQUIRED'" in runtime
+          assert "getNextAutoDueAt_" in runtime
+          assert "return persistAutoMonitorSummary_(summary)" in runtime
 
           bootstrap_manifest = Path('bootstrap/appsscript.json').read_text(encoding='utf-8')
           assert "https://www.googleapis.com/auth/script.scriptapp" in bootstrap_manifest
