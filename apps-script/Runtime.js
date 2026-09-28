@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.5-row-height-standard',
+    VERSION: '1.9.8.6-concurrency-foundation',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -58,6 +58,13 @@ const RemoteApp = (() => {
     COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000,
     COMMENT_HOT_WATCH_MS: 24 * 60 * 60 * 1000,
     COMMENT_HOT_RECHECK_MS: 30 * 60 * 1000,
+    AI_LEASE_KEY: 'SOCIAL_AIO_AI_LEASE_V1',
+    AI_LEASE_TTL_MS: 7 * 60 * 1000,
+    AI_PROGRESS_STALE_MS: 8 * 60 * 1000,
+    AUTO_MONITOR_LEASE_KEY: 'SOCIAL_AIO_AUTO_MONITOR_LEASE_V1',
+    AUTO_MONITOR_LEASE_TTL_MS: 10 * 60 * 1000,
+    COMMENT_POST_LEASE_PREFIX: 'SOCIAL_AIO_COMMENT_POST_LEASE_',
+    COMMENT_POST_LEASE_TTL_MS: 2 * 60 * 1000,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
@@ -86,6 +93,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.6 Concurrency Foundation: tách AI/AUTO lane lease, Source-ID AI writeback, Comment Post Lease, Worker role GROUP/COMMENT/BOTH và bỏ physical sort khỏi hot path để chuẩn bị Parallel Pipeline an toàn.\n' +
       'V1.9.8.5 Row Height Standard: khóa chiều cao hàng production ở 21 px cho import, worker append và Lead refresh; tránh Runtime làm giãn hàng trở lại sau khi Sheet đã chuẩn hóa.\n' +
       'V1.9.8.4 Comment/AI Guard: tách lỗi provider-wide Comment khỏi retry theo Post để không kéo backlog vào backoff nhiều giờ; normalize PROVIDER_TRANSIENT cũ thành PROVIDER_WAIT; AI concurrent run được coi là busy hợp lệ thay vì lỗi vận hành.\n' +
       'V1.9.8.3 Sidebar Command Tabs: khôi phục sidebar dọc làm menu hệ thống; tab ngang chỉ nằm trong 200 Group Monitoring cho Quét Nhóm / Quét Comt / AI Phân tích / Cập nhật dữ liệu / Auto Monitor; command chạy backend trực tiếp, link Sheet chỉ là viewer phụ.\n' +
@@ -4326,7 +4334,7 @@ const RemoteApp = (() => {
     const all=props.getProperties();
     let expiredLeases=0,expiredRunStops=0;
     Object.keys(all).forEach(k=>{
-      if(k.indexOf(CFG.GROUP_LEASE_PREFIX)===0){
+      if(k.indexOf(CFG.GROUP_LEASE_PREFIX)===0 || k.indexOf(CFG.COMMENT_POST_LEASE_PREFIX)===0 || k===CFG.AI_LEASE_KEY || k===CFG.AUTO_MONITOR_LEASE_KEY){
         try{
           const x=JSON.parse(all[k]||'{}');
           if(Number(x.expiresAt||0) && Number(x.expiresAt)<Date.now()){
@@ -6709,6 +6717,103 @@ const RemoteApp = (() => {
       }
     }
     throw lastErr||new Error('Social AIO transient retry failed.');
+  }
+
+  function getRuntimeLease_(key) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(String(key||''))||'';
+    if(!raw) return {active:false,key:String(key||'')};
+    try{
+      const x=JSON.parse(raw);
+      return Object.assign({},x,{
+        active:Number(x.expiresAt||0)>Date.now(),
+        key:String(key||'')
+      });
+    }catch(_){
+      return {active:false,key:String(key||''),corrupt:true};
+    }
+  }
+
+  function acquireRuntimeLease_(key,owner,ttlMs) {
+    const propKey=String(key||'').trim();
+    if(!propKey) throw new Error('Runtime lease key trống.');
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return {ok:false,reason:'LEASE_LOCK_BUSY',key:propKey};
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const now=Date.now();
+      let existing=null;
+      const raw=props.getProperty(propKey);
+      if(raw){try{existing=JSON.parse(raw);}catch(_){}}
+      if(existing && Number(existing.expiresAt||0)>now){
+        return {
+          ok:false,reason:'LANE_BUSY',key:propKey,
+          owner:String(existing.owner||''),
+          token:String(existing.token||''),
+          acquiredAt:Number(existing.acquiredAt||0),
+          updatedAt:Number(existing.updatedAt||0),
+          expiresAt:Number(existing.expiresAt||0)
+        };
+      }
+      const ttl=Math.max(30000,Number(ttlMs||60000));
+      const lease={
+        token:Utilities.getUuid(),
+        owner:String(owner||'runtime'),
+        acquiredAt:now,
+        updatedAt:now,
+        expiresAt:now+ttl
+      };
+      props.setProperty(propKey,JSON.stringify(lease));
+      return Object.assign({ok:true,key:propKey},lease);
+    }finally{
+      lock.releaseLock();
+    }
+  }
+
+  function heartbeatRuntimeLease_(key,token,ttlMs) {
+    const propKey=String(key||'').trim();
+    if(!propKey || !token) return false;
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return false;
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const raw=props.getProperty(propKey)||'';
+      if(!raw) return false;
+      let x=null;
+      try{x=JSON.parse(raw);}catch(_){return false;}
+      if(String(x.token||'')!==String(token)) return false;
+      const now=Date.now();
+      x.updatedAt=now;
+      x.expiresAt=now+Math.max(30000,Number(ttlMs||60000));
+      props.setProperty(propKey,JSON.stringify(x));
+      return true;
+    }finally{
+      lock.releaseLock();
+    }
+  }
+
+  function releaseRuntimeLease_(key,token) {
+    const propKey=String(key||'').trim();
+    if(!propKey || !token) return false;
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(5000)) return false;
+    try{
+      const props=PropertiesService.getDocumentProperties();
+      const raw=props.getProperty(propKey)||'';
+      if(!raw) return true;
+      let x=null;
+      try{x=JSON.parse(raw);}catch(_){props.deleteProperty(propKey);return true;}
+      if(String(x.token||'')!==String(token)) return false;
+      props.deleteProperty(propKey);
+      return true;
+    }finally{
+      lock.releaseLock();
+    }
+  }
+
+  function commentPostLeasePropertyKey_(postIdentity) {
+    const raw=String(postIdentity||'unknown').trim();
+    const safe=Utilities.base64EncodeWebSafe(raw,Utilities.Charset.UTF_8).replace(/=+$/,'').slice(0,180);
+    return CFG.COMMENT_POST_LEASE_PREFIX+safe;
   }
 
   function groupLeasePropertyKey_(groupKey) {
