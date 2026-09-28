@@ -69,7 +69,7 @@ jobs:
           selected_backend_start = runtime.index('function getCheckedGroupRows_()')
           selected_backend_end = runtime.index('function groupPriorityRank_', selected_backend_start)
           selected_backend = runtime[selected_backend_start:selected_backend_end]
-          assert "r[22]===true" in selected_backend, 'manual selected backend must be checkbox-driven'
+          assert ("r[22]===true" in selected_backend or "r[22]!==true" in selected_backend), 'manual selected backend must be checkbox-driven'
           for forbidden in ['CẦN QUÉT', 'dueText', 'nextAt', 'getDueGroupRows_', 'isDueJobStillValid_']:
               assert forbidden not in selected_backend, f'manual selected backend must not read Due state: {forbidden}'
 
@@ -79,6 +79,25 @@ jobs:
           due_guard = "if(jobMode==='due' && !isDueJobStillValid_(sheet,row))"
           assert due_guard in worker_block, 'Due recheck must be guarded by jobMode===due'
           assert worker_block.count('isDueJobStillValid_') == 1, 'selected/retry/auto must not inherit extra Due checks'
+          assert "SKIP_DUPLICATE" in worker_block, 'stale duplicate jobs must fail closed before FBAIO'
+          assert "repairDuplicateRegistryRow_" in worker_block, 'worker must repair stale duplicate registry rows'
+
+          retry_start = runtime.index('function collectRetryJobs_()')
+          retry_end = runtime.index('function prepareJobsForWorkers_', retry_start)
+          retry_block = runtime[retry_start:retry_end]
+          assert "duplicateRows" in retry_block and "getDuplicateGroupIdentityRows_" in retry_block, 'manual retry must exclude duplicate rows'
+
+          assert "selectedFromRows" in selected_backend
+          assert "canonicalizedFromDuplicate" in selected_backend
+          assert "repairSelectedDuplicateRows_" in selected_backend
+          assert "DUPLICATE_SELECTION_REDIRECT" in runtime
+          assert "STALE_DUPLICATE_JOB_BLOCKED" in runtime
+
+          historic_start = runtime.index('function historicNumericGroupIdFromRow_(')
+          historic_end = runtime.index('function logRuntimeApiEvent_', historic_start)
+          historic_block = runtime[historic_start:historic_end]
+          assert "siblings=sh.getRange" in historic_block, 'numeric alias fallback must search sibling canonical rows'
+          assert "identityKey=exactGroupKeyFromRow_" in historic_block
 
           due_start = ui.index('function runDueGroups(')
           due_end = ui.index('function analyzeSourceIdsSequential', due_start)

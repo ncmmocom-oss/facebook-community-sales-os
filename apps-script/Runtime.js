@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.6.2-auto-monitor-readiness-hf1',
+    VERSION: '1.9.6.3-canonical-group-dispatch-hf1',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.6.3 Canonical Group Dispatch HF1: manual/retry/worker canonicalize duplicate registry identity trước FBAIO; tick duplicate tự redirect về canonical row; stale duplicate job fail-closed; numeric ID có thể kế thừa từ sibling canonical đã xác minh.\n' +
       'V1.9.6.2 Auto Monitor Readiness HF1: manual selected được khóa CI không đọc Due state; partial scan do time budget được retry có kiểm soát; Due Queue bỏ duplicate registry rows; log time-budget rõ ràng.\n' +
       'V1.9.6.1 FBAIO Preemptive ID: với vanity Group bắt đầu bằng số và đã có numeric ID từng xác minh, gọi thẳng numeric ID để tránh FBAIO parse sai trước khi lỗi xảy ra; fallback reactive vẫn giữ cho các case khác.\n' +
       'V1.9.6 FBAIO Group ID Fallback: nhận diện vanity Group bắt đầu bằng số bị FBAIO parse sai; tự fallback numeric Group ID đã xác minh, ghi runtime failure/fallback vào NHẬT KÝ API và quarantine identity lỗi không thể repair.\n' +
@@ -3212,18 +3213,43 @@ const RemoteApp = (() => {
     try{
       const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
       if(row>sh.getLastRow()) return '';
+
+      const collectNumeric=(v,out)=>{
+        v=v||[];
+        const idCell=String(v[1]||'').replace(/\s+/g,'').trim();
+        const lastFile=String(v[9]||'').trim();
+        const note=String(v[12]||'').trim();
+        if(/^\d{6,}$/.test(idCell)) out.push(idCell);
+        let m=note.match(/facebook\.com\/groups\/(\d{6,})/i);
+        if(m) out.push(m[1]);
+        m=lastFile.match(/^api_posts_(\d{6,})_/i);
+        if(m) out.push(m[1]);
+      };
+
       // D:P => URL, Group ID, ..., File JSON cuối (M), ..., Ghi chú (P)
       const v=sh.getRange(row,4,1,13).getDisplayValues()[0]||[];
-      const idCell=String(v[1]||'').replace(/\s+/g,'').trim();
-      const lastFile=String(v[9]||'').trim();
-      const note=String(v[12]||'').trim();
       const candidates=[];
-      if(/^\d{6,}$/.test(idCell)) candidates.push(idCell);
-      let m=note.match(/facebook\.com\/groups\/(\d{6,})/i);
-      if(m) candidates.push(m[1]);
-      m=lastFile.match(/^api_posts_(\d{6,})_/i);
-      if(m) candidates.push(m[1]);
-      return candidates.find(x=>x && x!==direct) || candidates[0] || '';
+      collectNumeric(v,candidates);
+      let found=candidates.find(x=>x && x!==direct) || candidates[0] || '';
+      if(found) return found;
+
+      // Defense-in-depth: duplicate/import rows may not carry the historical numeric
+      // alias themselves. Search sibling rows with the same canonical Group key.
+      const identityKey=exactGroupKeyFromRow_(groupUrl,v[1]);
+      if(identityKey && sh.getLastRow()>=2){
+        const siblings=sh.getRange(2,4,sh.getLastRow()-1,13).getDisplayValues();
+        for(let i=0;i<siblings.length;i++){
+          const siblingRow=i+2;
+          if(siblingRow===row) continue;
+          const sv=siblings[i]||[];
+          if(exactGroupKeyFromRow_(sv[0],sv[1])!==identityKey) continue;
+          const siblingCandidates=[];
+          collectNumeric(sv,siblingCandidates);
+          found=siblingCandidates.find(x=>x && x!==direct) || siblingCandidates[0] || '';
+          if(found) return found;
+        }
+      }
+      return '';
     }catch(_){
       return '';
     }
@@ -3939,6 +3965,22 @@ const RemoteApp = (() => {
     return out;
   }
 
+  function repairDuplicateRegistryRow_(sh,d,reasonCode) {
+    if(!sh || !d || !d.row || !d.canonicalRow) return false;
+    const current=String(sh.getRange(d.row,24).getDisplayValue()||'').trim();
+    if(current==='ĐANG QUÉT') return false;
+    sh.getRange(d.row,1).setValue('Không');
+    sh.getRange(d.row,23).setValue(false);
+    setGroupRowStatus_(
+      sh,d.row,'DỪNG',
+      String(sh.getRange(d.row,25).getDisplayValue()||'').trim(),
+      'AUTO REPAIR: '+String(reasonCode||'DUPLICATE_IDENTITY')+
+        ' → canonical row '+d.canonicalRow+' ('+d.canonicalName+'). Giữ row để audit, tắt monitoring và không gọi FBAIO từ row duplicate.'
+    );
+    return true;
+  }
+
+
 
   function getGroupFeedSpillovers_() {
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
@@ -4045,14 +4087,7 @@ const RemoteApp = (() => {
     const duplicates=getDuplicateGroupIdentityRows_();
     if(repair && duplicates.length){
       duplicates.forEach(d=>{
-        const current=String(sh.getRange(d.row,24).getDisplayValue()||'').trim();
-        if(current==='ĐANG QUÉT') return;
-        sh.getRange(d.row,1).setValue('Không');
-        setGroupRowStatus_(
-          sh,d.row,'DỪNG',
-          String(sh.getRange(d.row,25).getDisplayValue()||'').trim(),
-          'AUTO REPAIR: DUPLICATE_IDENTITY → canonical row '+d.canonicalRow+' ('+d.canonicalName+'). Giữ row để audit nhưng tắt monitoring.'
-        );
+        repairDuplicateRegistryRow_(sh,d,'DUPLICATE_IDENTITY');
         // Canonical row remains active. No Group-key retry state is written because
         // duplicate and canonical intentionally share the same identity.
       });
@@ -4693,24 +4728,54 @@ const RemoteApp = (() => {
     const last=sheet.getLastRow();
     if(last<2) return [];
     const values=sheet.getRange(2,1,last-1,26).getValues();
-    const out=[];
+    const duplicateByRow={};
+    getDuplicateGroupIdentityRows_().forEach(d=>duplicateByRow[Number(d.row||0)]=d);
+    const byCanonicalRow={};
+
     values.forEach((r,i)=>{
-      if(r[22]===true) {
-        const row=i+2;
-        const url=String(r[3]||'').trim();
-        if(!url) return;
-        out.push({
+      if(r[22]!==true) return;
+      const selectedRow=i+2;
+      const dup=duplicateByRow[selectedRow]||null;
+      const row=dup?Number(dup.canonicalRow||0):selectedRow;
+      if(row<2 || row>last) return;
+      const cr=row===selectedRow?r:(values[row-2]||[]);
+      const url=String(cr[3]||'').trim();
+      if(!url) return;
+
+      if(!byCanonicalRow[row]){
+        byCanonicalRow[row]={
           row,
-          name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
-          profile:String(r[1]||'').trim() || 'AUTO',
+          name:String(cr[2]||'').trim() || ('Group '+String(cr[4]||'')),
+          profile:String(cr[1]||'').trim() || 'AUTO',
           url,
-          groupKey:exactGroupKeyFromRow_(url,r[4]),
-          targetCount:normalizeGroupTarget_(r[8]||25),
-          status:String(r[23]||'')
-        });
+          groupKey:exactGroupKeyFromRow_(url,cr[4]),
+          targetCount:normalizeGroupTarget_(cr[8]||25),
+          status:String(cr[23]||''),
+          selectedFromRows:[selectedRow],
+          canonicalizedFromDuplicate:!!dup
+        };
+      }else{
+        byCanonicalRow[row].selectedFromRows.push(selectedRow);
+        if(dup) byCanonicalRow[row].canonicalizedFromDuplicate=true;
       }
     });
-    return out;
+    return Object.keys(byCanonicalRow).map(k=>byCanonicalRow[k]);
+  }
+
+  function repairSelectedDuplicateRows_(jobs) {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const duplicateByRow={};
+    getDuplicateGroupIdentityRows_().forEach(d=>duplicateByRow[Number(d.row||0)]=d);
+    let repaired=0;
+    (jobs||[]).forEach(job=>{
+      (job.selectedFromRows||[]).forEach(selectedRow=>{
+        const d=duplicateByRow[Number(selectedRow||0)];
+        if(!d || Number(d.canonicalRow||0)!==Number(job.row||0)) return;
+        if(repairDuplicateRegistryRow_(sh,d,'DUPLICATE_SELECTION_REDIRECT')) repaired++;
+      });
+    });
+    if(repaired) SpreadsheetApp.flush();
+    return repaired;
   }
 
   function groupPriorityRank_(status) {
@@ -5149,6 +5214,19 @@ const RemoteApp = (() => {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sheet=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
     if(row<2 || row>sheet.getLastRow()) throw new Error('Dòng Group không hợp lệ.');
+
+    const duplicate=getDuplicateGroupIdentityRows_().find(d=>Number(d.row||0)===row);
+    if(duplicate){
+      repairDuplicateRegistryRow_(sheet,duplicate,'STALE_DUPLICATE_JOB_BLOCKED');
+      SpreadsheetApp.flush();
+      return {
+        ok:false,skippedDuplicate:true,row,status:'SKIP_DUPLICATE',targetCount:target,
+        canonicalRow:Number(duplicate.canonicalRow||0),canonicalName:String(duplicate.canonicalName||''),
+        workerSlot:worker.slot,workerHealth:workerHealthState_(worker),runId,
+        errorClass:'STRUCTURAL',
+        note:'Duplicate registry row bị chặn trước FBAIO; dùng canonical row '+duplicate.canonicalRow+'.'
+      };
+    }
 
     const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group '+row);
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
@@ -6469,9 +6547,11 @@ const RemoteApp = (() => {
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const last=sheet.getLastRow();
     if(last<2) return [];
+    const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
     const values=sheet.getRange(2,1,last-1,26).getValues();
     const out=[];
     values.forEach((r,i)=>{
+      if(duplicateRows.has(i+2)) return;
       const status=String(r[23]||'');
       if(status!=='LỖI' && status!=='THIẾU') return;
       const url=String(r[3]||'').trim();
@@ -6565,8 +6645,11 @@ const RemoteApp = (() => {
     ensureV16Sheets_(false);
     clearGlobalStopAll_();
     const jobs=retryMode?collectRetryJobs_():getCheckedGroupRows_();
-    if(!jobs.length) throw new Error(retryMode?'Không có Group LỖI/THIẾU để retry.':'Chưa chọn Group nào.');
-    return prepareJobsForWorkers_(jobs,targetOverride,retryMode,retryMode?'retry':'selected');
+    if(!jobs.length) throw new Error(retryMode?'Không có Group LỖI/THIẾU hợp lệ để retry.':'Chưa chọn Group nào.');
+    const duplicateRedirects=retryMode?0:repairSelectedDuplicateRows_(jobs);
+    const plan=prepareJobsForWorkers_(jobs,targetOverride,retryMode,retryMode?'retry':'selected');
+    plan.duplicateRedirects=duplicateRedirects;
+    return plan;
   }
 
   function prepareDueWorkerBatch_(limit) {

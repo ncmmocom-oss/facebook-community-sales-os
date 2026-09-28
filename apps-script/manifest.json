@@ -1,9 +1,13 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.6.2-auto-monitor-readiness-hf1",
+  "version": "1.9.6.3-canonical-group-dispatch-hf1",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.6.3 Canonical Group Dispatch HF1: checkbox-selected duplicate registry rows are resolved to one canonical Group row before Worker assignment, preserving manual intent without issuing duplicate FBAIO requests.",
+    "Duplicate rows selected manually are disabled, unchecked, and retained only for audit with DUPLICATE_SELECTION_REDIRECT evidence.",
+    "Manual retry excludes duplicate rows; stale Worker jobs targeting a duplicate fail closed as SKIP_DUPLICATE before any Social AIO/FBAIO call.",
+    "Numeric Group ID fallback can inherit verified evidence from sibling rows with the same canonical Group identity, covering old import-only duplicate rows.",
     "Worker Keeper V1.2.2 edge-triggers E_FB_GROUP_ID_RESOLVE so a stale FBAIO error message cannot generate a duplicate WARN every minute.",
     "V1.9.6.2 Auto Monitor Readiness HF1: CI now asserts that checkbox-selected backend reads no Due Queue state and that stale-due revalidation exists only under jobMode=due.",
     "Partial Group scans that stop with a cursor because the per-job scan time budget is exhausted are classified TIME_BUDGET and enter bounded Auto Monitor retry/backoff instead of being stranded as UNKNOWN.",
