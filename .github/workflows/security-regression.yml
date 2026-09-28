@@ -150,7 +150,13 @@ jobs:
           assert "requireNumberBetween(1,200)" in runtime
           assert "requireValueInList(['10','15','20','25']" not in runtime
 
-          print('scan-scope + FBAIO identity + Auto Monitor + custom scan target contract OK')
+          assert "Numeric ID " in runtime
+          assert "ID fallback " not in runtime
+          assert "let status='XONG';\n      let note='';" in runtime
+          assert "let status='XONG', note='';" in runtime
+          assert "FBAIO vanity Group bị parse sai; đã chuyển sang numeric ID" not in runtime
+
+          print('scan-scope + FBAIO identity + Auto Monitor + custom target + success-note contract OK')
           PY
 
       - name: Reject obvious secret material
