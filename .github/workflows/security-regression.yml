@@ -196,11 +196,13 @@ jobs:
           assert "nextAt<=Date.now()" in due_valid
           assert "status==='LỖI'" in due_valid and "status==='THIẾU'" in due_valid
 
-          assert "🧪 TEST 1 CYCLE" in ui
-          assert "function testAutoMonitorCycle()" in ui
-          assert "AUTH REQUIRED" in ui
-          assert "SCHEDULER_IDLE" in ui
-          assert "WORKER_PASS" in ui
+          assert "🧪 TEST 1 CYCLE" not in ui
+          assert "function testAutoMonitorCycle()" not in ui
+          assert "function runAutoMonitorNow()" in ui
+          assert "RUN_AUTO_MONITOR_NOW" in ui
+          assert "▶ CHẠY NGAY 1 CYCLE" in ui
+          assert 'onclick="runDueGroups(false)"' not in ui
+          assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
           assert "function persistAutoMonitorSummary_(" in runtime
           assert "acceptance='BUSY'" in runtime
