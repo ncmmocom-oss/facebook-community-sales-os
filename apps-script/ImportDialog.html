@@ -1,6 +1,7 @@
 <!doctype html>
 <html>
 <head>
+  <meta name="social-aio-contract" content="scan-scope-v2">
   <base target="_top">
   <style>
 :root{--bg:#f5f7fb;--panel:#fff;--line:#e5e7eb;--text:#172033;--muted:#667085;--brand:#2563eb;--green:#047857;--amber:#b45309;--red:#b91c1c}
@@ -733,6 +734,11 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       monitorBusy=true;
       setStatus('Đang tạo Due Queue cho tối đa 30 Group đến hạn...');
       command({__command:'PREPARE_DUE_WORKER_BATCH',limit:30},plan=>{
+        if(plan && (plan.mode!=='due' || plan.scope!=='SCHEDULER_DUE')){
+          monitorBusy=false;
+          setStatus('❌ SCAN_SCOPE_MISMATCH: Due Queue nhận sai scope từ runtime. Đã chặn thực thi.');
+          return;
+        }
         if(!plan || !plan.selected){
           monitorBusy=false;
           setStatus('Due Queue hiện không có Group cần quét.');
@@ -1133,7 +1139,14 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       const ctx={results:[],started:Date.now(),runId};
       let remaining=workers.length;
       const workerNames=workers.map(w=>w.slot+'('+w.jobs.length+')').join(' • ');
-      const label=plan.mode==='due'?'DUE QUEUE':(retryMode?'RETRY':'QUÉT');
+      const expectedScope=plan.mode==='due'?'SCHEDULER_DUE':(retryMode?'EXCEPTION_RETRY':'CHECKBOX_SELECTION');
+      if(plan.scope!==expectedScope){
+        const msg='❌ SCAN_SCOPE_MISMATCH: plan '+String(plan.scope||'NONE')+' ≠ '+expectedScope+'. Đã chặn trước khi gọi Worker.';
+        setStatus(msg);
+        if(doneCallback) doneCallback({pauseAuto:true,message:msg});
+        return;
+      }
+      const label=plan.mode==='due'?'DUE QUEUE':(retryMode?'RETRY':'QUÉT ĐÃ CHỌN');
       setStatus(
         label+' bằng '+workers.length+' Worker...'+
         (runId?'\nRun: '+runId:'')+
@@ -1227,8 +1240,12 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       const btn=document.getElementById('scanSelectedBtn');
       btn.disabled=true;
       setStatus('Đang chia Group cho Worker Pool...');
-      command({__command:'PREPARE_WORKER_BATCH',targetCount:target}, plan=>{
+      command({__command:'PREPARE_SELECTED_WORKER_BATCH',targetCount:target}, plan=>{
         btn.disabled=false;
+        if(!plan || plan.mode!=='selected' || plan.scope!=='CHECKBOX_SELECTION'){
+          setStatus('❌ SCAN_SCOPE_MISMATCH: Quét đã chọn nhận sai scope từ runtime. Đã chặn thực thi để tránh chạy Due Queue.');
+          return;
+        }
         runWorkerPlan(plan,false);
       }, e=>{
         btn.disabled=false;

@@ -1,9 +1,14 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.1-hf4-run-scope",
+  "version": "1.9.5-scan-scope-security-hf1",
   "channel": "pilot",
-  "updated_at": "2026-09-27",
+  "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.5 Scan Scope Security HF1: manual CHECKBOX selection and scheduler DUE queue now have explicit, non-interchangeable scope contracts.",
+    "Control Center fails closed if Runtime.js and ImportDialog.html are from different UI contract generations.",
+    "Bootstrap V2.3 atomically refreshes Runtime + HTML whenever the Control Center opens, preventing stale cached UI from invoking a changed command contract.",
+    "Selected scan uses PREPARE_SELECTED_WORKER_BATCH and requires CHECKBOX_SELECTION; Due Queue requires SCHEDULER_DUE; worker execution validates jobMode.",
+    "Security regression CI asserts command/scope separation and prevents reintroduction of selected-vs-due routing regressions.",
     "V1.9.1-HF4 Run Scope: replaces sticky global STOP_ALL behavior in the V1.9 worker engine with per-run cancellation tokens keyed by runId.",
     "Every selected/retry/due worker plan gets a unique runId; every job carries that runId; STOP and Pause Auto only cancel that run, never a future run.",
     "The production scanner no longer reads the legacy STOP_ALL property. Legacy STOP_ALL is cleanup-only and cannot poison new scans.",

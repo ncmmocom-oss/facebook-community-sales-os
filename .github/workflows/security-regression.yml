@@ -1,0 +1,82 @@
+name: Security Regression Gate
+
+on:
+  pull_request:
+    paths:
+      - 'apps-script/**'
+      - 'bootstrap/**'
+      - '.github/workflows/security-regression.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps-script/**'
+      - 'bootstrap/**'
+      - '.github/workflows/security-regression.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scan-scope-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate JavaScript syntax
+        run: |
+          cp apps-script/Runtime.js /tmp/runtime.js
+          node --check /tmp/runtime.js
+          cp bootstrap/Code.gs /tmp/bootstrap.js
+          node --check /tmp/bootstrap.js
+
+      - name: Assert manual and Due scopes cannot cross
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          runtime = Path('apps-script/Runtime.js').read_text(encoding='utf-8')
+          ui = Path('apps-script/ImportDialog.html').read_text(encoding='utf-8')
+          bootstrap = Path('bootstrap/Code.gs').read_text(encoding='utf-8')
+
+          required_runtime = [
+              "UI_CONTRACT: 'scan-scope-v2'",
+              "PREPARE_SELECTED_WORKER_BATCH",
+              "scope:'SCHEDULER_DUE'",
+              "'CHECKBOX_SELECTION'",
+              "SCAN_SCOPE_INVALID",
+              "UI_RUNTIME_CONTRACT_MISMATCH",
+          ]
+          for token in required_runtime:
+              assert token in runtime, f'missing runtime security token: {token}'
+
+          assert 'content="scan-scope-v2"' in ui
+          assert "command({__command:'PREPARE_SELECTED_WORKER_BATCH'" in ui
+          assert "command({__command:'PREPARE_DUE_WORKER_BATCH'" in ui
+          assert "plan.scope!=='CHECKBOX_SELECTION'" in ui
+          assert "plan.scope!=='SCHEDULER_DUE'" in ui
+          assert 'SCAN_SCOPE_MISMATCH' in ui
+
+          selected_start = ui.index('function runCheckedGroups()')
+          selected_end = ui.index('function retryFailedGroups()', selected_start)
+          selected_block = ui[selected_start:selected_end]
+          assert 'PREPARE_DUE_WORKER_BATCH' not in selected_block, 'manual selected scan must never call Due Queue'
+
+          due_start = ui.index('function runDueGroups(')
+          due_end = ui.index('function analyzeSourceIdsSequential', due_start)
+          due_block = ui[due_start:due_end]
+          assert 'PREPARE_SELECTED_WORKER_BATCH' not in due_block, 'Due Queue must never call checkbox-selected scan'
+
+          assert "BOOTSTRAP_VERSION = '2.3-runtime-ui-atomic'" in bootstrap
+          assert "cache.remove('SOCIAL_AIO_REMOTE_RUNTIME')" in bootstrap
+          assert "cache.remove('SOCIAL_AIO_REMOTE_HTML')" in bootstrap
+          assert "loadRemoteApp_(freshUi === true)" in bootstrap
+
+          print('scan-scope security contract OK')
+          PY
+
+      - name: Reject obvious secret material
+        run: |
+          if grep -RInE --exclude-dir=.git --exclude='*.md' '(sk-[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{20,}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----)' apps-script bootstrap worker-keeper; then
+            echo 'Potential secret material detected.'
+            exit 1
+          fi

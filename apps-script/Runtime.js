@@ -1,6 +1,7 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.4-auto-comment-production',
+    VERSION: '1.9.5-scan-scope-security-hf1',
+    UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
@@ -81,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.5 Scan Scope Security HF1: khóa tách biệt CHECKBOX SELECTED và SCHEDULER DUE, fail-closed khi UI/runtime lệch contract; bổ sung release/security regression gate.\n' +
       'V1.9.4 Auto Monitor V2 + Comment Intelligence: backend trigger 5 phút, retry/backoff + hard quarantine, comment delta queue/pagination + AI Gate, production self-test/repair; restore 4-condition Hard Gate và chặn feed identity spillover.\n' +
       'V1.9.3 Operations Dashboard: SLA quét + overdue/coverage + exception queue + fresh signal/AI aging + operational health score cho pilot 200 Group.\n' +
       'V1.9.2 Control Center IA: sidebar 7 khu vực + Overview/System Health; tách Group, Signal/Lead, AI/Offer, Worker/API, Data, Runtime/Logs mà không đổi business logic.\n' +
@@ -93,6 +95,13 @@ const RemoteApp = (() => {
     const allowed=new Set(['scan','overview','groups','signals','ai','settings','workers','data','system']);
     const initial=allowed.has(String(view||''))?String(view):'scan';
     let htmlText=getRemoteHtml_();
+    const uiContractMarker='name="social-aio-contract" content="'+CFG.UI_CONTRACT+'"';
+    if(htmlText.indexOf(uiContractMarker)<0){
+      throw new Error(
+        'UI_RUNTIME_CONTRACT_MISMATCH: Runtime '+CFG.VERSION+' yêu cầu '+CFG.UI_CONTRACT+
+        '. Hãy vào SOCIAL AIO → HỆ THỐNG → Cập nhật runtime từ GitHub để nạp đồng bộ Runtime + UI.'
+      );
+    }
     htmlText=htmlText.replace('<body>', '<body data-initial-view="'+initial+'">');
     const html = HtmlService.createHtmlOutput(htmlText)
       .setWidth(1040)
@@ -1021,6 +1030,8 @@ const RemoteApp = (() => {
     if (name === 'SAVE_WORKER_POOL') return saveWorkerPool_(command.workers || []);
     if (name === 'TEST_WORKER_POOL') return testWorkerPool_();
     if (name === 'RUN_API_DIAGNOSTIC') return runApiResponseDiagnostic_(command);
+    if (name === 'PREPARE_SELECTED_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, false);
+    // Legacy alias kept for one transition cycle. New UI must use PREPARE_SELECTED_WORKER_BATCH.
     if (name === 'PREPARE_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, false);
     if (name === 'PREPARE_DUE_WORKER_BATCH') return prepareDueWorkerBatch_(command.limit || CFG.DUE_CYCLE_LIMIT);
     if (name === 'PREPARE_RETRY_WORKER_BATCH') return prepareWorkerBatch_(command.targetCount, true);
@@ -4964,6 +4975,10 @@ const RemoteApp = (() => {
     ensureV16Sheets_(false);
     const row=Number(command.row||0);
     const runId=String(command.runId||'').trim();
+    const jobMode=String(command.jobMode||'selected').trim().toLowerCase();
+    if(['selected','due','retry','auto_v2'].indexOf(jobMode)<0){
+      throw new Error('SCAN_SCOPE_INVALID: jobMode không hợp lệ: '+jobMode);
+    }
     const target=normalizeGroupTarget_(command.targetCount||25);
     const worker=getWorkerBySlot_(command.workerSlot);
     const ss=SpreadsheetApp.getActiveSpreadsheet();
@@ -4984,7 +4999,7 @@ const RemoteApp = (() => {
 
     // A Due Queue plan can become stale while another Control Center finishes
     // the same Group. Re-check immediately before execution.
-    if(String(command.jobMode||'').toLowerCase()==='due' && !isDueJobStillValid_(sheet,row)){
+    if(jobMode==='due' && !isDueJobStillValid_(sheet,row)){
       return {
         ok:false,skippedNotDue:true,row,name,groupKey,groupUrl,targetCount:target,
         status:'SKIP_NOT_DUE',workerSlot:worker.slot,workerHealth:workerHealthState_(worker)
@@ -6356,6 +6371,9 @@ const RemoteApp = (() => {
       version:CFG.VERSION,
       runId,
       mode:mode||'selected',
+      scope:(String(mode||'selected').toLowerCase()==='due'
+        ? 'SCHEDULER_DUE'
+        : (String(mode||'selected').toLowerCase()==='retry' ? 'EXCEPTION_RETRY' : 'CHECKBOX_SELECTION')),
       retryMode:!!retryMode,
       selected:list.length,
       assigned:workers.reduce((n,w)=>n+w.jobs.length,0),
@@ -6383,7 +6401,7 @@ const RemoteApp = (() => {
     const jobs=getDueGroupRows_(limit||CFG.DUE_CYCLE_LIMIT);
     if(!jobs.length){
       return {
-        version:CFG.VERSION,mode:'due',retryMode:false,selected:0,assigned:0,
+        version:CFG.VERSION,mode:'due',scope:'SCHEDULER_DUE',retryMode:false,selected:0,assigned:0,
         unassigned:[],workers:[],configuredCount:getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId).length
       };
     }
