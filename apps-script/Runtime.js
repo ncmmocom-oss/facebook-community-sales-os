@@ -3983,61 +3983,70 @@ const RemoteApp = (() => {
     return true;
   }
 
-  function resolveCanonicalGroupRow_(sh,requestedRow) {
-    const row=Number(requestedRow||0);
+  function buildCanonicalGroupIndex_(sh) {
     const last=sh?sh.getLastRow():0;
-    if(!sh || row<2 || row>last) {
-      return {ok:false,requestedRow:row,row:0,reason:'ROW_INVALID'};
-    }
+    const rows=last>=2?sh.getRange(2,1,last-1,26).getValues():[];
+    const buckets={};
+    const byRow={};
 
-    const current=sh.getRange(row,1,1,26).getValues()[0]||[];
-    const currentUrl=String(current[3]||'').trim();
-    const key=exactGroupKeyFromRow_(currentUrl,current[4]);
-    if(!key) {
-      return {ok:false,requestedRow:row,row:0,reason:'IDENTITY_MISSING'};
-    }
-
-    const rows=sh.getRange(2,1,last-1,26).getValues();
-    const same=[];
     rows.forEach((r,i)=>{
+      const row=i+2;
       const url=String(r[3]||'').trim();
-      if(!url) return;
-      const k=exactGroupKeyFromRow_(url,r[4]);
-      if(k!==key) return;
-      same.push({
-        row:i+2,
-        key:k,
+      const key=exactGroupKeyFromRow_(url,r[4]);
+      if(!key){
+        byRow[row]={ok:false,requestedRow:row,row:0,reason:'IDENTITY_MISSING'};
+        return;
+      }
+      const item={
+        row,key,
         active:String(r[0]||'').trim()==='Có',
-        name:String(r[2]||'').trim()||('Group '+k),
+        name:String(r[2]||'').trim()||('Group '+key),
         status:String(r[23]||'').trim(),
         lastAt:opsDateMs_(r[9])
+      };
+      (buckets[key]||(buckets[key]=[])).push(item);
+    });
+
+    Object.keys(buckets).forEach(key=>{
+      const list=buckets[key];
+      const active=list.filter(x=>x.active);
+      active.sort((a,b)=>{
+        const doneA=a.status==='XONG'?1:0,doneB=b.status==='XONG'?1:0;
+        if(doneA!==doneB) return doneB-doneA;
+        return (b.lastAt||0)-(a.lastAt||0) || a.row-b.row;
+      });
+      const canonical=active[0]||null;
+      list.forEach(item=>{
+        if(!canonical){
+          byRow[item.row]={
+            ok:false,requestedRow:item.row,row:0,key,
+            reason:'INACTIVE_NO_CANONICAL',
+            requestedActive:item.active
+          };
+          return;
+        }
+        byRow[item.row]={
+          ok:true,
+          requestedRow:item.row,
+          row:canonical.row,
+          key,
+          canonicalName:canonical.name,
+          redirected:canonical.row!==item.row,
+          requestedActive:item.active
+        };
       });
     });
 
-    const active=same.filter(x=>x.active);
-    if(!active.length) {
-      return {
-        ok:false,requestedRow:row,row:0,key,
-        reason:'INACTIVE_NO_CANONICAL',
-        requestedActive:String(current[0]||'').trim()==='Có'
-      };
-    }
+    return {last,rows,byRow};
+  }
 
-    active.sort((a,b)=>{
-      const doneA=a.status==='XONG'?1:0,doneB=b.status==='XONG'?1:0;
-      if(doneA!==doneB) return doneB-doneA;
-      return (b.lastAt||0)-(a.lastAt||0) || a.row-b.row;
-    });
-    const canonical=active[0];
-    return {
-      ok:true,
-      requestedRow:row,
-      row:canonical.row,
-      key,
-      canonicalName:canonical.name,
-      redirected:canonical.row!==row,
-      requestedActive:String(current[0]||'').trim()==='Có'
-    };
+  function resolveCanonicalGroupRow_(sh,requestedRow,index) {
+    const row=Number(requestedRow||0);
+    const idx=index||buildCanonicalGroupIndex_(sh);
+    if(!sh || row<2 || row>Number(idx.last||0)) {
+      return {ok:false,requestedRow:row,row:0,reason:'ROW_INVALID'};
+    }
+    return idx.byRow[row] || {ok:false,requestedRow:row,row:0,reason:'IDENTITY_MISSING'};
   }
 
 
@@ -4802,12 +4811,13 @@ const RemoteApp = (() => {
     const last=sheet.getLastRow();
     if(last<2) return [];
     const values=sheet.getRange(2,1,last-1,26).getValues();
+    const canonicalIndex=buildCanonicalGroupIndex_(sheet);
     const byCanonicalRow={};
 
     values.forEach((r,i)=>{
       if(r[22]!==true) return;
       const selectedRow=i+2;
-      const resolved=resolveCanonicalGroupRow_(sheet,selectedRow);
+      const resolved=resolveCanonicalGroupRow_(sheet,selectedRow,canonicalIndex);
       if(!resolved.ok){
         sheet.getRange(selectedRow,23).setValue(false);
         return;
@@ -4839,11 +4849,12 @@ const RemoteApp = (() => {
 
   function repairSelectedDuplicateRows_(jobs) {
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const canonicalIndex=buildCanonicalGroupIndex_(sh);
     let repaired=0;
     (jobs||[]).forEach(job=>{
       (job.selectedFromRows||[]).forEach(selectedRow=>{
         if(Number(selectedRow||0)===Number(job.row||0)) return;
-        const resolved=resolveCanonicalGroupRow_(sh,selectedRow);
+        const resolved=resolveCanonicalGroupRow_(sh,selectedRow,canonicalIndex);
         if(!resolved.ok || Number(resolved.row||0)!==Number(job.row||0)) return;
         sh.getRange(selectedRow,1).setValue('Không');
         sh.getRange(selectedRow,23).setValue(false);
