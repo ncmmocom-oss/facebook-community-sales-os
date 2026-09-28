@@ -1,9 +1,12 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.8.2-tabbed-smart-cockpit",
+  "version": "1.9.8.5-row-height-standard",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.8.5 Row Height Standard: all Runtime-created/imported/lead-refresh rows use the shared 21 px production row height.",
+    "This prevents imports and sync operations from re-expanding rows after the workbook has been normalized.",
+    "The workbook live state has already been normalized to 21 px across all 15 sheets.",
     "V1.9.8.2 Tabbed Smart Cockpit: replaces the vertical sidebar with compact horizontal module tabs to recover workspace width.",
     "Adds a reusable browser-workspace tab rail for 200 GROUP, BINH LUAN, TIN HIEU, LEAD INBOX and AUTO LOG.",
     "Adds one context-aware Smart Action: exception retry > Due cycle > Comment cooldown view > AI backlog > Worker health; no automatic business action is executed without an operator click.",

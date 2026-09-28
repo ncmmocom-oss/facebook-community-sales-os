@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.4-comment-ai-guard',
+    VERSION: '1.9.8.5-row-height-standard',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -62,6 +62,7 @@ const RemoteApp = (() => {
     GROUP_LEASE_TTL_MS: 5 * 60 * 1000,
     RELAY_RETRY_ATTEMPTS: 3,
     EMPTY_PAGE_RETRY_ATTEMPTS: 3,
+    SHEET_ROW_HEIGHT_PX: 21,
   };
 
   function getVersion() { return CFG.VERSION; }
@@ -85,6 +86,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.5 Row Height Standard: khóa chiều cao hàng production ở 21 px cho import, worker append và Lead refresh; tránh Runtime làm giãn hàng trở lại sau khi Sheet đã chuẩn hóa.\n' +
       'V1.9.8.4 Comment/AI Guard: tách lỗi provider-wide Comment khỏi retry theo Post để không kéo backlog vào backoff nhiều giờ; normalize PROVIDER_TRANSIENT cũ thành PROVIDER_WAIT; AI concurrent run được coi là busy hợp lệ thay vì lỗi vận hành.\n' +
       'V1.9.8.3 Sidebar Command Tabs: khôi phục sidebar dọc làm menu hệ thống; tab ngang chỉ nằm trong 200 Group Monitoring cho Quét Nhóm / Quét Comt / AI Phân tích / Cập nhật dữ liệu / Auto Monitor; command chạy backend trực tiếp, link Sheet chỉ là viewer phụ.\n' +
       'V1.9.8.2 Tabbed Smart Cockpit: bản thử nghiệm horizontal shell; đã được V1.9.8.3 điều chỉnh lại theo operator workflow.\n' +
@@ -477,7 +479,7 @@ const RemoteApp = (() => {
   function writeRowsNewestFirst_(sheet, startRow, rows, totalCols, textCols) {
     if (!rows || !rows.length) return;
     sheet.insertRowsBefore(startRow, rows.length);
-    sheet.setRowHeights(startRow, rows.length, 42);
+    sheet.setRowHeights(startRow, rows.length, CFG.SHEET_ROW_HEIGHT_PX);
     const range = sheet.getRange(startRow,1,rows.length,totalCols);
     range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     range.setVerticalAlignment('middle');
@@ -495,7 +497,7 @@ const RemoteApp = (() => {
     // Worker path appends instead of shifting the whole sheet on every Group.
     // One sort is done once at batch finalization.
     const row=Math.max(startRow,sheet.getLastRow()+1);
-    sheet.setRowHeights(row,rows.length,42);
+    sheet.setRowHeights(row,rows.length, CFG.SHEET_ROW_HEIGHT_PX);
     const range=sheet.getRange(row,1,rows.length,totalCols);
     range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     range.setVerticalAlignment('middle');
@@ -2551,7 +2553,7 @@ const RemoteApp = (() => {
     if (oldLast >= 2) leadSheet.getRange(2,1,oldLast-1,21).clearContent();
     if (output.length) {
       leadSheet.getRange(2,1,output.length,21).setValues(output);
-      leadSheet.setRowHeights(2,output.length,42);
+      leadSheet.setRowHeights(2,output.length, CFG.SHEET_ROW_HEIGHT_PX);
       leadSheet.getRange(2,1,output.length,21).setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
     }
     SpreadsheetApp.flush();

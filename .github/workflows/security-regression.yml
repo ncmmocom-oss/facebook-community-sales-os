@@ -38,6 +38,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
 
           runtime = Path('apps-script/Runtime.js').read_text(encoding='utf-8')
           ui = Path('apps-script/ImportDialog.html').read_text(encoding='utf-8')
@@ -204,14 +205,15 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.2-tabbed-smart-cockpit'" in runtime
+          assert "VERSION: '1.9.8.5-row-height-standard'" in runtime
           assert "COMMENT_PROVIDER_BREAKER_KEY" in runtime
           assert "COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000" in runtime
           assert "COMMENT_RETRY_DELAYS_MS" in runtime
           assert "function isCommentProviderTransientError_(" in runtime
           assert "failed to fetch dynamically imported module" in runtime.lower()
           assert "function repairCommentProviderHardQuarantine_(" in runtime
-          assert "PROVIDER_TRANSIENT recovered" in runtime
+          assert "PROVIDER_WAIT:" in runtime
+          assert "normalize PROVIDER_TRANSIENT cũ thành PROVIDER_WAIT" in runtime
           assert "function getCommentProviderBreaker_(" in runtime
           assert "providerCircuitOpen" in runtime
           assert "break; // provider-wide outage" in runtime
@@ -228,29 +230,33 @@ jobs:
           assert "function getWorkspaceLinks_(" in runtime
           assert "window.open(cached||'about:blank',tabName)" in ui
           assert "function openWorkspaceTab(" in ui
-          assert "loadWorkspaceLinks();" in ui
+          assert "function loadWorkspaceLinks(" in ui
           assert "SOCIAL_AIO_" in ui
           assert "openWorkspaceTab('comments','BÌNH LUẬN')" in ui
           assert "openWorkspaceTab('api_log','NHẬT KÝ API')" in ui
           assert "Source COMMENT_UI" in ui
-          assert 'class="workspaceTabs"' in ui
-          assert "openWorkspaceTab('groups','200 GROUP')" in ui
-          assert "openWorkspaceTab('comments','BÌNH LUẬN')" in ui
-          assert "openWorkspaceTab('auto_log','NHẬT KÝ AUTO')" in ui
-          assert 'id="smartActionBtn"' in ui
-          assert "function renderSmartAction(" in ui
-          assert "function runSmartAction()" in ui
-          assert "function toggleAutoMonitor()" in ui
-          assert "smartActionMode==='RETRY'" in ui
-          assert "smartActionMode==='CYCLE'" in ui
-          assert "smartActionMode==='COMMENTS'" in ui
-          assert "smartActionMode==='AI'" in ui
-          assert ".heroActions{display:none}" in ui
-          assert "#monitorBox .monitorActions{display:none}" in ui
-          assert "grid-template-columns:216px" not in ui
+          assert 'class="sideNav"' in ui
+          assert 'class="groupTaskTabs"' in ui
+          assert 'data-group-task="scan"' in ui
+          assert 'data-group-task="comments"' in ui
+          assert 'data-group-task="ai"' in ui
+          assert 'data-group-task="data"' in ui
+          assert 'data-group-task="auto"' in ui
+          assert "1. Quét Nhóm" in ui
+          assert "2. Quét Comt" in ui
+          assert "3. AI Phân tích" in ui
+          assert "4. Cập nhật dữ liệu" in ui
+          assert "5. Auto Monitor" in ui
+          assert "grid-template-columns:216px" in ui
           assert "function runCommentIntelligenceUi_(" in runtime
           assert "source:'COMMENT_UI'" in runtime
           assert "logAutoMonitorRun_(" in runtime
+
+          assert "SHEET_ROW_HEIGHT_PX: 21" in runtime
+          assert not re.search(r"setRowHeights\([^\n;]*,\s*42\s*\)", runtime), "Runtime must not hard-code 42px row heights"
+          assert "setRowHeights(startRow, rows.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
+          assert "setRowHeights(row,rows.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
+          assert "leadSheet.setRowHeights(2,output.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
 
           assert "function persistAutoMonitorSummary_(" in runtime
           assert "acceptance='BUSY'" in runtime
