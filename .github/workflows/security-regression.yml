@@ -80,6 +80,8 @@ jobs:
               "isGroupIdentityResolveError_",
               "historicNumericGroupIdFromRow_",
               "NUMERIC_GROUP_ID_FALLBACK",
+              "PREEMPTIVE_NUMERIC_GROUP_ID",
+              "R_NUMERIC_ALIAS_PREEMPT",
               "R_NUMERIC_FALLBACK_PASS",
               "GROUP_ID_RESOLVE",
               "socialAioRaw",
