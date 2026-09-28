@@ -143,7 +143,9 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         <div class="opsMetricRow"><span>Comment đã lưu</span><b id="commentStored">0</b></div>
         <div class="opsMetricRow"><span>Hot Watch đến hạn</span><b id="commentHotWatch">0</b></div>
         <div class="opsMetricRow"><span>Coverage comment</span><b id="commentCoverage">0%</b></div>
-        <div class="opsMetricRow"><span>Hard error</span><b id="commentHard" class="metricCritical">0</b></div>
+        <div class="opsMetricRow"><span>Provider FBAIO</span><b id="commentProvider">ĐANG ĐỌC</b></div>
+        <div class="opsMetricRow"><span>Retry / backoff</span><b id="commentRetry">0</b></div>
+        <div class="opsMetricRow"><span>Hard structural</span><b id="commentHard" class="metricCritical">0</b></div>
       </div>
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
         <button class="primary" onclick="runCommentIntelligenceNow()">💬 QUÉT COMMENT NGAY</button>
@@ -852,19 +854,28 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     }
 
     function runCommentIntelligenceNow() {
-      setStatus('Đang chạy Comment Intelligence...');
+      setStatus('Đang chạy Comment Acquisition Core...');
       command({__command:'RUN_COMMENT_INTELLIGENCE',limit:6},r=>{
         const stats=r.stats||{};
+        const provider=stats.provider||{};
+        const circuit=!!r.providerCircuitOpen || !!provider.open;
+        const icon=circuit?'🟡':(r.ok===false?'❌':'✅');
+        const retryAt=Number(r.providerRetryAt||provider.openUntil||0);
         setStatus(
-          '✅ COMMENT INTELLIGENCE'+
+          icon+' COMMENT ACQUISITION'+
           '\nPost xử lý: '+Number(r.processed||0)+
           '\nComment mới: '+Number(r.commentImported||0)+
           '\nComment đã lưu: '+Number(stats.storedComments||0)+
           '\nBacklog post: '+Number(stats.backlogPosts||0)+
+          '\nRetry/backoff: '+Number(stats.retryPosts||0)+' • chờ '+Number(stats.retryDeferred||0)+
+          '\nHard structural: '+Number(stats.hardErrors||0)+
+          '\nProvider: '+(circuit?'CIRCUIT OPEN':'OK')+
+          (retryAt?('\nRetry provider sau: '+new Date(retryAt).toLocaleString()):'')+
+          (r.repairedProviderHard?('\nĐã phục hồi false-HARD: '+Number(r.repairedProviderHard||0)):'')+
           '\nCoverage: '+Number(stats.coveragePct||0)+'%'
         );
         pollMonitoring();
-      },e=>setStatus('Comment Intelligence lỗi: '+(e.message||e)));
+      },e=>setStatus('Comment Acquisition lỗi: '+(e.message||e)));
     }
 
     function runProductionSelfTest() {
@@ -1547,6 +1558,14 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       phase2SetText('commentStored',Number(ci.storedComments||0));
       phase2SetText('commentHotWatch',Number(ci.hotWatchDue||0));
       phase2SetText('commentCoverage',Number(ci.coveragePct||0)+'%');
+      const provider=ci.provider||{};
+      phase2SetText(
+        'commentProvider',
+        provider.open
+          ? ('CIRCUIT OPEN • '+workerTimeAgo(new Date(Number(provider.openUntil||0)).toISOString()))
+          : 'OK'
+      );
+      phase2SetText('commentRetry',Number(ci.retryPosts||0)+(ci.retryDeferred?(' • '+Number(ci.retryDeferred||0)+' chờ'):''));
       phase2SetText('commentHard',Number(ci.hardErrors||0));
       phase2SetText('autoBackendState',am.enabled?'ON':'OFF');
       phase2SetText('autoTriggerState',am.triggerInstalled?('OK • '+Number(am.triggerCount||1)):'THIẾU');
