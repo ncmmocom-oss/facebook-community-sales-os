@@ -1,9 +1,15 @@
 {
   "name": "Facebook Community Sales OS - Social AIO Runtime",
-  "version": "1.9.6.6-active-row-canonical-guard",
+  "version": "1.9.7.0-auto-monitor-v2-production",
   "channel": "pilot",
   "updated_at": "2026-09-28",
   "notes": [
+    "V1.9.7.0 Auto Monitor V2 Production: scheduler enable is fail-closed; AUTO is persisted ON only after ScriptApp permission is available and exactly one installable trigger exists.",
+    "Control Center adds TEST 1 CYCLE: maximum one due/retry Group, no Comment Intelligence or AI, allowing scheduler validation before enabling recurring execution.",
+    "NHAT KY AUTO records queue counts and per-Group outcomes for every test/trigger cycle.",
+    "Auto DUE jobs are revalidated both in the scheduler and immediately inside Worker execution through requireDue.",
+    "Due revalidation now uses the same active/lifecycle/lastAt/nextAt/CAN QUET rules as Due Queue selection instead of relying only on the display text.",
+    "Self-Test adds AUTO_AUTH P0 and reports ScriptApp authorization separately from trigger installation.",
     "V1.9.6.6 Active Row Canonical Guard: Quét dòng đang chọn resolves the active canonical Group before any FBAIO call.",
     "Rows with Hoạt động=Không cannot scan independently. If they share identity with an active canonical row, manual scan redirects to that canonical row; otherwise it fails closed.",
     "Checkbox selection uses a single canonical identity index per batch, so inactive/audit duplicates cannot create extra jobs and 200-Group selection remains efficient.",
