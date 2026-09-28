@@ -76,9 +76,9 @@ jobs:
           worker_start = runtime.index('function runWorkerJob_(')
           worker_end = runtime.index('function sortOpportunityNewestFirst_', worker_start)
           worker_block = runtime[worker_start:worker_end]
-          due_guard = "if(jobMode==='due' && !isDueJobStillValid_(sheet,row))"
-          assert due_guard in worker_block, 'Due recheck must be guarded by jobMode===due'
-          assert worker_block.count('isDueJobStillValid_') == 1, 'selected/retry/auto must not inherit extra Due checks'
+          assert "const requireDue=jobMode==='due' || command.requireDue===true;" in worker_block, 'manual Due and Auto Due must share the same execution guard'
+          assert "if(requireDue && !isDueJobStillValid_(sheet,row))" in worker_block, 'Due recheck must happen immediately before Worker execution'
+          assert worker_block.count('isDueJobStillValid_') == 1, 'Worker must have exactly one canonical Due recheck'
           assert "SKIP_DUPLICATE" in worker_block, 'stale duplicate jobs must fail closed before FBAIO'
           assert "SKIP_INACTIVE" in worker_block, 'inactive audit rows must fail closed before FBAIO'
           assert "resolveCanonicalGroupRow_(sheet,row)" in worker_block, 'worker must resolve canonical identity before FBAIO'
