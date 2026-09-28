@@ -4001,7 +4001,7 @@ const RemoteApp = (() => {
           providerCircuitOpen=true;
           providerRetryAt=Number(opened.openUntil||0);
           providerError=String(opened.lastError||'');
-          break;
+          break; // provider-wide outage: stop remaining Comment jobs in this cycle.
         }
       }
     }
