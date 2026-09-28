@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.6.1-fbaio-preemptive-id',
+    VERSION: '1.9.6.2-auto-monitor-readiness-hf1',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.6.2 Auto Monitor Readiness HF1: manual selected được khóa CI không đọc Due state; partial scan do time budget được retry có kiểm soát; Due Queue bỏ duplicate registry rows; log time-budget rõ ràng.\n' +
       'V1.9.6.1 FBAIO Preemptive ID: với vanity Group bắt đầu bằng số và đã có numeric ID từng xác minh, gọi thẳng numeric ID để tránh FBAIO parse sai trước khi lỗi xảy ra; fallback reactive vẫn giữ cho các case khác.\n' +
       'V1.9.6 FBAIO Group ID Fallback: nhận diện vanity Group bắt đầu bằng số bị FBAIO parse sai; tự fallback numeric Group ID đã xác minh, ghi runtime failure/fallback vào NHẬT KÝ API và quarantine identity lỗi không thể repair.\n' +
       'V1.9.5 Scan Scope Security HF1: khóa tách biệt CHECKBOX SELECTED và SCHEDULER DUE, fail-closed khi UI/runtime lệch contract; bổ sung release/security regression gate.\n' +
@@ -3404,6 +3405,16 @@ const RemoteApp = (() => {
       cursor=nextCursor;
     }
 
+    const timeBudgetExceeded=!stopped && posts.length<target && !!nextCursor && (Date.now()-started)>=pageBudgetMs;
+    if(timeBudgetExceeded){
+      logRuntimeApiEvent_({
+        groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
+        variant:'PARTIAL_TIME_BUDGET',title:'Partial Group scan reached time budget',code:'R_TIME_BUDGET_PARTIAL',
+        attemptedUrl:apiGroupUrl,durationMs:Date.now()-started,
+        error:'posts='+posts.length+'/'+target+' pages='+pages+' nextCursor=YES'
+      });
+    }
+
     if(!posts.length) {
       if(stopped){
         return {
@@ -3420,6 +3431,7 @@ const RemoteApp = (() => {
           nextCursor:'',
           transientRetries,
           transientError:'',
+          timeBudgetExceeded:false,
           imported:null,
           durationMs:Date.now()-started
         };
@@ -3465,6 +3477,7 @@ const RemoteApp = (() => {
       nextCursor:nextCursor||'',
       transientRetries,
       transientError,
+      timeBudgetExceeded,
       fallbackUsed,
       fallbackGroupId,
       fallbackCause,
@@ -3870,7 +3883,7 @@ const RemoteApp = (() => {
     const props=PropertiesService.getDocumentProperties();
     const prev=getAutoRetryState_(groupKey);
     const cls=String(errorClass||'UNKNOWN').toUpperCase();
-    const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY'].indexOf(cls)>=0;
+    const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)>=0;
     const attempts=Number(prev.attempts||0)+1;
     const hard=!retryable || attempts>=CFG.AUTO_RETRY_MAX_ATTEMPTS;
     const delays=CFG.AUTO_RETRY_DELAYS_MS||[];
@@ -3891,6 +3904,7 @@ const RemoteApp = (() => {
     const text=String(note||'');
     if(/DUPLICATE_IDENTITY|URL_INVALID|HARD_QUARANTINE/i.test(text)) return 'STRUCTURAL';
     if(/không còn cursor|no cursor/i.test(text) && String(status||'')==='THIẾU') return 'EXHAUSTED';
+    if(/trước time budget|time budget/i.test(text) && String(status||'')==='THIẾU') return 'TIME_BUDGET';
     if(/relay tạm lỗi|HTTP\s*(429|502|503|504)|gateway timeout|service unavailable|timed?\s*out|timeout/i.test(text)) return 'TRANSIENT';
     return classifyScanError_(new Error(text));
   }
@@ -4064,7 +4078,7 @@ const RemoteApp = (() => {
       if(!url) return;
       const key=exactGroupKeyFromRow_(url,r[4]);
       const cls=classifyAutoSheetException_(status,r[25]);
-      if(['TRANSIENT','CONNECTION','SHEET_BUSY'].indexOf(cls)<0) return;
+      if(['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)<0) return;
       const state=getAutoRetryState_(key);
       if(state.hard || (state.nextAt && state.nextAt>Date.now())) return;
       out.push({
@@ -4626,7 +4640,7 @@ const RemoteApp = (() => {
 
       let status='XONG';
       let note=result.fallbackUsed
-        ? ('FBAIO vanity Group bị parse sai; đã tự fallback numeric ID '+result.fallbackGroupId+' và quét thành công.')
+        ? ('FBAIO vanity Group bị parse sai; đã chuyển sang numeric ID '+result.fallbackGroupId+'.')
         : '';
       if(stopped) {
         if(result.stopScope==='RUN'){
@@ -4652,7 +4666,7 @@ const RemoteApp = (() => {
       return Object.assign({},result,{
         row,name,groupKey,status,targetCount:target,stopped,incomplete:status==='THIẾU',progress,note,
         workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:'',
-        errorClass:result.transientError?'TRANSIENT':''
+        errorClass:result.transientError?'TRANSIENT':(result.timeBudgetExceeded?'TIME_BUDGET':'')
       });
     } catch(err) {
       const msg=String(err.message||err);
@@ -4711,9 +4725,11 @@ const RemoteApp = (() => {
     if(last<2) return [];
     const now=Date.now();
     const rows=sheet.getRange(2,1,last-1,27).getValues();
+    const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
     const jobs=[];
 
     rows.forEach((r,i)=>{
+      if(duplicateRows.has(i+2)) return;
       const active=String(r[0]||'').trim();
       const url=String(r[3]||'').trim();
       const lifecycle=String(r[6]||'').trim();
@@ -5192,7 +5208,7 @@ const RemoteApp = (() => {
       ].filter(Boolean).join(' • ');
 
       let status='XONG', note=result.fallbackUsed
-        ? ('FBAIO vanity Group bị parse sai; đã tự fallback numeric ID '+result.fallbackGroupId+' và quét thành công.')
+        ? ('FBAIO vanity Group bị parse sai; đã chuyển sang numeric ID '+result.fallbackGroupId+'.')
         : '';
       if(stopped){
         if(result.stopScope==='RUN'){
@@ -5222,7 +5238,7 @@ const RemoteApp = (() => {
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:'ONLINE',
         runId,stopped,stopScope:result.stopScope||'',incomplete:status==='THIẾU',progress,note,
-        errorClass:result.transientError?'TRANSIENT':''
+        errorClass:result.transientError?'TRANSIENT':(result.timeBudgetExceeded?'TIME_BUDGET':'')
       });
     }catch(err){
       const msg=String(err.message||err);
