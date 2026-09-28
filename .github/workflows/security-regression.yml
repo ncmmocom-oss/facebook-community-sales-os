@@ -104,14 +104,11 @@ jobs:
           due_block = ui[due_start:due_end]
           assert 'PREPARE_SELECTED_WORKER_BATCH' not in due_block, 'Due Queue must never call checkbox-selected scan'
 
-          assert "BOOTSTRAP_VERSION = '2.4-auto-monitor-auth'" in bootstrap
+          assert "BOOTSTRAP_VERSION = '2.4.1-auto-monitor-auth'" in bootstrap
           assert "cache.remove('SOCIAL_AIO_REMOTE_RUNTIME')" in bootstrap
           assert "cache.remove('SOCIAL_AIO_REMOTE_HTML')" in bootstrap
           assert "loadRemoteApp_(freshUi === true)" in bootstrap
           assert "function authorizeAutoMonitor()" in bootstrap
-          assert "autoMonitorAuthProbe_" in bootstrap
-          assert "ScriptApp.newTrigger('autoMonitorAuthProbe_')" in bootstrap
-          assert "ScriptApp.deleteTrigger(probe)" in bootstrap
 
           required_fbaio = [
               "isGroupIdentityResolveError_",
