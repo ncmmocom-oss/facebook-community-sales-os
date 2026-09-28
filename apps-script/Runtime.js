@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.7.2-auto-production-ux',
+    VERSION: '1.9.8.0-comment-acquisition-core',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -53,6 +53,9 @@ const RemoteApp = (() => {
     COMMENT_MAX_RECORDS_PER_POST: 100,
     COMMENT_CYCLE_BUDGET_MS: 45 * 1000,
     COMMENT_EMPTY_RETRY_MAX: 3,
+    COMMENT_RETRY_DELAYS_MS: [5*60*1000,15*60*1000,60*60*1000,3*60*60*1000,6*60*60*1000],
+    COMMENT_PROVIDER_BREAKER_KEY: 'SOCIAL_AIO_COMMENT_PROVIDER_BREAKER_V1',
+    COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000,
     COMMENT_HOT_WATCH_MS: 24 * 60 * 60 * 1000,
     COMMENT_HOT_RECHECK_MS: 30 * 60 * 1000,
     GROUP_LEASE_PREFIX: 'SOCIAL_AIO_GROUP_LEASE_',
@@ -82,6 +85,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.0 Comment Acquisition Core: phân loại lỗi provider FBAIO, circuit breaker 10 phút, retry backoff theo Post, tự phục hồi false-HARD do dynamic module và ghi evidence Comment vào AUTO log.\n' +
       'V1.9.7.2 Auto Production UX: bỏ TEST 1 CYCLE và nút Due-only khỏi UI production; thay bằng CHẠY NGAY 1 CYCLE dùng full production pipeline Retry → Due → Comment → AI, giữ diagnostic test ẩn cho support.\n' +
       'V1.9.7.1 Auto Test Evidence HF1: TEST 1 CYCLE luôn ghi NHẬT KÝ AUTO kể cả BUSY/NO_DUE/AUTH; phân biệt scheduler idle với Worker PASS; probe quyền ScriptApp và hiển thị next due.\n' +
       'V1.9.7.0 Auto Monitor V2 Production: trigger/auth fail-closed, TEST 1 CYCLE, due revalidation đồng nhất, bounded retry/backoff, per-Group auto evidence và scheduler 5 phút chỉ bật khi trigger thật sự sẵn sàng.\n' +
@@ -3526,6 +3530,87 @@ const RemoteApp = (() => {
     return m ? Number(m[1]||0) : 0;
   }
 
+  function isCommentProviderTransientError_(err) {
+    const msg=String(err&&err.message||err||'');
+    return /failed to fetch dynamically imported module|chunkloaderror|loading chunk\s+\d+\s+failed|importing a module script failed|fbaio\.org\/src\/[^\s]+\.js/i.test(msg);
+  }
+
+  function isCommentRetryableError_(err) {
+    const msg=String(err&&err.message||err||'');
+    return isCommentProviderTransientError_(msg) ||
+      isTransientSocialAioError_(msg) ||
+      isWorkerConnectionError_(msg);
+  }
+
+  function commentRetryDelayMs_(attempt) {
+    const arr=CFG.COMMENT_RETRY_DELAYS_MS||[];
+    const n=Math.max(1,Number(attempt||1));
+    return Number(arr[Math.min(n-1,Math.max(0,arr.length-1))]||5*60*1000);
+  }
+
+  function commentRetryDue_(status,lastScanMs,nowMs) {
+    const attempt=commentRetryCount_(status);
+    if(!attempt) return true;
+    const last=Number(lastScanMs||0);
+    if(!last) return true;
+    const now=Number(nowMs||Date.now());
+    return now>=last+commentRetryDelayMs_(attempt);
+  }
+
+  function getCommentProviderBreaker_() {
+    const props=PropertiesService.getDocumentProperties();
+    const raw=props.getProperty(CFG.COMMENT_PROVIDER_BREAKER_KEY)||'';
+    if(!raw) return {open:false,openUntil:0,lastError:'',openedAt:0};
+    let state=null;
+    try{state=JSON.parse(raw);}catch(_){}
+    if(!state || Number(state.openUntil||0)<=Date.now()){
+      props.deleteProperty(CFG.COMMENT_PROVIDER_BREAKER_KEY);
+      return {open:false,openUntil:0,lastError:'',openedAt:0};
+    }
+    return {
+      open:true,
+      openUntil:Number(state.openUntil||0),
+      openedAt:Number(state.openedAt||0),
+      lastError:String(state.lastError||'')
+    };
+  }
+
+  function openCommentProviderBreaker_(err) {
+    const now=Date.now();
+    const state={
+      open:true,
+      openedAt:now,
+      openUntil:now+Number(CFG.COMMENT_PROVIDER_BREAKER_MS||10*60*1000),
+      lastError:String(err&&err.message||err||'').slice(0,500)
+    };
+    PropertiesService.getDocumentProperties()
+      .setProperty(CFG.COMMENT_PROVIDER_BREAKER_KEY,JSON.stringify(state));
+    return state;
+  }
+
+  function clearCommentProviderBreaker_() {
+    PropertiesService.getDocumentProperties().deleteProperty(CFG.COMMENT_PROVIDER_BREAKER_KEY);
+  }
+
+  function repairCommentProviderHardQuarantine_() {
+    const raw=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.RAW_SHEET);
+    if(!raw || raw.getLastRow()<5) return {changed:0};
+    const n=raw.getLastRow()-4;
+    const statuses=raw.getRange(5,20,n,1).getDisplayValues();
+    let changed=0;
+    statuses.forEach((r,i)=>{
+      const status=String(r[0]||'').trim();
+      if(!/^HARD:/i.test(status) || !isCommentProviderTransientError_(status)) return;
+      raw.getRange(i+5,20).setValue(
+        'RETRY 1: PROVIDER_TRANSIENT recovered • '+
+        status.replace(/^HARD:\s*/i,'').slice(0,150)
+      );
+      changed++;
+    });
+    if(changed) invalidateCommentStatsCache_();
+    return {changed};
+  }
+
   function loadExistingCommentCountByPost_() {
     const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.COMMENT_SHEET);
     const out={};
@@ -3582,10 +3667,11 @@ const RemoteApp = (() => {
       const fetched=Math.max(stored,imported);
       const cursor=String(r[17]||'').trim();
       const status=String(r[19]||'').trim();
-      if(/^HARD:/i.test(status)) return;
-
       const importedAtMs=opsDateMs_(r[0]);
       const lastScanMs=opsDateMs_(r[18]);
+      if(/^HARD:/i.test(status)) return;
+      if(!commentRetryDue_(status,lastScanMs,now)) return;
+
       const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
       const hotDue=
         hotRecent &&
@@ -3642,7 +3728,7 @@ const RemoteApp = (() => {
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
     const comment=ss.getSheetByName(CFG.COMMENT_SHEET);
     const enabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
-    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,hotWatchDue=0;
+    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,retryDeferred=0,hotWatchDue=0;
     if(raw && raw.getLastRow()>=5){
       const existing=loadExistingCommentCountByPost_();
       const watchMap=loadCommentWatchMap_();
@@ -3664,7 +3750,10 @@ const RemoteApp = (() => {
         const cursor=String(r[17]||'').trim();
         const status=String(r[19]||'').trim();
         if(/^HARD:/i.test(status)) hard++;
-        else if(/^RETRY/i.test(status)) retry++;
+        else if(/^RETRY/i.test(status)){
+          retry++;
+          if(!commentRetryDue_(status,lastScanMs,now)) retryDeferred++;
+        }
         if(!/^HARD:/i.test(status) && (cursor || fetched<expected)) backlogPosts++;
       });
     }
@@ -3679,7 +3768,9 @@ const RemoteApp = (() => {
       storedComments:comment?Math.max(0,comment.getLastRow()-1):0,
       hardErrors:hard,
       retryPosts:retry,
-      hotWatchDue
+      retryDeferred,
+      hotWatchDue,
+      provider:getCommentProviderBreaker_()
     };
     try{cache.put(cacheKey,JSON.stringify(result),30);}catch(_){}
     return result;
@@ -3726,7 +3817,7 @@ const RemoteApp = (() => {
         last={raw:res.raw,comments,cursor,code:res.code,bytes:res.bytes,attempts:i+1,transientRetries};
         if(comments.length || i>=max-1) return last;
       }catch(err){
-        if(!isTransientSocialAioError_(err) || i>=max-1) throw err;
+        if(!isCommentRetryableError_(err) || i>=max-1) throw err;
         transientRetries++;
       }
     }
@@ -3769,6 +3860,7 @@ const RemoteApp = (() => {
       cursor:String(job.cursor||'')
     });
     const comments=page.comments||[];
+    if(comments.length) clearCommentProviderBreaker_();
 
     if(!comments.length){
       if(job.hotWatch && expected<=currentFetched){
@@ -3854,14 +3946,29 @@ const RemoteApp = (() => {
     if(!enabled) return {ok:true,enabled:false,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
 
     const started=Date.now();
+    const repaired=repairCommentProviderHardQuarantine_();
+    const breaker=getCommentProviderBreaker_();
+    if(breaker.open && !options.forceProviderProbe){
+      return {
+        ok:true,enabled:true,skipped:true,reason:'PROVIDER_CIRCUIT_OPEN',
+        processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION,
+        providerCircuitOpen:true,providerRetryAt:breaker.openUntil,
+        providerError:breaker.lastError,repairedProviderHard:Number(repaired.changed||0),
+        stats:getCommentIntelligenceStats_(true)
+      };
+    }
+
     const limit=Math.max(1,Math.min(20,Number(options.limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
     const jobs=getCommentBacklog_(limit);
-    if(!jobs.length) return {ok:true,enabled:true,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
+    if(!jobs.length) return {
+      ok:true,enabled:true,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION,
+      repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
+    };
 
     const pool=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId&&workerHealthState_(w)!=='OFFLINE');
     const clientId=pool.length?pool[0].clientId:getBridgeClientId_();
     const results=[],sourceIds=[];
-    let imported=0;
+    let imported=0,providerCircuitOpen=false,providerRetryAt=0,providerError='';
 
     for(let i=0;i<jobs.length;i++){
       if(Date.now()-started>CFG.COMMENT_CYCLE_BUDGET_MS) break;
@@ -3873,14 +3980,29 @@ const RemoteApp = (() => {
         (r.newSourceIds||[]).forEach(id=>sourceIds.push(id));
       }catch(err){
         const n=Math.max(0,Number(job.retryCount||0))+1;
-        const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX || !isTransientSocialAioError_(err);
+        const providerTransient=isCommentProviderTransientError_(err);
+        const retryable=isCommentRetryableError_(err);
+        const hard=providerTransient?false:(n>=CFG.COMMENT_EMPTY_RETRY_MAX || !retryable);
+        const errorText=String(err&&err.message||err||'').slice(0,180);
         updateRawCommentState_(job,{
           fetched:job.fetched,
           cursor:job.cursor||'',
           lastScan:new Date(),
-          status:(hard?'HARD: ':'RETRY '+n+': ')+String(err.message||err).slice(0,180)
+          status:providerTransient
+            ? ('RETRY '+n+': PROVIDER_TRANSIENT '+errorText)
+            : ((hard?'HARD: ':'RETRY '+n+': ')+errorText)
         });
-        results.push({ok:false,hard,retry:!hard,postId:job.postId,error:String(err.message||err)});
+        results.push({
+          ok:false,hard,retry:!hard,providerTransient,
+          postId:job.postId,error:String(err&&err.message||err||'')
+        });
+        if(providerTransient){
+          const opened=openCommentProviderBreaker_(err);
+          providerCircuitOpen=true;
+          providerRetryAt=Number(opened.openUntil||0);
+          providerError=String(opened.lastError||'');
+          break;
+        }
       }
     }
 
@@ -3891,6 +4013,10 @@ const RemoteApp = (() => {
       newSourceIds:[...new Set(sourceIds)],
       durationMs:Date.now()-started,
       results,
+      providerCircuitOpen,
+      providerRetryAt,
+      providerError,
+      repairedProviderHard:Number(repaired.changed||0),
       stats:getCommentIntelligenceStats_(true)
     };
   }
@@ -4394,6 +4520,15 @@ const RemoteApp = (() => {
               'r'+Number(x.row||0)+':'+String(x.kind||'')+':'+String(x.outcome||'')
             ).join(','))
           :'',
+        summary.commentIntel
+          ? ('comment='+Number(summary.commentIntel.processed||0)+'/'+Number(summary.commentIntel.imported||0)+
+            (summary.commentIntel.providerCircuitOpen
+              ? ', provider=OPEN until '+String(summary.commentIntel.providerRetryAt||0)
+              : ', provider=OK')+
+            (summary.commentIntel.repairedProviderHard
+              ? ', repairedHard='+Number(summary.commentIntel.repairedProviderHard||0)
+              :''))
+          :'',
         summary.hardQuarantined?('hard='+Number(summary.hardQuarantined||0)):'',
         summary.repairs?('repair lease='+Number(summary.repairs.expiredLeases||0)+
           ', stale='+Number(summary.repairs.staleRunning||0)+
@@ -4613,6 +4748,15 @@ const RemoteApp = (() => {
         const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
         summary.commentsProcessed=Number(cr.processed||0);
         summary.commentsImported=Number(cr.commentImported||0);
+        summary.commentIntel={
+          processed:summary.commentsProcessed,
+          imported:summary.commentsImported,
+          providerCircuitOpen:!!cr.providerCircuitOpen,
+          providerRetryAt:Number(cr.providerRetryAt||0),
+          providerError:String(cr.providerError||'').slice(0,240),
+          repairedProviderHard:Number(cr.repairedProviderHard||0),
+          reason:String(cr.reason||'')
+        };
         (cr.newSourceIds||[]).forEach(id=>summary.newSourceIds.push(id));
       }
 
