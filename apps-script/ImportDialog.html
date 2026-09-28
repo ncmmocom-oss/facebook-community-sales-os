@@ -214,12 +214,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <div class="targetRow">
       <div>
         <label>Số bài / Group</label>
-        <select id="groupTarget">
-          <option value="10">10 bài</option>
-          <option value="15">15 bài</option>
-          <option value="20">20 bài</option>
-          <option value="25" selected>25 bài</option>
-        </select>
+        <input id="groupTarget" type="number" min="1" max="200" step="1" value="25" inputmode="numeric" title="Nhập từ 1 đến 200 bài">
       </div>
       <div>
         <button id="scanSelectedBtn" class="primary" onclick="runCheckedGroups()">▶ QUÉT ĐÃ CHỌN</button>
@@ -1053,7 +1048,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       scanStateTimer = setInterval(pollGroupScanState, 5000);
     }
     function selectedTarget() {
-      return Number(document.getElementById('groupTarget').value || 25);
+      const el=document.getElementById('groupTarget');
+      const raw=Number(el && el.value);
+      let n=Number.isFinite(raw)?Math.floor(raw):25;
+      if(n<1) n=25;
+      if(n>200) n=200;
+      if(el) el.value=String(n);
+      return n;
     }
 
     function runActiveGroup() {
