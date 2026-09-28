@@ -6266,7 +6266,6 @@ const RemoteApp = (() => {
 
         counts.scanUpdatesToday+=Number(r[16]||0);
         counts.newPostsToday+=Number(r[19]||0);
-        if(String(r[26]||'').trim()) counts.withContext++;
       });
     }
 
@@ -6308,6 +6307,7 @@ const RemoteApp = (() => {
     const commentIntel=getCommentIntelligenceStats_();
     const salesPipeline=getSalesPipelineStats_();
     const contextReadiness=getContextReadiness_();
+    counts.withContext=Number(contextReadiness.withContext||0);
     const operationalHealth=computeOperationalHealth_({
       workers,sla,ai,auto:autoMonitor,comments:commentIntel,
       activeGroups:counts.active,
