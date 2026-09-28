@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.3-sidebar-command-tabs',
+    VERSION: '1.9.8.4-comment-ai-guard',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -85,6 +85,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.4 Comment/AI Guard: tách lỗi provider-wide Comment khỏi retry theo Post để không kéo backlog vào backoff nhiều giờ; normalize PROVIDER_TRANSIENT cũ thành PROVIDER_WAIT; AI concurrent run được coi là busy hợp lệ thay vì lỗi vận hành.\n' +
       'V1.9.8.3 Sidebar Command Tabs: khôi phục sidebar dọc làm menu hệ thống; tab ngang chỉ nằm trong 200 Group Monitoring cho Quét Nhóm / Quét Comt / AI Phân tích / Cập nhật dữ liệu / Auto Monitor; command chạy backend trực tiếp, link Sheet chỉ là viewer phụ.\n' +
       'V1.9.8.2 Tabbed Smart Cockpit: bản thử nghiệm horizontal shell; đã được V1.9.8.3 điều chỉnh lại theo operator workflow.\n' +
       'V1.9.8.1 Browser Tab Workspace: drill-down BÌNH LUẬN/TÍN HIỆU/LEAD/LOG mở tab trình duyệt tái sử dụng; manual Comment run có evidence COMMENT_UI trong NHẬT KÝ AUTO.\n' +
@@ -3635,10 +3636,23 @@ const RemoteApp = (() => {
     let changed=0;
     statuses.forEach((r,i)=>{
       const status=String(r[0]||'').trim();
-      if(!/^HARD:/i.test(status) || !isCommentProviderTransientError_(status)) return;
+      if(!status || /^PROVIDER_WAIT:/i.test(status)) return;
+      const providerTransient=
+        isCommentProviderTransientError_(status) ||
+        /^RETRY\s+\d+:\s*PROVIDER_TRANSIENT/i.test(status) ||
+        /^HARD:\s*.*PROVIDER_TRANSIENT/i.test(status);
+      if(!providerTransient) return;
+
+      const cleaned=status
+        .replace(/^HARD:\s*/i,'')
+        .replace(/^RETRY\s+\d+:\s*/i,'')
+        .replace(/^PROVIDER_TRANSIENT\s*/i,'')
+        .trim();
+
+      // Provider-wide outage is not a Post failure. Remove per-Post retry/backoff
+      // so all affected Posts become immediately eligible after the circuit closes.
       raw.getRange(i+5,20).setValue(
-        'RETRY 1: PROVIDER_TRANSIENT recovered • '+
-        status.replace(/^HARD:\s*/i,'').slice(0,150)
+        'PROVIDER_WAIT: '+(cleaned || 'Comment endpoint provider transient').slice(0,180)
       );
       changed++;
     });
@@ -3763,7 +3777,7 @@ const RemoteApp = (() => {
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
     const comment=ss.getSheetByName(CFG.COMMENT_SHEET);
     const enabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
-    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,retryDeferred=0,hotWatchDue=0;
+    let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,retryDeferred=0,providerWait=0,hotWatchDue=0;
     if(raw && raw.getLastRow()>=5){
       const existing=loadExistingCommentCountByPost_();
       const watchMap=loadCommentWatchMap_();
@@ -3785,6 +3799,7 @@ const RemoteApp = (() => {
         const cursor=String(r[17]||'').trim();
         const status=String(r[19]||'').trim();
         if(/^HARD:/i.test(status)) hard++;
+        else if(/^PROVIDER_WAIT:/i.test(status)) providerWait++;
         else if(/^RETRY/i.test(status)){
           retry++;
           if(!commentRetryDue_(status,lastScanMs,now)) retryDeferred++;
@@ -3804,6 +3819,7 @@ const RemoteApp = (() => {
       hardErrors:hard,
       retryPosts:retry,
       retryDeferred,
+      providerWaitPosts:providerWait,
       hotWatchDue,
       provider:getCommentProviderBreaker_()
     };
@@ -4069,11 +4085,11 @@ const RemoteApp = (() => {
           cursor:job.cursor||'',
           lastScan:new Date(),
           status:providerTransient
-            ? ('RETRY '+n+': PROVIDER_TRANSIENT '+errorText)
+            ? ('PROVIDER_WAIT: COMMENT_ENDPOINT '+errorText)
             : ((hard?'HARD: ':'RETRY '+n+': ')+errorText)
         });
         results.push({
-          ok:false,hard,retry:!hard,providerTransient,
+          ok:false,hard,retry:providerTransient?false:!hard,providerTransient,
           postId:job.postId,error:String(err&&err.message||err||'')
         });
         if(providerTransient){
