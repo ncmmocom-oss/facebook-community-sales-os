@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.6.4-custom-scan-target',
+    VERSION: '1.9.6.5-success-note-cleanup',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -82,6 +82,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.6.5 Success Note Cleanup: scan XONG luôn để trống cột Lỗi/Ghi chú; numeric alias chỉ hiển thị trong Tiến độ và API log, không dùng wording lỗi/fallback ở kết quả thành công.\n' +
       'V1.9.6.4 Custom Scan Target: bỏ preset 10/15/20/25; cho nhập số bài tùy ý 1–200, mặc định 25; Runtime và cột Số bài/lần dùng cùng numeric validation.\n' +
       'V1.9.6.3 Canonical Group Dispatch HF1: manual/retry/worker canonicalize duplicate registry identity trước FBAIO; tick duplicate tự redirect về canonical row; stale duplicate job fail-closed; numeric ID có thể kế thừa từ sibling canonical đã xác minh.\n' +
       'V1.9.6.2 Auto Monitor Readiness HF1: manual selected được khóa CI không đọc Due state; partial scan do time budget được retry có kiểm soát; Due Queue bỏ duplicate registry rows; log time-budget rõ ràng.\n' +
@@ -4672,14 +4673,12 @@ const RemoteApp = (() => {
         (imported.duplicates||0)+' trùng',
         (result.pages||1)+' page',
         result.transientRetries?('retry '+result.transientRetries):'',
-        result.fallbackUsed?('ID fallback '+result.fallbackGroupId):'',
+        result.fallbackUsed?('Numeric ID '+result.fallbackGroupId):'',
         (Math.round((Date.now()-started)/100)/10)+'s'
       ].filter(Boolean).join(' • ');
 
       let status='XONG';
-      let note=result.fallbackUsed
-        ? ('FBAIO vanity Group bị parse sai; đã chuyển sang numeric ID '+result.fallbackGroupId+'.')
-        : '';
+      let note='';
       if(stopped) {
         if(result.stopScope==='RUN'){
           status='CHỜ';
@@ -4690,10 +4689,12 @@ const RemoteApp = (() => {
         }
       } else if(result.transientError) {
         status='THIẾU';
-        note=(note?note+' ':'')+'Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
+        note=(result.fallbackUsed?('Đã dùng numeric ID '+result.fallbackGroupId+'. '):'')+
+          'Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
       } else if((result.postsRead||0)<target) {
         status='THIẾU';
-        note=(note?note+' ':'')+'API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
+        note=(result.fallbackUsed?('Đã dùng numeric ID '+result.fallbackGroupId+'. '):'')+
+          'API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
           (result.nextCursor ? ' trước time budget.' : ' vì không còn cursor.');
       }
 
@@ -5284,13 +5285,11 @@ const RemoteApp = (() => {
         (imported.duplicates||0)+' trùng',
         (result.pages||1)+' page',
         result.transientRetries?('retry '+result.transientRetries):'',
-        result.fallbackUsed?('ID fallback '+result.fallbackGroupId):'',
+        result.fallbackUsed?('Numeric ID '+result.fallbackGroupId):'',
         (Math.round((Date.now()-started)/100)/10)+'s'
       ].filter(Boolean).join(' • ');
 
-      let status='XONG', note=result.fallbackUsed
-        ? ('FBAIO vanity Group bị parse sai; đã chuyển sang numeric ID '+result.fallbackGroupId+'.')
-        : '';
+      let status='XONG', note='';
       if(stopped){
         if(result.stopScope==='RUN'){
           status='CHỜ';
@@ -5301,10 +5300,12 @@ const RemoteApp = (() => {
         }
       } else if(result.transientError){
         status='THIẾU';
-        note=(note?note+' ':'')+'Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
+        note=(result.fallbackUsed?('Đã dùng numeric ID '+result.fallbackGroupId+'. '):'')+
+          'Relay tạm lỗi sau retry; đã giữ '+(result.postsRead||0)+'/'+target+' bài thu được. RETRY Group này sau.';
       } else if((result.postsRead||0)<target){
         status='THIẾU';
-        note=(note?note+' ':'')+'API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
+        note=(result.fallbackUsed?('Đã dùng numeric ID '+result.fallbackGroupId+'. '):'')+
+          'API dừng ở '+(result.postsRead||0)+'/'+target+' bài'+
           (result.nextCursor?' trước time budget.':' vì không còn cursor.');
       }
 
