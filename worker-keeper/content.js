@@ -1,6 +1,6 @@
 (() => {
   if (globalThis.__SOCIAL_AIO_WORKER_KEEPER__) return;
-  globalThis.__SOCIAL_AIO_WORKER_KEEPER__ = '1.2.0';
+  globalThis.__SOCIAL_AIO_WORKER_KEEPER__ = '1.2.1';
 
   const STATE = {
     primary:false,
@@ -54,6 +54,12 @@
       severity:'ERROR',
       test:text => /(session|login|authentication|authorization).{0,30}(expired|required|invalid)|please\s+log\s*in/i.test(text),
       action:'Operator login required. Auto reconnect blocked.'
+    },
+    {
+      code:'E_FB_GROUP_ID_RESOLVE',
+      severity:'WARN',
+      test:text => /Wrong ID\s*\/\s*FB account not found|FB account not found|This api only supports group/i.test(text),
+      action:'Do not reconnect Worker. Runtime should retry the verified numeric Group ID.'
     },
     {
       code:'E_SITE_UPDATE',
@@ -370,6 +376,12 @@
           'Session/login có dấu hiệu hết hạn.',
           err.action
         );
+      } else if (err.code === 'E_FB_GROUP_ID_RESOLVE') {
+        await emitEvent(
+          err.code,err.severity,
+          'FBAIO không resolve đúng Group ID/slug; Worker vẫn Connected.',
+          err.action
+        );
       } else if (err.code === 'E_SITE_UPDATE') {
         await emitEvent(
           err.code,err.severity,
@@ -469,7 +481,7 @@
     if (!msg || !msg.type) return;
 
     if (msg.type === 'KEEPER_PING') {
-      sendResponse({ok:true,version:'1.2.0',primary:STATE.primary});
+      sendResponse({ok:true,version:'1.2.1',primary:STATE.primary});
       return;
     }
 
