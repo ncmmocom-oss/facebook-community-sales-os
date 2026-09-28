@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.2-tabbed-smart-cockpit',
+    VERSION: '1.9.8.3-sidebar-command-tabs',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -85,7 +85,8 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
-      'V1.9.8.2 Tabbed Smart Cockpit: sidebar chuyển thành tab ngang, browser workspace tabs cố định và Smart Action chỉ nổi bật một việc cần làm tiếp; giảm nút trùng và thao tác tay, không đổi business logic.\n' +
+      'V1.9.8.3 Sidebar Command Tabs: khôi phục sidebar dọc làm menu hệ thống; tab ngang chỉ nằm trong 200 Group Monitoring cho Quét Nhóm / Quét Comt / AI Phân tích / Cập nhật dữ liệu / Auto Monitor; command chạy backend trực tiếp, link Sheet chỉ là viewer phụ.\n' +
+      'V1.9.8.2 Tabbed Smart Cockpit: bản thử nghiệm horizontal shell; đã được V1.9.8.3 điều chỉnh lại theo operator workflow.\n' +
       'V1.9.8.1 Browser Tab Workspace: drill-down BÌNH LUẬN/TÍN HIỆU/LEAD/LOG mở tab trình duyệt tái sử dụng; manual Comment run có evidence COMMENT_UI trong NHẬT KÝ AUTO.\n' +
       'V1.9.8.0 Comment Acquisition Core: phân loại lỗi provider FBAIO, circuit breaker 10 phút, retry backoff theo Post, tự phục hồi false-HARD do dynamic module và ghi evidence Comment vào AUTO log.\n' +
       'V1.9.7.2 Auto Production UX: bỏ TEST 1 CYCLE và nút Due-only khỏi UI production; thay bằng CHẠY NGAY 1 CYCLE dùng full production pipeline Retry → Due → Comment → AI, giữ diagnostic test ẩn cho support.\n' +
