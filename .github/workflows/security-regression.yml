@@ -205,7 +205,18 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.6-concurrency-foundation'" in runtime
+          assert "VERSION: '1.9.8.7-sales-readiness-recovery'" in runtime
+          assert "CONTEXT_REQUIRED" in runtime
+          assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
+          assert "OPPORTUNITY_TOTAL_COLS: 31" in runtime
+          assert "SALES_STAGE_OPTIONS" in runtime
+          assert "GET_SALES_RECOVERY_QUEUE" in runtime
+          assert "SET_SELECTED_SALES_STAGE" in runtime
+          assert "function analyzeBatchWithProviderFailover_(" in runtime
+          assert "PROVIDER_FAILOVER" in runtime
+          assert "id=\"salesStage\"" in ui
+          assert "id=\"groupContextDraft\"" in ui
+          assert "REQUALIFY CONTEXT-READY" in ui
           assert "AI_LEASE_KEY" in runtime and "AUTO_MONITOR_LEASE_KEY" in runtime
           assert "LockService.getScriptLock" not in runtime, "AI/AUTO must not share a global ScriptLock"
           assert "source_id: { type: 'string' }" in runtime
