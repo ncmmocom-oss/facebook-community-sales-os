@@ -1615,7 +1615,7 @@ const RemoteApp = (() => {
           items: {
             type: 'object',
             properties: {
-              row_number: { type: 'integer' },
+              source_id: { type: 'string' },
               pain: { type: 'string' },
               intent: { type: 'string' },
               buyer_role: { type: 'string' },
@@ -1635,7 +1635,7 @@ const RemoteApp = (() => {
               follow_up_days: { type: 'integer' }
             },
             required: [
-              'row_number','pain','intent','buyer_role','product_fit','need_evidence',
+              'source_id','pain','intent','buyer_role','product_fit','need_evidence',
               'need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score',
               'score','classification','value_solution','suggested_comment','next_action','follow_up_days'
             ],
@@ -1652,6 +1652,7 @@ const RemoteApp = (() => {
     return [
       'Bạn là Community Sales Intelligence Agent cho hệ thống Facebook Community Sales.',
       'Phân tích CHỈ dựa trên evidence được cung cấp; không suy đoán thuộc tính nhạy cảm hay thông tin cá nhân ngoài dữ liệu.',
+      'Mỗi input có source_id. BẮT BUỘC trả lại chính xác source_id đó, không đổi, không suy diễn và không trả row_number.',
       'Mục tiêu không phải tìm mọi người có vấn đề. Mục tiêu là phân biệt: (1) người có nhu cầu, (2) người có khả năng là buyer, (3) nhu cầu có phù hợp đúng sản phẩm/dịch vụ đang bán hay không.',
       'buyer_role chỉ được dùng: Có, Không, Chưa rõ. Có = chính người đăng/comment có tín hiệu là người có thể mua/ra quyết định/sử dụng giải pháp. Không = người bán, quảng cáo, chia sẻ kiến thức hoặc không phải đối tượng mua. Chưa rõ = evidence không đủ.',
       'Mỗi input có thể có offerContext. offerContext là ngữ cảnh bán hàng của đúng Group và được ƯU TIÊN để đánh giá Product Fit; Business context toàn cục chỉ là fallback khi offerContext trống.',
@@ -1876,109 +1877,147 @@ const RemoteApp = (() => {
     const groupContextMap=loadGroupAiContextMap_();
     const now = new Date();
 
-    const valid=(analyses||[])
-      .map(a=>({a,row:Number(a.row_number||0)}))
-      .filter(x=>x.row>=2&&x.row<=sheet.getLastRow());
-    if(!valid.length) return;
+    const writeLock=LockService.getDocumentLock();
+    writeLock.waitLock(30000);
+    try{
+      const last=sheet.getLastRow();
+      if(last<2) return {applied:0,missing:(analyses||[]).length};
 
-    const minRow=Math.min(...valid.map(x=>x.row));
-    const maxRow=Math.max(...valid.map(x=>x.row));
-    const values=sheet.getRange(minRow,1,maxRow-minRow+1,26).getValues();
+      const sourceValues=sheet.getRange(2,2,last-1,1).getDisplayValues();
+      const sourceRows=new Map();
+      const duplicateIds=new Set();
+      sourceValues.forEach((r,i)=>{
+        const id=String(r[0]||'').trim();
+        if(!id) return;
+        if(sourceRows.has(id)){
+          duplicateIds.add(id);
+          sourceRows.delete(id);
+          return;
+        }
+        if(!duplicateIds.has(id)) sourceRows.set(id,i+2);
+      });
 
-    valid.forEach(x=>{
-      const a=x.a;
-      const idx=x.row-minRow;
-      const r=values[idx];
-      const intent=allowedIntent.has(String(a.intent))?String(a.intent):'Thảo luận';
-      const suggestedClass=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
-      const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
-      const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
-      let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
-      const rowGroup=String(r[4]||'').trim();
-      const effectiveContext=resolveAiContextForGroup_(rowGroup,'',cfg,groupContextMap);
-      if(!effectiveContext) productFit='Chưa rõ';
+      const valid=[];
+      let missing=0;
+      (analyses||[]).forEach(a=>{
+        const sourceId=String(a&&a.source_id||'').trim();
+        const row=sourceId&&!duplicateIds.has(sourceId)?Number(sourceRows.get(sourceId)||0):0;
+        if(!sourceId || row<2 || row>last){
+          missing++;
+          return;
+        }
+        valid.push({a,row,sourceId});
+      });
+      if(!valid.length) return {applied:0,missing};
 
-      const needScore=clampScore_(a.need_score,0,25);
-      const fitScore=clampScore_(a.fit_score,0,25);
-      const actionScore=clampScore_(a.action_score,0,20);
-      const urgencyScore=clampScore_(a.urgency_score,0,15);
-      const reachScore=clampScore_(a.reachability_score,0,10);
-      const freshScore=clampScore_(a.freshness_score,0,5);
-      const componentsPresent=['need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score']
-        .some(k=>a[k]!==undefined&&a[k]!==null&&a[k]!=='');
-      const score=componentsPresent
-        ? needScore+fitScore+actionScore+urgencyScore+reachScore+freshScore
-        : clampScore_(a.score,0,100);
+      const minRow=Math.min(...valid.map(x=>x.row));
+      const maxRow=Math.max(...valid.map(x=>x.row));
+      const values=sheet.getRange(minRow,1,maxRow-minRow+1,26).getValues();
 
-      const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
-      const needEvidencePass=
-        !!evidence &&
-        !/^không có bằng chứng nhu cầu rõ$/i.test(evidence);
-      const actionableIntents=new Set([
-        'Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối',
-        'Muốn đổi','Muốn mua','Cần mua gấp'
-      ]);
-      const passiveActions=new Set(['Bỏ qua','Theo dõi']);
-      const actionIntentPass=
-        actionableIntents.has(intent) &&
-        !passiveActions.has(action);
+      valid.forEach(x=>{
+        const a=x.a;
+        const idx=x.row-minRow;
+        const r=values[idx];
 
-      let gate='WATCH';
-      if(buyerRole==='Không' || productFit==='Không') {
-        gate='FAIL';
-      } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
-        gate='REVIEW_REQUIRED';
-      } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) {
-        gate='PASS';
-      } else {
-        // Relevant need but no sufficiently strong action/solution intent.
-        gate='WATCH';
-      }
+        // Fail closed if the row changed between source map and range read.
+        if(String(r[1]||'').trim()!==x.sourceId){
+          missing++;
+          return;
+        }
 
-      let classification=suggestedClass;
-      if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
-      else if(gate==='FAIL') classification=suggestedClass==='Nguồn hội thoại'?'Nguồn hội thoại':'Không phải KH';
-      else if(!['Nguồn hội thoại','Không phải KH'].includes(suggestedClass)) classification='Theo dõi';
+        const intent=allowedIntent.has(String(a.intent))?String(a.intent):'Thảo luận';
+        const suggestedClass=allowedClass.has(String(a.classification))?String(a.classification):'Theo dõi';
+        const action=allowedAction.has(String(a.next_action))?String(a.next_action):'Theo dõi';
+        const buyerRole=allowedBinary.has(String(a.buyer_role))?String(a.buyer_role):'Chưa rõ';
+        let productFit=allowedBinary.has(String(a.product_fit))?String(a.product_fit):'Chưa rõ';
+        const rowGroup=String(r[4]||'').trim();
+        const effectiveContext=resolveAiContextForGroup_(rowGroup,'',cfg,groupContextMap);
+        if(!effectiveContext) productFit='Chưa rõ';
 
-      const days=Math.max(0,Math.min(30,Math.round(Number(a.follow_up_days||0))));
-      const follow=days>0?new Date(now.getTime()+days*86400000):'';
-      let status='Theo dõi';
-      if(gate==='PASS') status='Đang xử lý';
-      if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
+        const needScore=clampScore_(a.need_score,0,25);
+        const fitScore=clampScore_(a.fit_score,0,25);
+        const actionScore=clampScore_(a.action_score,0,20);
+        const urgencyScore=clampScore_(a.urgency_score,0,15);
+        const reachScore=clampScore_(a.reachability_score,0,10);
+        const freshScore=clampScore_(a.freshness_score,0,5);
+        const componentsPresent=['need_score','fit_score','action_score','urgency_score','reachability_score','freshness_score']
+          .some(k=>a[k]!==undefined&&a[k]!==null&&a[k]!=='');
+        const score=componentsPresent
+          ? needScore+fitScore+actionScore+urgencyScore+reachScore+freshScore
+          : clampScore_(a.score,0,100);
 
-      const gateReason=[
-        'Buyer='+buyerRole,
-        'Fit='+productFit,
-        'Context='+(effectiveContext?'Có':'Thiếu'),
-        'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
-        'ActionIntent='+(actionIntentPass?'PASS':'NO'),
-        'Intent='+intent,
-        'Need '+needScore+'/25',
-        'Fit '+fitScore+'/25',
-        'Action '+actionScore+'/20',
-        'Urgency '+urgencyScore+'/15',
-        'Reach '+reachScore+'/10',
-        'Fresh '+freshScore+'/5',
-        'Total='+score
-      ].join(' | ');
+        const evidence=String(a.need_evidence||'').trim() || 'Không có bằng chứng nhu cầu rõ';
+        const needEvidencePass=
+          !!evidence &&
+          !/^không có bằng chứng nhu cầu rõ$/i.test(evidence);
+        const actionableIntents=new Set([
+          'Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối',
+          'Muốn đổi','Muốn mua','Cần mua gấp'
+        ]);
+        const passiveActions=new Set(['Bỏ qua','Theo dõi']);
+        const actionIntentPass=
+          actionableIntents.has(intent) &&
+          !passiveActions.has(action);
 
-      r[8]=String(a.pain||'');
-      r[9]=intent;
-      r[10]=score;
-      r[11]=classification;
-      r[12]=String(a.value_solution||'');
-      r[13]=String(a.suggested_comment||'');
-      r[15]=action;
-      r[16]=follow;
-      r[19]=status;
-      r[21]=buyerRole;
-      r[22]=productFit;
-      r[23]=evidence;
-      r[24]=gate;
-      r[25]=gateReason;
-    });
+        let gate='WATCH';
+        if(buyerRole==='Không' || productFit==='Không') {
+          gate='FAIL';
+        } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
+          gate='REVIEW_REQUIRED';
+        } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) {
+          gate='PASS';
+        } else {
+          gate='WATCH';
+        }
 
-    sheet.getRange(minRow,1,values.length,26).setValues(values);
+        let classification=suggestedClass;
+        if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
+        else if(gate==='FAIL') classification=suggestedClass==='Nguồn hội thoại'?'Nguồn hội thoại':'Không phải KH';
+        else if(!['Nguồn hội thoại','Không phải KH'].includes(suggestedClass)) classification='Theo dõi';
+
+        const days=Math.max(0,Math.min(30,Math.round(Number(a.follow_up_days||0))));
+        const follow=days>0?new Date(now.getTime()+days*86400000):'';
+        let status='Theo dõi';
+        if(gate==='PASS') status='Đang xử lý';
+        if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
+
+        const gateReason=[
+          'Buyer='+buyerRole,
+          'Fit='+productFit,
+          'Context='+(effectiveContext?'Có':'Thiếu'),
+          'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
+          'ActionIntent='+(actionIntentPass?'PASS':'NO'),
+          'Intent='+intent,
+          'Need '+needScore+'/25',
+          'Fit '+fitScore+'/25',
+          'Action '+actionScore+'/20',
+          'Urgency '+urgencyScore+'/15',
+          'Reach '+reachScore+'/10',
+          'Fresh '+freshScore+'/5',
+          'Total='+score
+        ].join(' | ');
+
+        r[8]=String(a.pain||'');
+        r[9]=intent;
+        r[10]=score;
+        r[11]=classification;
+        r[12]=String(a.value_solution||'');
+        r[13]=String(a.suggested_comment||'');
+        r[15]=action;
+        r[16]=follow;
+        r[19]=status;
+        r[21]=buyerRole;
+        r[22]=productFit;
+        r[23]=evidence;
+        r[24]=gate;
+        r[25]=gateReason;
+      });
+
+      sheet.getRange(minRow,1,values.length,26).setValues(values);
+      return {applied:Math.max(0,valid.length-missing),missing};
+    } finally {
+      writeLock.releaseLock();
+    }
   }
 
   function normalizeAndDedupeCommentSheet_(sheet) {
