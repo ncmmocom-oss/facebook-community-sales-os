@@ -1180,7 +1180,15 @@ const RemoteApp = (() => {
     add(exactGroupKeyFromRow_(url,r[4]));
     add(extractGroupKey_(url));
     add(r[4]);
-    try{ add(historicNumericGroupIdFromRow_(rowNumber,url)); }catch(_){}
+
+    // Preserve verified historical aliases without doing O(n^2) registry scans.
+    const lastFile=String(r[12]||'').trim();
+    const note=String(r[15]||'').trim();
+    let m=lastFile.match(/^api_posts_(.+?)_\d{8}_\d{6}\.json$/i);
+    if(m) add(m[1]);
+    const re=/facebook\.com\/groups\/([^\s\/?#]+)/ig;
+    while((m=re.exec(note))!==null) add(m[1]);
+
     return [...aliases];
   }
 
