@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF5-provider-resilience',
+    VERSION: '1.9.8.7-HF6-sheet-capacity',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -100,6 +100,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF6 Sheet Capacity: worker-fast append tự mở rộng grid trước write; lỗi lịch sử "rows out of bounds" được phân loại transient, clear hard quarantine và retry có kiểm soát; AUTO/self-test ghi evidence capacity repair.\n' +
       'V1.9.8.7-HF5 Provider Resilience: centralize transient failover decision, log fallback success/failure với actual provider/model, và thêm executable provider harness cho 408/429/5xx/high-demand hai chiều.\n' +
       'V1.9.8.7-HF4 Auto Budget: AUTO chừa 120s trước khi start Group job mới; AI auto tối đa 12 source và chỉ start khi còn 160s reserve; cycle rảnh drain AI backlog; AUTO log ghi Runtime/budget/deferred evidence để tránh silent overrun.\n' +
       'V1.9.8.7-HF3 Sales State Guard: non-PASS chưa vào pipeline không thể nhận bất kỳ Sales Stage nào kể cả Lost; source đã ở pipeline vẫn được đóng Lost; terminal stage clear Next Follow-up; conversion state batch-read để bỏ per-row Sheet I/O.\n' +
@@ -510,6 +511,17 @@ const RemoteApp = (() => {
     range.setValues(rows);
   }
 
+  function ensureSheetRowCapacity_(sheet,endRow) {
+    if(!sheet) throw new Error('Thiếu sheet khi kiểm tra row capacity.');
+    const target=Math.max(1,Math.floor(Number(endRow||1)));
+    const current=sheet.getMaxRows();
+    if(target<=current) return {expanded:false,from:current,to:current,added:0};
+    const needed=target-current;
+    const growth=Math.max(needed,Math.min(500,Math.max(50,Math.ceil(current*0.20))));
+    sheet.insertRowsAfter(current,growth);
+    return {expanded:true,from:current,to:current+growth,added:growth};
+  }
+
   function writeRowsForImport_(sheet,startRow,rows,totalCols,textCols,workerFast) {
     if (!rows || !rows.length) return;
     if (!workerFast) {
@@ -520,6 +532,7 @@ const RemoteApp = (() => {
     // Worker path appends instead of shifting the whole sheet on every Group.
     // One sort is done once at batch finalization.
     const row=Math.max(startRow,sheet.getLastRow()+1);
+    ensureSheetRowCapacity_(sheet,row+rows.length-1);
     sheet.setRowHeights(row,rows.length, CFG.SHEET_ROW_HEIGHT_PX);
     const range=sheet.getRange(row,1,rows.length,totalCols);
     range.setWrapStrategy(SpreadsheetApp.WrapStrategy.CLIP);
@@ -1503,7 +1516,8 @@ const RemoteApp = (() => {
       SALES_NONPASS_NEW_BLOCKED: canSetSalesStage_('REVIEW_REQUIRED','')===false && canSetSalesStage_('FAIL','')===false,
       SALES_PASS_NEW_ALLOWED: canSetSalesStage_('PASS','')===true,
       SALES_EXISTING_CAN_CLOSE: canSetSalesStage_('REVIEW_REQUIRED','Follow-up')===true,
-      SALES_TERMINAL_CLEARS_FOLLOWUP: nextFollowUpForSalesStage_('Đã bán',new Date(),'2026-09-30')==='' && nextFollowUpForSalesStage_('Lost',new Date(),'2026-09-30')===''
+      SALES_TERMINAL_CLEARS_FOLLOWUP: nextFollowUpForSalesStage_('Đã bán',new Date(),'2026-09-30')==='' && nextFollowUpForSalesStage_('Lost',new Date(),'2026-09-30')==='',
+      SHEET_CAPACITY_ERROR_TRANSIENT: classifyAutoSheetException_('LỖI','Those rows are out of bounds.')==='TRANSIENT' && classifyAutoSheetException_('LỖI','ROW_CAPACITY_RETRY')==='TRANSIENT'
     };
     const failed=Object.keys(tests).filter(k=>!tests[k]);
     return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
@@ -4940,6 +4954,7 @@ const RemoteApp = (() => {
 
   function classifyAutoSheetException_(status,note) {
     const text=String(note||'');
+    if(/rows are out of bounds|ROW_CAPACITY/i.test(text)) return 'TRANSIENT';
     if(/DUPLICATE_IDENTITY|URL_INVALID|HARD_QUARANTINE/i.test(text)) return 'STRUCTURAL';
     if(/không còn cursor|no cursor/i.test(text) && String(status||'')==='THIẾU') return 'EXHAUSTED';
     if(/trước time budget|time budget/i.test(text) && String(status||'')==='THIẾU') return 'TIME_BUDGET';
@@ -5102,6 +5117,28 @@ const RemoteApp = (() => {
     return out;
   }
 
+  function repairRowCapacityQuarantine_(sheet,repair) {
+    if(!sheet || sheet.getLastRow()<2) return 0;
+    const rows=sheet.getRange(2,1,sheet.getLastRow()-1,26).getValues();
+    let repaired=0;
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có') return;
+      if(String(r[23]||'').trim()!=='LỖI') return;
+      const note=String(r[25]||'').trim();
+      if(!/rows are out of bounds|ROW_CAPACITY/i.test(note)) return;
+      repaired++;
+      if(!repair) return;
+      const key=exactGroupKeyFromRow_(r[3],r[4]);
+      clearAutoRetryState_(key);
+      setGroupRowStatus_(
+        sheet,i+2,'LỖI',
+        String(r[24]||'').trim(),
+        'AUTO SELF-REPAIR: ROW_CAPACITY_RETRY — grid capacity guard đã được vá; cho phép retry. Prior: '+note.slice(0,500)
+      );
+    });
+    return repaired;
+  }
+
   function cleanupExpiredRuntimeState_(repair) {
     const props=PropertiesService.getDocumentProperties();
     const all=props.getProperties();
@@ -5162,6 +5199,8 @@ const RemoteApp = (() => {
       });
     }
 
+    const rowCapacityRepairs=repairRowCapacityQuarantine_(sh,repair!==false);
+
     const duplicates=getDuplicateGroupIdentityRows_();
     if(repair && duplicates.length){
       duplicates.forEach(d=>{
@@ -5172,7 +5211,7 @@ const RemoteApp = (() => {
     }
 
     SpreadsheetApp.flush();
-    return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates};
+    return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates,rowCapacityRepairs};
   }
 
   function getAutoRetryJobs_(limit) {
@@ -5419,7 +5458,8 @@ const RemoteApp = (() => {
         summary.repairs?('repair lease='+Number(summary.repairs.expiredLeases||0)+
           ', stale='+Number(summary.repairs.staleRunning||0)+
           ', spill='+Number((summary.repairs.spillovers||[]).length)+
-          ', dup='+Number((summary.repairs.duplicates||[]).length)):'',
+          ', dup='+Number((summary.repairs.duplicates||[]).length)+
+          ', capacity='+Number(summary.repairs.rowCapacityRepairs||0)):'',
         summary.newSourceIds&&summary.newSourceIds.length?('sources='+summary.newSourceIds.length):''
       ].filter(Boolean).join(' | ');
       sh.appendRow([
@@ -5748,6 +5788,7 @@ const RemoteApp = (() => {
       {id:'STALE_RUNNING',severity:'P0',pass:Number(fixes.staleRunning||0)===0 || repair!==false,detail:Number(fixes.staleRunning||0)+' stale runtime row'},
       {id:'GROUP_IDENTITY',severity:'P1',pass:duplicates.length===0,detail:duplicates.length+' duplicate active identity row(s)'+(duplicates.length&&repair!==false?' quarantined':'')},
       {id:'FEED_SPILLOVER',severity:'P1',pass:(fixes.spillovers||[]).length===0 || repair!==false,detail:Number((fixes.spillovers||[]).length)+' auto-registered spillover row(s)'+((fixes.spillovers||[]).length&&repair!==false?' disabled':'')},
+      {id:'ROW_CAPACITY',severity:'P1',pass:Number(fixes.rowCapacityRepairs||0)===0 || repair!==false,detail:Number(fixes.rowCapacityRepairs||0)+' historical row-capacity quarantine(s)'+(Number(fixes.rowCapacityRepairs||0)&&repair!==false?' re-enabled for retry':'')},
       {id:'DATA_CONSISTENCY',severity:'P1',pass:!!audit.ok,detail:'raw/opportunity/comment integrity'},
       {id:'AI_CONFIG',severity:'P1',pass:!!ai.configured,detail:ai.provider+' / '+ai.model},
       {id:'COMMENT_PIPELINE',severity:'P1',pass:comments.hardErrors===0,detail:comments.backlogPosts+' backlog • '+comments.storedComments+' stored • '+comments.hardErrors+' hard'},
