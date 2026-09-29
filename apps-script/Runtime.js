@@ -5347,6 +5347,7 @@ const RemoteApp = (() => {
         summary.budgetOverrunMs?('overrun='+Number(summary.budgetOverrunMs||0)+'ms'):'',
         summary.budgetDeferredGroups?('deferredGroups='+Number(summary.budgetDeferredGroups||0)):'',
         summary.aiDeferredSources?('aiDeferred='+Number(summary.aiDeferredSources||0)):'',
+        summary.aiBacklogDeferred?'aiBacklogDeferred=1':'',
         summary.aiBacklogDrain?'aiBacklogDrain=1':'',
         summary.testMode?'TEST_1_CYCLE':'',
         summary.acceptance?('acceptance='+String(summary.acceptance)):'',
@@ -5652,7 +5653,8 @@ const RemoteApp = (() => {
             summary.aiError=String(err.message||err);
           }
         }else{
-          summary.aiDeferredSources=summary.newSourceIds.length || 1;
+          summary.aiDeferredSources=summary.newSourceIds.length;
+          summary.aiBacklogDeferred=summary.newSourceIds.length===0;
           summary.budgetReason=summary.budgetReason||'AI_START_RESERVE';
         }
       }
