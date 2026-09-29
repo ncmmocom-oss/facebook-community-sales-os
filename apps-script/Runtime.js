@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF9-group-summary-cardinality',
+    VERSION: '1.9.8.7-HF10-auto-policy-profile-settings',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -41,6 +41,8 @@ const RemoteApp = (() => {
     OPS_COVERAGE_WINDOW_MS: 24 * 60 * 60 * 1000,
     OPS_FRESH_SIGNAL_MS: 2 * 60 * 60 * 1000,
     OPS_AI_STALE_MS: 2 * 60 * 60 * 1000,
+    AUTO_POLICY_KEY: 'SOCIAL_AIO_AUTO_POLICY_V1',
+    GROUP_EFFICIENCY_PREFIX: 'SOCIAL_AIO_GROUP_EFF_V1_',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
     AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
@@ -79,6 +81,610 @@ const RemoteApp = (() => {
     SHEET_ROW_HEIGHT_PX: 21,
   };
 
+  function autoPolicyDefaults_() {
+    return {
+      schemaVersion:1,
+      activeProfileId:'IX01',
+      global:{
+        auto:{triggerMinutes:5,activeStart:'07:00',activeEnd:'23:00',timezone:'Asia/Ho_Chi_Minh',maxGroupsPerCycle:4,runtimeBudgetMs:230000},
+        scan:{scansPerDay:3,postsPerScan:10,maxPostsPerScan:200,dueToleranceMinutes:5,retryAttempts:5,retryBackoffMinutes:[2,10,30,120,360]},
+        comment:{enabled:true,maxPostsPerCycle:4,maxPagesPerPost:3,maxCommentsPerPost:100,hotWatchHours:24,recheckMinutes:30,ownPostPriority:100,externalPostPriority:50,providerBreakerMinutes:10},
+        ai:{signalEnabled:true,qualificationEnabled:true,chunkSize:12},
+        action:{humanApproval:true,autoComment:false}
+      },
+      profiles:[{
+        id:'IX01',displayName:'IX Profile 01',browserIdentity:'',facebookIdentities:[],
+        enabled:true,activeStart:'',activeEnd:'',timezone:'',maxGroupCapacity:30,
+        groupKeys:[],scan:{},comment:{},ai:{},action:{}
+      }]
+    };
+  }
+
+  function policyInt_(value,fallback,min,max) {
+    const n=Number(value);
+    if(!Number.isFinite(n)) return Number(fallback);
+    return Math.max(Number(min),Math.min(Number(max),Math.floor(n)));
+  }
+
+  function policyBool_(value,fallback) {
+    if(value===true||value===false) return value;
+    if(String(value).toLowerCase()==='true') return true;
+    if(String(value).toLowerCase()==='false') return false;
+    return !!fallback;
+  }
+
+  function policyTime_(value,fallback) {
+    const s=String(value||'').trim();
+    const m=s.match(/^(\d{2}):(\d{2})$/);
+    if(!m) return String(fallback||'00:00');
+    const h=Number(m[1]),min=Number(m[2]);
+    if(h<0||h>23||min<0||min>59) return String(fallback||'00:00');
+    return String(h).padStart(2,'0')+':'+String(min).padStart(2,'0');
+  }
+
+  function policyBackoff_(value,fallback) {
+    const input=Array.isArray(value)?value:String(value||'').split(',');
+    const out=input.map(x=>Number(String(x).trim()))
+      .filter(x=>Number.isFinite(x)&&x>=1&&x<=1440)
+      .map(x=>Math.floor(x));
+    return out.length?out:(fallback||[2,10,30,120,360]).slice();
+  }
+
+  function normalizeAutoPolicy_(raw) {
+    const d=autoPolicyDefaults_();
+    raw=raw&&typeof raw==='object'?raw:{};
+    const g=raw.global&&typeof raw.global==='object'?raw.global:{};
+    const ga=g.auto||{},gs=g.scan||{},gc=g.comment||{},gi=g.ai||{},gx=g.action||{};
+    const cfg={
+      schemaVersion:1,
+      activeProfileId:String(raw.activeProfileId||d.activeProfileId).trim()||d.activeProfileId,
+      global:{
+        auto:{
+          triggerMinutes:[5,10,15,30].indexOf(Number(ga.triggerMinutes))>=0?Number(ga.triggerMinutes):d.global.auto.triggerMinutes,
+          activeStart:policyTime_(ga.activeStart,d.global.auto.activeStart),
+          activeEnd:policyTime_(ga.activeEnd,d.global.auto.activeEnd),
+          timezone:String(ga.timezone||d.global.auto.timezone).trim()||d.global.auto.timezone,
+          maxGroupsPerCycle:policyInt_(ga.maxGroupsPerCycle,d.global.auto.maxGroupsPerCycle,1,12),
+          runtimeBudgetMs:policyInt_(ga.runtimeBudgetMs,d.global.auto.runtimeBudgetMs,60000,280000)
+        },
+        scan:{
+          scansPerDay:policyInt_(gs.scansPerDay,d.global.scan.scansPerDay,1,24),
+          postsPerScan:policyInt_(gs.postsPerScan,d.global.scan.postsPerScan,1,200),
+          maxPostsPerScan:policyInt_(gs.maxPostsPerScan,d.global.scan.maxPostsPerScan,1,200),
+          dueToleranceMinutes:policyInt_(gs.dueToleranceMinutes,d.global.scan.dueToleranceMinutes,0,120),
+          retryAttempts:policyInt_(gs.retryAttempts,d.global.scan.retryAttempts,1,10),
+          retryBackoffMinutes:policyBackoff_(gs.retryBackoffMinutes,d.global.scan.retryBackoffMinutes)
+        },
+        comment:{
+          enabled:policyBool_(gc.enabled,d.global.comment.enabled),
+          maxPostsPerCycle:policyInt_(gc.maxPostsPerCycle,d.global.comment.maxPostsPerCycle,1,20),
+          maxPagesPerPost:policyInt_(gc.maxPagesPerPost,d.global.comment.maxPagesPerPost,1,10),
+          maxCommentsPerPost:policyInt_(gc.maxCommentsPerPost,d.global.comment.maxCommentsPerPost,10,1000),
+          hotWatchHours:policyInt_(gc.hotWatchHours,d.global.comment.hotWatchHours,1,168),
+          recheckMinutes:policyInt_(gc.recheckMinutes,d.global.comment.recheckMinutes,5,1440),
+          ownPostPriority:policyInt_(gc.ownPostPriority,d.global.comment.ownPostPriority,0,1000),
+          externalPostPriority:policyInt_(gc.externalPostPriority,d.global.comment.externalPostPriority,0,1000),
+          providerBreakerMinutes:policyInt_(gc.providerBreakerMinutes,d.global.comment.providerBreakerMinutes,1,120)
+        },
+        ai:{
+          signalEnabled:policyBool_(gi.signalEnabled,d.global.ai.signalEnabled),
+          qualificationEnabled:policyBool_(gi.qualificationEnabled,d.global.ai.qualificationEnabled),
+          chunkSize:policyInt_(gi.chunkSize,d.global.ai.chunkSize,1,50)
+        },
+        action:{humanApproval:policyBool_(gx.humanApproval,true),autoComment:false}
+      },
+      profiles:[]
+    };
+    const profiles=Array.isArray(raw.profiles)&&raw.profiles.length?raw.profiles:d.profiles;
+    profiles.forEach((p,i)=>{
+      p=p||{};
+      const id=String(p.id||('IX'+String(i+1).padStart(2,'0'))).trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+      if(!id||cfg.profiles.some(x=>x.id===id)) return;
+      cfg.profiles.push({
+        id,displayName:String(p.displayName||id).trim()||id,
+        browserIdentity:String(p.browserIdentity||'').trim(),
+        facebookIdentities:(Array.isArray(p.facebookIdentities)?p.facebookIdentities:[]).map(x=>String(x||'').trim()).filter(Boolean),
+        enabled:policyBool_(p.enabled,true),
+        activeStart:String(p.activeStart||'').trim()?policyTime_(p.activeStart,cfg.global.auto.activeStart):'',
+        activeEnd:String(p.activeEnd||'').trim()?policyTime_(p.activeEnd,cfg.global.auto.activeEnd):'',
+        timezone:String(p.timezone||'').trim(),
+        maxGroupCapacity:policyInt_(p.maxGroupCapacity,30,1,100),
+        groupKeys:(Array.isArray(p.groupKeys)?p.groupKeys:[]).map(x=>String(x||'').trim().toLowerCase()).filter(Boolean),
+        scan:p.scan&&typeof p.scan==='object'?p.scan:{},
+        comment:p.comment&&typeof p.comment==='object'?p.comment:{},
+        ai:p.ai&&typeof p.ai==='object'?p.ai:{},
+        action:p.action&&typeof p.action==='object'?p.action:{}
+      });
+    });
+    if(!cfg.profiles.length) cfg.profiles=d.profiles;
+    if(!cfg.profiles.some(p=>p.id===cfg.activeProfileId)) cfg.activeProfileId=cfg.profiles[0].id;
+    if(cfg.global.scan.postsPerScan>cfg.global.scan.maxPostsPerScan) cfg.global.scan.postsPerScan=cfg.global.scan.maxPostsPerScan;
+    return cfg;
+  }
+
+  function getAutoPolicyConfig_() {
+    let raw=null;
+    try{raw=JSON.parse(PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_POLICY_KEY)||'null');}catch(_){}
+    return normalizeAutoPolicy_(raw||autoPolicyDefaults_());
+  }
+
+  function activePolicyProfile_(config) {
+    const c=config||autoPolicyDefaults_();
+    return (c.profiles||[]).find(p=>p.id===c.activeProfileId)||(c.profiles||[])[0]||null;
+  }
+
+  function validateAutoPolicy_(raw) {
+    raw=raw&&typeof raw==='object'?raw:{};
+    const g=raw.global||{},a=g.auto||{},s=g.scan||{},c=g.comment||{},ai=g.ai||{},act=g.action||{};
+    const bounded=(v,min,max,label)=>{
+      if(v===undefined||v===null||v==='') return;
+      const n=Number(v);
+      if(!Number.isFinite(n)||n<min||n>max) throw new Error(label+' ngoài giới hạn '+min+'-'+max+'.');
+    };
+    if(a.triggerMinutes!==undefined && [5,10,15,30].indexOf(Number(a.triggerMinutes))<0){
+      throw new Error('Trigger interval chỉ hỗ trợ 5 / 10 / 15 / 30 phút.');
+    }
+    ['activeStart','activeEnd'].forEach(k=>{
+      if(a[k]!==undefined && !/^\d{2}:\d{2}$/.test(String(a[k]||''))) throw new Error(k+' phải theo HH:mm.');
+    });
+    bounded(a.maxGroupsPerCycle,1,12,'Max Group/cycle');
+    bounded(a.runtimeBudgetMs,60000,280000,'Runtime budget');
+    bounded(s.scansPerDay,1,24,'Scans/day');
+    bounded(s.postsPerScan,1,200,'Posts/scan');
+    bounded(s.maxPostsPerScan,1,200,'Max posts/scan');
+    bounded(s.dueToleranceMinutes,0,120,'Due tolerance');
+    bounded(s.retryAttempts,1,10,'Retry attempts');
+    bounded(c.maxPostsPerCycle,1,20,'Comment posts/cycle');
+    bounded(c.maxPagesPerPost,1,10,'Comment pages/post');
+    bounded(c.maxCommentsPerPost,10,1000,'Comments/post');
+    bounded(c.hotWatchHours,1,168,'Hot watch');
+    bounded(c.recheckMinutes,5,1440,'Comment recheck');
+    bounded(c.providerBreakerMinutes,1,120,'Provider breaker');
+    bounded(ai.chunkSize,1,50,'AI chunk size');
+    if(act.autoComment===true) throw new Error('AUTO_COMMENT_LOCKED_HF10');
+    (Array.isArray(raw.profiles)?raw.profiles:[]).forEach(p=>bounded(p&&p.maxGroupCapacity,1,100,'Profile capacity'));
+    return true;
+  }
+
+  function policyProfileForGroup_(config,groupKey) {
+    const c=config||getAutoPolicyConfig_();
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(key){
+      const assigned=(c.profiles||[]).find(p=>(p.groupKeys||[]).indexOf(key)>=0);
+      if(assigned) return assigned;
+    }
+    return activePolicyProfile_(c);
+  }
+
+  function resolveEffectiveScanPolicy_(profile,group,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.scan||{},p=profile&&profile.scan||{},row=group||{};
+    const choose=(groupValue,profileValue,globalValue)=>{
+      if(Number(groupValue)>0) return {value:Number(groupValue),source:'GROUP'};
+      if(Number(profileValue)>0) return {value:Number(profileValue),source:'PROFILE'};
+      return {value:Number(globalValue),source:'GLOBAL'};
+    };
+    const scans=choose(row.scansPerDay,p.scansPerDay,g.scansPerDay);
+    const posts=choose(row.postsPerScan,p.postsPerScan,g.postsPerScan);
+    const maxPosts=Number(p.maxPostsPerScan)>0?Number(p.maxPostsPerScan):Number(g.maxPostsPerScan);
+    const dueTolerance=p.dueToleranceMinutes!==undefined&&p.dueToleranceMinutes!==null&&p.dueToleranceMinutes!==''
+      ?Number(p.dueToleranceMinutes):Number(g.dueToleranceMinutes);
+    const retryAttempts=Number(p.retryAttempts)>0?Number(p.retryAttempts):Number(g.retryAttempts);
+    const retryBackoff=Array.isArray(p.retryBackoffMinutes)&&p.retryBackoffMinutes.length
+      ?p.retryBackoffMinutes:g.retryBackoffMinutes;
+    return {
+      scansPerDay:policyInt_(scans.value,1,1,24),
+      postsPerScan:policyInt_(posts.value,10,1,Math.max(1,Number(maxPosts||200))),
+      maxPostsPerScan:policyInt_(maxPosts,25,1,200),
+      dueToleranceMinutes:policyInt_(dueTolerance,0,0,120),
+      retryAttempts:policyInt_(retryAttempts,5,1,10),
+      retryBackoffMinutes:policyBackoff_(retryBackoff,g.retryBackoffMinutes),
+      sources:{scansPerDay:scans.source,postsPerScan:posts.source}
+    };
+  }
+
+  function resolveEffectiveCommentPolicy_(profile,post,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.comment||{},p=profile&&profile.comment||{};
+    const pick=(key)=>p[key]!==undefined&&p[key]!==null&&p[key]!==''?p[key]:g[key];
+    const own=!!(post&&post.ownPost);
+    const ownPriority=policyInt_(pick('ownPostPriority'),100,0,1000);
+    const externalPriority=policyInt_(pick('externalPostPriority'),50,0,1000);
+    return {
+      enabled:policyBool_(pick('enabled'),true),
+      maxPostsPerCycle:policyInt_(pick('maxPostsPerCycle'),4,1,20),
+      maxPagesPerPost:policyInt_(pick('maxPagesPerPost'),3,1,10),
+      maxCommentsPerPost:policyInt_(pick('maxCommentsPerPost'),100,10,1000),
+      hotWatchHours:policyInt_(pick('hotWatchHours'),24,1,168),
+      recheckMinutes:policyInt_(pick('recheckMinutes'),30,5,1440),
+      ownPostPriority:ownPriority,
+      externalPostPriority:externalPriority,
+      providerBreakerMinutes:policyInt_(pick('providerBreakerMinutes'),10,1,120),
+      ownPost:own,
+      priority:own?ownPriority:externalPriority
+    };
+  }
+
+  function resolveEffectiveAiPolicy_(profile,group,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.ai||{},p=profile&&profile.ai||{};
+    const pick=(key)=>p[key]!==undefined&&p[key]!==null&&p[key]!==''?p[key]:g[key];
+    return {
+      signalEnabled:policyBool_(pick('signalEnabled'),true),
+      qualificationEnabled:policyBool_(pick('qualificationEnabled'),true),
+      chunkSize:policyInt_(pick('chunkSize'),12,1,50)
+    };
+  }
+
+  function resolveEffectiveActionPolicy_(profile,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.action||{},p=profile&&profile.action||{};
+    return {
+      humanApproval:p.humanApproval!==undefined&&p.humanApproval!==null?!!p.humanApproval:!!g.humanApproval,
+      autoComment:false
+    };
+  }
+
+  function profileActiveWindow_(profile,config) {
+    const c=config||getAutoPolicyConfig_(),g=c.global.auto||{};
+    return {
+      start:String(profile&&profile.activeStart||g.activeStart||'07:00'),
+      end:String(profile&&profile.activeEnd||g.activeEnd||'23:00'),
+      timezone:String(profile&&profile.timezone||g.timezone||'Asia/Ho_Chi_Minh')
+    };
+  }
+
+  function policyMinute_(value) {
+    const p=policyTime_(value,'00:00').split(':').map(Number);
+    return p[0]*60+p[1];
+  }
+
+  function isWithinActiveWindowMinutes_(start,end,minuteOfDay) {
+    const s=policyMinute_(start),e=policyMinute_(end),n=Math.max(0,Math.min(1439,Number(minuteOfDay||0)));
+    if(s===e) return true;
+    return s<e?(n>=s&&n<e):(n>=s||n<e);
+  }
+
+  function isProfileActiveNow_(profile,config,now) {
+    if(!profile||profile.enabled===false) return false;
+    const w=profileActiveWindow_(profile,config),d=now instanceof Date?now:new Date();
+    let hhmm='';
+    try{hhmm=Utilities.formatDate(d,w.timezone,'HH:mm');}
+    catch(_){hhmm=Utilities.formatDate(d,Session.getScriptTimeZone(),'HH:mm');}
+    return isWithinActiveWindowMinutes_(w.start,w.end,policyMinute_(hhmm));
+  }
+
+  function isProfileOwnPost_(profile,authorUrl) {
+    const author=normalizeFacebookProfileUrl_(authorUrl);
+    if(!author) return false;
+    const identities=new Set((profile&&profile.facebookIdentities||[])
+      .map(x=>normalizeFacebookProfileUrl_(x)||normalizeUrl_(x))
+      .filter(Boolean));
+    return identities.has(author);
+  }
+
+  function autoPolicyLanePlan_(config,profile) {
+    const c=config||getAutoPolicyConfig_(),p=profile||activePolicyProfile_(c);
+    const cp=resolveEffectiveCommentPolicy_(p,null,c);
+    const ai=resolveEffectiveAiPolicy_(p,null,c);
+    return {group:!!p&&p.enabled!==false,comment:cp.enabled,ai:ai.signalEnabled,sales:true};
+  }
+
+  function groupEfficiencyKey_(groupKey) {
+    return CFG.GROUP_EFFICIENCY_PREFIX+encodeURIComponent(String(groupKey||'').trim().toLowerCase());
+  }
+
+  function getGroupEfficiencyMetric_(groupKey) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    const base={groupKey:key,totalScans:0,successfulScans:0,scannedPosts:0,newPosts:0,duplicates:0,totalDurationMs:0,errors:0,updatedAt:''};
+    if(!key) return base;
+    try{
+      return Object.assign(base,JSON.parse(PropertiesService.getDocumentProperties().getProperty(groupEfficiencyKey_(key))||'{}'));
+    }catch(_){
+      return base;
+    }
+  }
+
+  function recordGroupEfficiency_(groupKey,data) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!key) return null;
+    data=data||{};
+    const m=getGroupEfficiencyMetric_(key);
+    m.totalScans=Number(m.totalScans||0)+1;
+    if(data.success) m.successfulScans=Number(m.successfulScans||0)+1;
+    else m.errors=Number(m.errors||0)+1;
+    m.scannedPosts+=Math.max(0,Number(data.scannedPosts||0));
+    m.newPosts+=Math.max(0,Number(data.newPosts||0));
+    m.duplicates+=Math.max(0,Number(data.duplicates||0));
+    m.totalDurationMs+=Math.max(0,Number(data.durationMs||0));
+    m.updatedAt=new Date().toISOString();
+    PropertiesService.getDocumentProperties().setProperty(groupEfficiencyKey_(key),JSON.stringify(m));
+    return m;
+  }
+
+  function recommendedScanPolicy_(metric,currentPolicy) {
+    metric=metric||{};
+    const p=currentPolicy||{scansPerDay:1,postsPerScan:10,maxPostsPerScan:200};
+    const successful=Number(metric.successfulScans||0);
+    const scanned=Number(metric.scannedPosts||0);
+    const yieldRate=scanned?Number(metric.newPosts||0)/scanned:0;
+    const avgDurationMs=Number(metric.totalScans||0)?Number(metric.totalDurationMs||0)/Number(metric.totalScans||1):0;
+    const out={
+      eligible:successful>=5,
+      sampleSize:successful,
+      yield:yieldRate,
+      avgDurationMs,
+      recommendedScansPerDay:Number(p.scansPerDay||1),
+      recommendedPostsPerScan:Number(p.postsPerScan||10),
+      band:'INSUFFICIENT_SAMPLE',
+      reason:'Cần >=5 successful scans.'
+    };
+    if(successful<5) return out;
+    if(yieldRate>=0.25){
+      out.band='HIGH_YIELD';
+      out.recommendedScansPerDay=Math.min(6,Math.max(3,Number(p.scansPerDay||1)));
+      out.recommendedPostsPerScan=Math.min(Number(p.maxPostsPerScan||200),Math.max(25,Number(p.postsPerScan||10)));
+      out.reason='Yield cao; đề xuất tăng/giữ coverage.';
+    }else if(yieldRate<=0.05){
+      out.band='LOW_YIELD';
+      out.recommendedScansPerDay=Math.max(1,Math.min(2,Number(p.scansPerDay||1)));
+      out.recommendedPostsPerScan=Math.max(1,Math.min(10,Number(p.postsPerScan||10)));
+      out.reason='Yield thấp sau đủ sample; đề xuất giảm workload.';
+    }else{
+      out.band='BALANCED';
+      out.reason='Yield trung bình; giữ policy hiện tại.';
+    }
+    return out;
+  }
+
+  function getGroupEfficiencyReport_(limit) {
+    const config=getAutoPolicyConfig_();
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {version:CFG.VERSION,rows:[]};
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
+    const out=[];
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có') return;
+      const group=groupPolicyInput_(r);
+      if(!group.groupKey) return;
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      const policy=resolveEffectiveScanPolicy_(profile,group,config);
+      const metric=getGroupEfficiencyMetric_(group.groupKey);
+      const recommendation=recommendedScanPolicy_(metric,policy);
+      out.push({
+        row:i+2,
+        name:String(r[2]||'').trim()||('Group '+group.groupKey),
+        groupKey:group.groupKey,
+        scans:Number(metric.totalScans||0),
+        successfulScans:Number(metric.successfulScans||0),
+        scannedPosts:Number(metric.scannedPosts||0),
+        newPosts:Number(metric.newPosts||0),
+        duplicates:Number(metric.duplicates||0),
+        errors:Number(metric.errors||0),
+        yield:Number(recommendation.yield||0),
+        avgDurationMs:Number(recommendation.avgDurationMs||0),
+        current:{scansPerDay:policy.scansPerDay,postsPerScan:policy.postsPerScan},
+        recommendation
+      });
+    });
+    out.sort((a,b)=>b.successfulScans-a.successfulScans||b.yield-a.yield);
+    return {version:CFG.VERSION,minimumSample:5,rows:out.slice(0,Math.max(1,Math.min(100,Number(limit||30))))};
+  }
+
+  function applySelectedScanRecommendation_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet(),ar=sh&&sh.getActiveRange();
+    if(!sh||sh.getName()!==CFG.GROUP_SCAN_SHEET||!ar||ar.getRow()<2) throw new Error('Chọn một dòng Group trong QUÉT NHÓM trước.');
+    const row=ar.getRow();
+    const vals=sh.getRange(row,1,1,27).getValues()[0]||[];
+    if(String(vals[0]||'').trim()!=='Có') throw new Error('Group đang không hoạt động.');
+    const group=groupPolicyInput_(vals);
+    if(!group.groupKey) throw new Error('Group chưa có deterministic identity.');
+    const config=getAutoPolicyConfig_();
+    const profile=policyProfileForGroup_(config,group.groupKey);
+    const policy=resolveEffectiveScanPolicy_(profile,group,config);
+    const metric=getGroupEfficiencyMetric_(group.groupKey);
+    const rec=recommendedScanPolicy_(metric,policy);
+    if(!rec.eligible) throw new Error('Chưa đủ 5 successful scans để apply recommendation.');
+    sh.getRange(row,8).setValue(rec.recommendedScansPerDay);
+    sh.getRange(row,9).setValue(rec.recommendedPostsPerScan);
+    SpreadsheetApp.flush();
+    return {ok:true,version:CFG.VERSION,row,groupKey:group.groupKey,recommendation:rec};
+  }
+
+  function groupPolicyInput_(row) {
+    row=row||[];
+    return {
+      groupKey:exactGroupKeyFromRow_(row[3],row[4]),
+      scansPerDay:Number(row[7]||0),
+      postsPerScan:Number(row[8]||0)
+    };
+  }
+
+  function effectiveNextDueMs_(lastAtMs,scanPolicy) {
+    if(!lastAtMs) return 0;
+    const p=scanPolicy||{scansPerDay:1,dueToleranceMinutes:0};
+    const interval=24*60*60*1000/Math.max(1,Number(p.scansPerDay||1));
+    return Number(lastAtMs)+interval-Math.max(0,Number(p.dueToleranceMinutes||0))*60000;
+  }
+
+  function shouldAutoScanProfile_(profile,config,force,minuteOfDay) {
+    if(!profile||profile.enabled===false) return false;
+    if(force===true) return true;
+    const w=profileActiveWindow_(profile,config);
+    if(minuteOfDay!==undefined&&minuteOfDay!==null){
+      return isWithinActiveWindowMinutes_(w.start,w.end,Number(minuteOfDay));
+    }
+    return isProfileActiveNow_(profile,config,new Date());
+  }
+
+  function productFitUnderAiPolicy_(productFit,contextValid,aiPolicy) {
+    if(!contextValid || (aiPolicy&&aiPolicy.qualificationEnabled===false)) return 'Chưa rõ';
+    return ['Có','Không','Chưa rõ'].indexOf(String(productFit||''))>=0?String(productFit):'Chưa rõ';
+  }
+
+  function leadGateUnderAiPolicy_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext,aiPolicy) {
+    if(aiPolicy&&aiPolicy.qualificationEnabled===false){
+      if(buyerRole==='Không') return 'FAIL';
+      return String(effectiveContext||'').trim()?'WATCH':'CONTEXT_REQUIRED';
+    }
+    return decideLeadGate_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext);
+  }
+
+  function resolveActionPolicyDecision_(signal,actionPolicy) {
+    signal=signal||{};
+    const gate=String(signal.gate||'');
+    const intent=String(signal.intent||'');
+    const nextAction=String(signal.nextAction||'');
+    const classification=String(signal.classification||'');
+    let action='WATCH';
+    if(gate==='FAIL') action=classification==='Nguồn hội thoại'?'NO_ACTION_RELEVANT':'IGNORE';
+    else if(gate==='PASS'){
+      const ownPost=signal.ownPost===true;
+      const strongIntent=ownPost
+        ?['Muốn mua','Cần mua gấp'].indexOf(intent)>=0
+        :intent==='Cần mua gấp';
+      action=strongIntent?'OUTREACH_CANDIDATE':'LEAD';
+    }
+    else if(gate==='REVIEW_REQUIRED') action='HUMAN_REVIEW';
+    else if(['Comment giá trị','Hỏi chẩn đoán','Gợi ý giải pháp','Nối tiếp hội thoại'].indexOf(nextAction)>=0) action='VALUE_COMMENT';
+    else if(classification==='Nguồn hội thoại'||classification==='Theo dõi') action='NO_ACTION_RELEVANT';
+    return {
+      action,
+      requiresHumanApproval:!actionPolicy||actionPolicy.humanApproval!==false,
+      autoComment:false,
+      externalExecutionAllowed:false
+    };
+  }
+
+  function getAutoPolicyState_() {
+    const config=getAutoPolicyConfig_();
+    const profile=activePolicyProfile_(config);
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.GROUP_SCAN_SHEET);
+    let activeGroups=0,assignedGroups=0;
+    const examples=[];
+    if(sh&&sh.getLastRow()>=2){
+      sh.getRange(2,1,sh.getLastRow()-1,27).getValues().forEach((r,i)=>{
+        if(String(r[0]||'').trim()!=='Có') return;
+        activeGroups++;
+        const group=groupPolicyInput_(r);
+        const owner=policyProfileForGroup_(config,group.groupKey);
+        if(owner&&profile&&owner.id===profile.id) assignedGroups++;
+        if(examples.length<8){
+          const effective=resolveEffectiveScanPolicy_(owner,group,config);
+          examples.push({
+            row:i+2,name:String(r[2]||'').trim(),groupKey:group.groupKey,
+            profileId:owner&&owner.id||'',
+            scansPerDay:effective.scansPerDay,postsPerScan:effective.postsPerScan,
+            sources:effective.sources
+          });
+        }
+      });
+    }
+    const pool=getWorkerPoolRaw_();
+    const browserIdentity=String(profile&&profile.browserIdentity||'').trim().toLowerCase();
+    const linkedWorker=(browserIdentity
+      ?pool.find(w=>[w.slot,w.label,w.profile].some(v=>String(v||'').trim().toLowerCase()===browserIdentity))
+      :pool.find(w=>w.enabled&&w.clientId))||null;
+    const profileRuntime={
+      health:linkedWorker?workerHealthState_(linkedWorker):(profile&&profile.enabled===false?'PAUSED':'UNBOUND'),
+      lastActivity:linkedWorker?String(linkedWorker.lastJobAt||linkedWorker.lastSuccessAt||linkedWorker.lastTestAt||''):'',
+      errorState:linkedWorker?String(linkedWorker.lastError||''):'',
+      workerSlot:linkedWorker?String(linkedWorker.slot||''):''
+    };
+    return {
+      version:CFG.VERSION,
+      config,
+      enabled:isAutoMonitorEnabled_(),
+      activeProfile:Object.assign({},profile||{},profileRuntime),
+      profileRuntime,
+      activeGroups,
+      assignedGroups,
+      capacity:Number(profile&&profile.maxGroupCapacity||0),
+      overCapacity:!!profile&&assignedGroups>Number(profile.maxGroupCapacity||0),
+      activeNow:!!profile&&isProfileActiveNow_(profile,config,new Date()),
+      effective:{
+        window:profileActiveWindow_(profile,config),
+        scan:resolveEffectiveScanPolicy_(profile,{},config),
+        comment:resolveEffectiveCommentPolicy_(profile,null,config),
+        ai:resolveEffectiveAiPolicy_(profile,null,config),
+        action:resolveEffectiveActionPolicy_(profile,config)
+      },
+      examples
+    };
+  }
+
+  function saveAutoPolicyConfig_(command) {
+    command=command||{};
+    const current=getAutoPolicyConfig_();
+    const raw=command.policy&&typeof command.policy==='object'?command.policy:current;
+    validateAutoPolicy_(raw);
+    const next=normalizeAutoPolicy_(raw);
+    const intervalChanged=Number(current.global.auto.triggerMinutes)!==Number(next.global.auto.triggerMinutes);
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_POLICY_KEY,JSON.stringify(next));
+    let trigger=null;
+    if(isAutoMonitorEnabled_() && intervalChanged) trigger=ensureAutoMonitorTrigger_(true);
+    return Object.assign(getAutoPolicyState_(),{ok:true,trigger});
+  }
+
+  function runAutoPolicyHarness_() {
+    const config=normalizeAutoPolicy_({
+      activeProfileId:'IX01',
+      global:{
+        auto:{triggerMinutes:5,activeStart:'08:00',activeEnd:'20:00',timezone:'Asia/Ho_Chi_Minh',maxGroupsPerCycle:4,runtimeBudgetMs:230000},
+        scan:{scansPerDay:2,postsPerScan:10,maxPostsPerScan:50,dueToleranceMinutes:5,retryAttempts:5,retryBackoffMinutes:[2,10,30]},
+        comment:{enabled:true,maxPostsPerCycle:4,maxPagesPerPost:3,maxCommentsPerPost:100,hotWatchHours:24,recheckMinutes:30,ownPostPriority:100,externalPostPriority:50,providerBreakerMinutes:10},
+        ai:{signalEnabled:true,qualificationEnabled:true,chunkSize:12},
+        action:{humanApproval:true,autoComment:false}
+      },
+      profiles:[{id:'IX01',displayName:'Pilot',enabled:true,maxGroupCapacity:30,scan:{postsPerScan:15},comment:{},ai:{},action:{}}]
+    });
+    const profile=activePolicyProfile_(config);
+    const globalProfile=Object.assign({},profile,{scan:{}});
+    const t01=resolveEffectiveScanPolicy_(globalProfile,{},config);
+    const t02=resolveEffectiveScanPolicy_(profile,{},config);
+    const t03=resolveEffectiveScanPolicy_(profile,{scansPerDay:3,postsPerScan:25},config);
+    let invalid=false;
+    try{validateAutoPolicy_({global:{auto:{triggerMinutes:2},action:{autoComment:true}}});}catch(_){invalid=true;}
+    const noContextFit=productFitUnderAiPolicy_('Có',false,{qualificationEnabled:true});
+    const noContextGate=leadGateUnderAiPolicy_('Có',noContextFit,true,true,'',{qualificationEnabled:true});
+    const passGate=leadGateUnderAiPolicy_('Có','Có',true,true,'VALID',{qualificationEnabled:true});
+    const signalOnly=leadGateUnderAiPolicy_('Có','Chưa rõ',true,true,'VALID',{qualificationEnabled:false});
+    const commentOff=normalizeAutoPolicy_({global:{comment:{enabled:false}},profiles:[{id:'IX01',enabled:true}]});
+    const lanes=autoPolicyLanePlan_(commentOff,activePolicyProfile_(commentOff));
+    const action=resolveActionPolicyDecision_(
+      {gate:'PASS',intent:'Cần mua gấp',classification:'Rất tiềm năng',nextAction:'Mời inbox'},
+      {humanApproval:true,autoComment:false}
+    );
+    const ownModerate=resolveActionPolicyDecision_(
+      {gate:'PASS',intent:'Muốn mua',classification:'Rất tiềm năng',nextAction:'Mời inbox',ownPost:true},
+      {humanApproval:true,autoComment:false}
+    );
+    const externalModerate=resolveActionPolicyDecision_(
+      {gate:'PASS',intent:'Muốn mua',classification:'Rất tiềm năng',nextAction:'Mời inbox',ownPost:false},
+      {humanApproval:true,autoComment:false}
+    );
+    const hf9=runGroupSummaryCardinalityHarness_();
+    const tests={
+      POLICY_T01_GLOBAL_DEFAULT:t01.postsPerScan===10&&t01.sources.postsPerScan==='GLOBAL',
+      POLICY_T02_PROFILE_OVERRIDE:t02.postsPerScan===15&&t02.sources.postsPerScan==='PROFILE',
+      POLICY_T03_GROUP_OVERRIDE:t03.postsPerScan===25&&t03.scansPerDay===3&&t03.sources.postsPerScan==='GROUP',
+      POLICY_T04_INVALID_REJECTED:invalid,
+      POLICY_T05_OUTSIDE_ACTIVE_HOURS:shouldAutoScanProfile_(profile,config,false,7*60+30)===false,
+      POLICY_T06_MANUAL_RUN_OUTSIDE_WINDOW:shouldAutoScanProfile_(profile,config,true,7*60+30)===true,
+      POLICY_T07_COMMENT_OFF_OTHER_LANES_RUN:lanes.comment===false&&lanes.group===true&&lanes.ai===true&&lanes.sales===true,
+      POLICY_T08_SIGNAL_CONTEXT_MISSING:noContextFit==='Chưa rõ'&&noContextGate==='CONTEXT_REQUIRED',
+      POLICY_T09_QUALIFICATION_REQUIRES_POLICY:passGate==='PASS'&&signalOnly!=='PASS',
+      POLICY_T10_HUMAN_APPROVAL_NO_EXTERNAL_ACTION:
+        action.action==='OUTREACH_CANDIDATE'&&action.requiresHumanApproval===true&&action.externalExecutionAllowed===false&&action.autoComment===false&&
+        ownModerate.action==='OUTREACH_CANDIDATE'&&externalModerate.action==='LEAD',
+      POLICY_T11_HF9_CARDINALITY:!!hf9.ok,
+      POLICY_T12_LEASE_ISOLATION:CFG.AI_LEASE_KEY!==CFG.AUTO_MONITOR_LEASE_KEY&&CFG.COMMENT_POST_LEASE_PREFIX!==CFG.GROUP_LEASE_PREFIX
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function getVersion() { return CFG.VERSION; }
 
   function onOpen() {
@@ -100,6 +706,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10 Auto Policy & Profile Settings: structured IX Profile policy; Scan/Comment/AI/Action dùng backend resolver chung; active window + trigger/budget/retry configurable; Auto Comment khóa OFF; AUTO log ghi effective policy.\n' +
       'V1.9.8.7-HF9 Group Summary Cardinality: NHÓM được collapse theo connected canonical Group aliases thành tối đa 1 row/canonical identity; active registry row thắng metadata, inactive-only identity vẫn giữ một representative; KPI source được dedupe theo Source ID.\n' +
       'V1.9.8.7-HF8 Group Summary Identity: NHÓM/Group Summary join CƠ HỘI bằng canonical Group Key aliases thay vì display name; sold KPI chỉ dùng Sales Stage=Đã bán, không fallback Chuyển đổi legacy.\n' +
       'V1.9.8.7-HF7 Sales Transition Guard: Sales Stage là state machine thật; nguồn mới chỉ được vào Qualified khi Lead Gate=PASS; chỉ cho transition tuần tự Qualified→Outreach→Đang hội thoại→Chờ phản hồi→Follow-up→Đã bán/Lost; same-stage update idempotent và terminal stage không tự mở lại.\n' +
@@ -1731,6 +2338,11 @@ const RemoteApp = (() => {
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
     if (name === 'TEST_BRIDGE') return testApiBridge_();
     if (name === 'GET_MONITORING_OVERVIEW') return getMonitoringOverview_();
+    if (name === 'GET_AUTO_POLICY') return getAutoPolicyState_();
+    if (name === 'SAVE_AUTO_POLICY') return saveAutoPolicyConfig_(command);
+    if (name === 'RUN_AUTO_POLICY_HARNESS') return runAutoPolicyHarness_();
+    if (name === 'GET_GROUP_EFFICIENCY') return getGroupEfficiencyReport_(command.limit);
+    if (name === 'APPLY_SELECTED_SCAN_RECOMMENDATION') return applySelectedScanRecommendation_();
     if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_(false);
     if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2_(command.enabled !== false);
     if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
@@ -2632,12 +3244,45 @@ const RemoteApp = (() => {
     return Math.max(min,Math.min(max,isFinite(n)?n:0));
   }
 
+  function buildOwnPostSourceMap_(policyConfig) {
+    const config=policyConfig||getAutoPolicyConfig_();
+    const hasIdentity=(config.profiles||[]).some(p=>(p.facebookIdentities||[]).length>0);
+    const out={};
+    if(!hasIdentity) return out;
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const raw=ss.getSheetByName(CFG.RAW_SHEET);
+    const postOwn={};
+    if(raw&&raw.getLastRow()>=5){
+      raw.getRange(5,4,raw.getLastRow()-4,5).getDisplayValues().forEach(r=>{
+        const groupKey=String(r[0]||'').trim().toLowerCase();
+        const postId=String(r[1]||'').trim();
+        const authorUrl=String(r[4]||'').trim();
+        if(!postId) return;
+        const profile=policyProfileForGroup_(config,groupKey);
+        const own=isProfileOwnPost_(profile,authorUrl);
+        postOwn[postId]=own;
+        out[postId]=own;
+      });
+    }
+    const comments=ss.getSheetByName(CFG.COMMENT_SHEET);
+    if(comments&&comments.getLastRow()>=2){
+      comments.getRange(2,4,comments.getLastRow()-1,4).getDisplayValues().forEach(r=>{
+        const postId=String(r[1]||'').trim();
+        const commentId=String(r[3]||'').trim();
+        if(commentId) out['C:'+commentId]=!!postOwn[postId];
+      });
+    }
+    return out;
+  }
+
   function applyAiAnalysis_(sheet, analyses) {
     const allowedIntent = new Set(['Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối','Muốn đổi','Muốn mua','Cần mua gấp','Chia sẻ','Thảo luận','Không ưu tiên']);
     const allowedClass = new Set(['Rất tiềm năng','Tiềm năng','Theo dõi','Nguồn hội thoại','Không phải KH']);
     const allowedAction = new Set(['Bỏ qua','Theo dõi','Comment giá trị','Hỏi chẩn đoán','Tạo nhu cầu','Nối tiếp hội thoại','Xử lý phản đối','Gợi ý giải pháp','Mời inbox','Kết bạn','CTA']);
     const allowedBinary = new Set(['Có','Không','Chưa rõ']);
     const cfg=getAiConfig_();
+    const policyConfig=getAutoPolicyConfig_();
+    const ownPostSourceMap=buildOwnPostSourceMap_(policyConfig);
     const groupContextMap=loadGroupAiContextMap_();
     const now = new Date();
 
@@ -2698,7 +3343,10 @@ const RemoteApp = (() => {
         const rowGroup=String(r[4]||'').trim();
         const rowGroupKey=String(groupKeys[idx]&&groupKeys[idx][0]||'').trim().toLowerCase();
         const effectiveContext=resolveAiContextForGroup_(rowGroup,rowGroupKey,cfg,groupContextMap);
-        if(!effectiveContext) productFit='Chưa rõ';
+        const policyProfile=policyProfileForGroup_(policyConfig,rowGroupKey);
+        const aiPolicy=resolveEffectiveAiPolicy_(policyProfile,{groupKey:rowGroupKey},policyConfig);
+        const actionPolicy=resolveEffectiveActionPolicy_(policyProfile,policyConfig);
+        productFit=productFitUnderAiPolicy_(productFit,!!effectiveContext,aiPolicy);
 
         const needScore=clampScore_(a.need_score,0,25);
         const fitScore=clampScore_(a.fit_score,0,25);
@@ -2725,7 +3373,7 @@ const RemoteApp = (() => {
           actionableIntents.has(intent) &&
           !passiveActions.has(action);
 
-        const gate=decideLeadGate_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext);
+        const gate=leadGateUnderAiPolicy_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext,aiPolicy);
 
         let classification=suggestedClass;
         if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
@@ -2738,10 +3386,19 @@ const RemoteApp = (() => {
         if(gate==='PASS') status='Đang xử lý';
         if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
 
+        const ownPostSource=ownPostSourceMap[sourceId]===true;
+        const policyDecision=resolveActionPolicyDecision_({
+          gate,intent,classification:suggestedClass,nextAction:action,ownPost:ownPostSource
+        },actionPolicy);
         const gateReason=[
           'Buyer='+buyerRole,
           'Fit='+productFit,
           'Context='+(effectiveContext?'VALID_GROUP_CONTEXT':'MISSING_OR_INVALID'),
+          'AIStage='+(aiPolicy.qualificationEnabled?'SIGNAL+QUALIFICATION':'SIGNAL_ONLY'),
+          'SourceKind='+(ownPostSource?(sourceId.startsWith('C:')?'OWN_POST_COMMENT':'OWN_POST'):'EXTERNAL_GROUP_SOURCE'),
+          'PolicyAction='+policyDecision.action,
+          'HumanApproval='+(policyDecision.requiresHumanApproval?'YES':'NO'),
+          'AutoComment=OFF',
           'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
           'ActionIntent='+(actionIntentPass?'PASS':'NO'),
           'Intent='+intent,
@@ -4641,12 +5298,15 @@ const RemoteApp = (() => {
     };
   }
 
-  function openCommentProviderBreaker_(err) {
+  function openCommentProviderBreaker_(err,policyConfig,profile) {
     const now=Date.now();
+    const config=policyConfig||getAutoPolicyConfig_();
+    const p=profile||activePolicyProfile_(config);
+    const commentPolicy=resolveEffectiveCommentPolicy_(p,null,config);
     const state={
       open:true,
       openedAt:now,
-      openUntil:now+Number(CFG.COMMENT_PROVIDER_BREAKER_MS||10*60*1000),
+      openUntil:now+Number(commentPolicy.providerBreakerMinutes||10)*60*1000,
       lastError:String(err&&err.message||err||'').slice(0,500)
     };
     PropertiesService.getDocumentProperties()
@@ -4725,11 +5385,12 @@ const RemoteApp = (() => {
     return out;
   }
 
-  function getCommentBacklog_(limit) {
+  function getCommentBacklog_(limit,policyConfig) {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const raw=mustSheet_(ss,CFG.RAW_SHEET);
     if(raw.getLastRow()<5) return [];
     if(raw.getMaxColumns()<20) ensureV16Sheets_(true);
+    const config=policyConfig||getAutoPolicyConfig_();
     const existing=loadExistingCommentCountByPost_();
     const watchMap=loadCommentWatchMap_();
     const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
@@ -4738,7 +5399,13 @@ const RemoteApp = (() => {
     rows.forEach((r,i)=>{
       const postId=String(r[4]||'').trim();
       const url=String(r[5]||'').trim();
-      if(!postId || !url) return;
+      if(!postId||!url) return;
+      const groupKey=String(r[3]||'').trim().toLowerCase();
+      const profile=policyProfileForGroup_(config,groupKey);
+      if(!profile||profile.enabled===false) return;
+      const ownPost=isProfileOwnPost_(profile,r[7]);
+      const commentPolicy=resolveEffectiveCommentPolicy_(profile,{ownPost},config);
+      if(!commentPolicy.enabled) return;
 
       const expected=Math.max(0,toNumber_(r[9]));
       const stored=Math.max(0,toNumber_(r[16]));
@@ -4751,28 +5418,23 @@ const RemoteApp = (() => {
       if(/^HARD:/i.test(status)) return;
       if(!commentRetryDue_(status,lastScanMs,now)) return;
 
-      const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
-      const hotDue=
-        hotRecent &&
-        !!watchMap[postId] &&
-        (!lastScanMs || now-lastScanMs>=CFG.COMMENT_HOT_RECHECK_MS);
-
-      const deltaPending=cursor || fetched<expected;
-      if(!deltaPending && !hotDue) return;
+      const hotRecent=!!importedAtMs&&now-importedAtMs<=Number(commentPolicy.hotWatchHours||24)*60*60*1000;
+      const hotDue=hotRecent&&!!watchMap[postId]&&
+        (!lastScanMs||now-lastScanMs>=Number(commentPolicy.recheckMinutes||30)*60*1000);
+      const deltaPending=cursor||fetched<expected;
+      if(!deltaPending&&!hotDue) return;
 
       jobs.push({
-        rawRow:i+5,
-        postId,
-        url,
+        rawRow:i+5,postId,url,
         groupName:String(r[2]||'').trim(),
-        groupKey:String(r[3]||'').trim().toLowerCase(),
-        expected,
-        fetched,
-        cursor,
-        status,
+        groupKey,
+        profileId:profile.id,
+        ownPost,
+        policyPriority:Number(commentPolicy.priority||0),
+        commentPolicy,
+        expected,fetched,cursor,status,
         retryCount:commentRetryCount_(status),
-        importedAtMs,
-        lastScanMs,
+        importedAtMs,lastScanMs,
         delta:Math.max(0,expected-fetched),
         hotWatch:hotDue,
         watch:watchMap[postId]||null
@@ -4780,14 +5442,16 @@ const RemoteApp = (() => {
     });
 
     jobs.sort((a,b)=>{
-      // New delta first, then hot watch, with cursor continuation kept in the mix.
+      if((b.policyPriority||0)!==(a.policyPriority||0)) return (b.policyPriority||0)-(a.policyPriority||0);
       const rank=x=>x.delta>0?0:(x.hotWatch?1:(x.cursor?2:3));
       const ra=rank(a),rb=rank(b);
       if(ra!==rb) return ra-rb;
       if((b.importedAtMs||0)!==(a.importedAtMs||0)) return (b.importedAtMs||0)-(a.importedAtMs||0);
       return (b.delta||0)-(a.delta||0);
     });
-    const cap=Math.max(1,Math.min(100,Number(limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
+    const active=activePolicyProfile_(config);
+    const defaultPolicy=resolveEffectiveCommentPolicy_(active,null,config);
+    const cap=Math.max(1,Math.min(100,Number(limit||defaultPolicy.maxPostsPerCycle||CFG.COMMENT_MAX_POSTS_PER_TICK)));
     return jobs.slice(0,cap);
   }
 
@@ -4806,7 +5470,11 @@ const RemoteApp = (() => {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
     const comment=ss.getSheetByName(CFG.COMMENT_SHEET);
-    const enabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    const legacyEnabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    const policyConfig=getAutoPolicyConfig_();
+    const activeProfile=activePolicyProfile_(policyConfig);
+    const defaultPolicy=resolveEffectiveCommentPolicy_(activeProfile,null,policyConfig);
+    const enabled=legacyEnabled&&defaultPolicy.enabled;
     let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,retryDeferred=0,providerWait=0,hotWatchDue=0;
     if(raw && raw.getLastRow()>=5){
       const existing=loadExistingCommentCountByPost_();
@@ -4819,8 +5487,13 @@ const RemoteApp = (() => {
         const expected=Math.max(0,toNumber_(r[9]));
         const importedAtMs=opsDateMs_(r[0]);
         const lastScanMs=opsDateMs_(r[18]);
-        const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
-        if(hotRecent && watchMap[postId] && (!lastScanMs || now-lastScanMs>=CFG.COMMENT_HOT_RECHECK_MS)) hotWatchDue++;
+        const groupKey=String(r[3]||'').trim().toLowerCase();
+        const profile=policyProfileForGroup_(policyConfig,groupKey);
+        const ownPost=isProfileOwnPost_(profile,r[7]);
+        const rowPolicy=resolveEffectiveCommentPolicy_(profile,{ownPost},policyConfig);
+        const hotRecent=!!importedAtMs && now-importedAtMs<=Number(rowPolicy.hotWatchHours||24)*60*60*1000;
+        if(rowPolicy.enabled && hotRecent && watchMap[postId] &&
+          (!lastScanMs || now-lastScanMs>=Number(rowPolicy.recheckMinutes||30)*60*1000)) hotWatchDue++;
         if(expected<=0) return;
         postsWithComments++;
         expectedComments+=expected;
@@ -4851,7 +5524,8 @@ const RemoteApp = (() => {
       retryDeferred,
       providerWaitPosts:providerWait,
       hotWatchDue,
-      provider:getCommentProviderBreaker_()
+      provider:getCommentProviderBreaker_(),
+      effectivePolicy:defaultPolicy
     };
     try{cache.put(cacheKey,JSON.stringify(result),30);}catch(_){}
     return result;
@@ -4950,103 +5624,134 @@ const RemoteApp = (() => {
 
     const started=Date.now();
     try{
-    const clientId=String(options.clientId||'').trim() || getBridgeClientId_();
-    const currentFetched=Math.max(0,Number(job.fetched||0));
-    const expected=Math.max(0,Number(job.expected||0));
-    const page=fetchCommentsPageRaw_(clientId,{
-      url:job.url,
-      type:'Newest',
-      cursor:String(job.cursor||'')
-    });
-    const comments=page.comments||[];
-    if(comments.length) clearCommentProviderBreaker_();
+      const clientId=String(options.clientId||'').trim()||getBridgeClientId_();
+      const currentFetched=Math.max(0,Number(job.fetched||0));
+      const expected=Math.max(0,Number(job.expected||0));
+      const policy=options.commentPolicy||job.commentPolicy||resolveEffectiveCommentPolicy_(
+        policyProfileForGroup_(options.policyConfig||getAutoPolicyConfig_(),job.groupKey),
+        {ownPost:!!job.ownPost},
+        options.policyConfig||getAutoPolicyConfig_()
+      );
+      const maxPages=policyInt_(policy.maxPagesPerPost,CFG.COMMENT_MAX_PAGES_PER_POST,1,10);
+      const softMaxComments=policyInt_(policy.maxCommentsPerPost,CFG.COMMENT_MAX_RECORDS_PER_POST,10,1000);
+      let cursor=String(job.cursor||'');
+      let lastCursor=cursor;
+      let pagesRead=0;
+      let totalComments=[];
+      let lastPage=null;
 
-    if(!comments.length){
-      if(job.hotWatch && expected<=currentFetched){
+      const deadlineAt=Number(options.deadlineAt||0);
+      while(pagesRead<maxPages && totalComments.length<softMaxComments && (!deadlineAt || Date.now()<deadlineAt-2000)){
+        const page=fetchCommentsPageRaw_(clientId,{url:job.url,type:'Newest',cursor});
+        lastPage=page;
+        const comments=page.comments||[];
+        if(!comments.length) break;
+        clearCommentProviderBreaker_();
+        totalComments=totalComments.concat(comments);
+        pagesRead++;
+        const next=String(page.cursor||'');
+        if(!next||next===cursor){
+          lastCursor='';
+          break;
+        }
+        lastCursor=next;
+        cursor=next;
+      }
+
+      if(!totalComments.length){
+        if(job.hotWatch&&expected<=currentFetched){
+          updateRawCommentState_(job,{
+            fetched:currentFetched,cursor:'',lastScan:new Date(),
+            status:'WATCH_EMPTY '+currentFetched+'/'+expected
+          });
+          return {
+            ok:true,hotWatch:true,postId:job.postId,postUrl:job.url,
+            commentsRead:0,commentImported:0,newSourceIds:[],
+            pagesRead:0,status:'WATCH_EMPTY',durationMs:Date.now()-started
+          };
+        }
+        const n=Math.max(0,Number(job.retryCount||0))+1;
+        const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
         updateRawCommentState_(job,{
-          fetched:currentFetched,
-          cursor:'',
-          lastScan:new Date(),
-          status:'WATCH_EMPTY '+currentFetched+'/'+expected
+          fetched:currentFetched,cursor:'',lastScan:new Date(),
+          status:(hard?'HARD: ':'RETRY '+n+': ')+'API_EMPTY expected '+expected+' fetched '+currentFetched
         });
         return {
-          ok:true,hotWatch:true,postId:job.postId,postUrl:job.url,
-          commentsRead:0,commentImported:0,newSourceIds:[],
-          status:'WATCH_EMPTY',durationMs:Date.now()-started
+          ok:false,hard,retry:!hard,postId:job.postId,postUrl:job.url,
+          commentsRead:0,commentImported:0,newSourceIds:[],pagesRead:0,
+          error:'Comment API page rỗng sau retry.',durationMs:Date.now()-started
         };
       }
-      const n=Math.max(0,Number(job.retryCount||0))+1;
-      const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
+
+      const fileName='api_comments_'+job.postId+'_'
+        +Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+      const imported=importJsonFiles([{
+        name:fileName,
+        text:JSON.stringify(totalComments),
+        __workerFast:true,
+        __sourcePostId:job.postId,
+        __sourcePostUrl:job.url,
+        __sourceGroupKey:job.groupKey||'',
+        __sourceGroupName:job.groupName||''
+      }]);
+
+      const newCount=Math.max(0,Number(imported.commentImported||0));
+      const observedExpected=Math.max(expected,currentFetched+newCount);
+      const fetched=Math.min(observedExpected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
+      const capped=(pagesRead>=maxPages||totalComments.length>=softMaxComments)&&!!lastCursor;
+      let status='',nextCursor='';
+
+      if(fetched>=observedExpected&&!capped){
+        status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
+      }else if(lastCursor){
+        status='BACKLOG '+fetched+'/'+observedExpected;
+        nextCursor=lastCursor;
+      }else if(fetched>=observedExpected){
+        status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
+      }else{
+        const n=Math.max(0,Number(job.retryCount||0))+1;
+        const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
+        status=(hard?'HARD: ':'RETRY '+n+': ')+'GAP '+fetched+'/'+observedExpected+' no cursor';
+      }
+
       updateRawCommentState_(job,{
-        fetched:currentFetched,
-        cursor:'',
-        lastScan:new Date(),
-        status:(hard?'HARD: ':'RETRY '+n+': ')+'API_EMPTY expected '+expected+' fetched '+currentFetched
+        fetched,cursor:nextCursor,lastScan:new Date(),status,commentsCount:observedExpected
       });
       return {
-        ok:false,hard,retry:!hard,postId:job.postId,postUrl:job.url,
-        commentsRead:0,commentImported:0,newSourceIds:[],
-        error:'Comment API page rỗng sau retry.',durationMs:Date.now()-started
+        ok:true,
+        postId:job.postId,
+        postUrl:job.url,
+        commentsRead:totalComments.length,
+        commentImported:newCount,
+        duplicates:Number(imported.duplicates||0),
+        fetched,
+        expected:observedExpected,
+        nextCursor,
+        pagesRead,
+        maxPages,
+        softMaxComments,
+        status,
+        newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
+        durationMs:Date.now()-started
       };
-    }
-
-    const fileName='api_comments_'+job.postId+'_'
-      +Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-    const imported=importJsonFiles([{
-      name:fileName,
-      text:JSON.stringify(comments),
-      __workerFast:true,
-      __sourcePostId:job.postId,
-      __sourcePostUrl:job.url,
-      __sourceGroupKey:job.groupKey||'',
-      __sourceGroupName:job.groupName||''
-    }]);
-
-    const newCount=Math.max(0,Number(imported.commentImported||0));
-    const observedExpected=Math.max(expected,currentFetched+newCount);
-    const fetched=Math.min(observedExpected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
-    const nextCursor=String(page.cursor||'');
-    let status='';
-    let cursor='';
-
-    if(fetched>=observedExpected){
-      status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
-    } else if(nextCursor){
-      status='BACKLOG '+fetched+'/'+expected;
-      cursor=nextCursor;
-    } else {
-      const n=Math.max(0,Number(job.retryCount||0))+1;
-      const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
-      status=(hard?'HARD: ':'RETRY '+n+': ')+'GAP '+fetched+'/'+expected+' no cursor';
-    }
-
-    updateRawCommentState_(job,{fetched,cursor,lastScan:new Date(),status,commentsCount:observedExpected});
-    return {
-      ok:true,
-      postId:job.postId,
-      postUrl:job.url,
-      commentsRead:comments.length,
-      commentImported:newCount,
-      duplicates:Number(imported.duplicates||0),
-      fetched,
-      expected:observedExpected,
-      nextCursor:cursor,
-      status,
-      newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
-      durationMs:Date.now()-started
-    };
     } finally {
       releaseRuntimeLease_(commentPostLeasePropertyKey_(leaseIdentity),postLease.token);
     }
   }
+
   function runCommentIntelligenceUi_(limit) {
     const started=Date.now();
     const runId='comment-'+Utilities.getUuid().slice(0,10);
     let result=null;
     try{
+      const policyConfig=getAutoPolicyConfig_();
+      const profile=activePolicyProfile_(policyConfig);
+      const policy=resolveEffectiveCommentPolicy_(profile,null,policyConfig);
       result=runCommentIntelligenceCycle_({
-        limit:Math.max(1,Math.min(20,Number(limit||CFG.COMMENT_MAX_POSTS_PER_TICK))),
-        source:'UI'
+        limit:Math.max(1,Math.min(20,Number(limit||policy.maxPostsPerCycle))),
+        source:'UI',
+        policyConfig,
+        policyProfileId:profile&&profile.id||''
       });
       const ci={
         processed:Number(result&&result.processed||0),
@@ -5088,8 +5793,12 @@ const RemoteApp = (() => {
     options=options||{};
     ensureV16Sheets_(false);
     const props=PropertiesService.getDocumentProperties();
-    const enabled=(props.getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
-    if(!enabled) return {ok:true,enabled:false,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
+    const legacyEnabled=(props.getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    const policyConfig=options.policyConfig||getAutoPolicyConfig_();
+    const policyProfile=policyProfileForGroup_(policyConfig,'')||activePolicyProfile_(policyConfig);
+    const commentPolicy=resolveEffectiveCommentPolicy_(policyProfile,null,policyConfig);
+    const enabled=legacyEnabled&&commentPolicy.enabled;
+    if(!enabled) return {ok:true,enabled:false,reason:'COMMENT_POLICY_OFF',processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
 
     const started=Date.now();
     const repaired=repairCommentProviderHardQuarantine_();
@@ -5104,8 +5813,8 @@ const RemoteApp = (() => {
       };
     }
 
-    const limit=Math.max(1,Math.min(20,Number(options.limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
-    const jobs=getCommentBacklog_(limit);
+    const limit=Math.max(1,Math.min(20,Number(options.limit||commentPolicy.maxPostsPerCycle)));
+    const jobs=getCommentBacklog_(limit,policyConfig);
     if(!jobs.length) return {
       ok:true,enabled:true,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION,
       repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
@@ -5133,7 +5842,7 @@ const RemoteApp = (() => {
       if(Date.now()-started>CFG.COMMENT_CYCLE_BUDGET_MS) break;
       const job=jobs[i];
       try{
-        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO'});
+        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO',commentPolicy:job.commentPolicy,policyConfig,deadlineAt:started+CFG.COMMENT_CYCLE_BUDGET_MS});
         results.push(r);
         imported+=Number(r.commentImported||0);
         (r.newSourceIds||[]).forEach(id=>sourceIds.push(id));
@@ -5156,7 +5865,7 @@ const RemoteApp = (() => {
           postId:job.postId,error:String(err&&err.message||err||'')
         });
         if(providerTransient){
-          const opened=openCommentProviderBreaker_(err);
+          const opened=openCommentProviderBreaker_(err,policyConfig,policyProfile);
           providerCircuitOpen=true;
           providerRetryAt=Number(opened.openUntil||0);
           providerError=String(opened.lastError||'');
@@ -5203,16 +5912,21 @@ const RemoteApp = (() => {
     const cls=String(errorClass||'UNKNOWN').toUpperCase();
     const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)>=0;
     const attempts=Number(prev.attempts||0)+1;
-    const hard=!retryable || attempts>=CFG.AUTO_RETRY_MAX_ATTEMPTS;
-    const delays=CFG.AUTO_RETRY_DELAYS_MS||[];
-    const delay=hard?0:Number(delays[Math.min(attempts-1,delays.length-1)]||30*60*1000);
+    const config=getAutoPolicyConfig_();
+    const profile=policyProfileForGroup_(config,groupKey);
+    const policy=resolveEffectiveScanPolicy_(profile,{},config);
+    const hard=!retryable||attempts>=Number(policy.retryAttempts||CFG.AUTO_RETRY_MAX_ATTEMPTS);
+    const minutes=policy.retryBackoffMinutes||[];
+    const delay=hard?0:Number(minutes[Math.min(attempts-1,Math.max(0,minutes.length-1))]||30)*60000;
     const state={
       attempts,
       nextAt:hard?0:Date.now()+delay,
       hard,
       lastClass:cls,
       lastError:String(error||'').slice(0,500),
-      updatedAt:new Date().toISOString()
+      updatedAt:new Date().toISOString(),
+      policyProfileId:profile&&profile.id||'',
+      policyRetryAttempts:Number(policy.retryAttempts||0)
     };
     props.setProperty(autoRetryKey_(groupKey),JSON.stringify(state));
     return state;
@@ -5480,32 +6194,39 @@ const RemoteApp = (() => {
     return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates,rowCapacityRepairs};
   }
 
-  function getAutoRetryJobs_(limit) {
+  function getAutoRetryJobs_(limit,policyConfig) {
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     if(sh.getLastRow()<2) return [];
+    const config=policyConfig||getAutoPolicyConfig_();
     const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>x.row));
-    const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getValues();
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
     const out=[];
     rows.forEach((r,i)=>{
       const row=i+2;
       if(duplicateRows.has(row)) return;
       if(String(r[0]||'').trim()!=='Có') return;
       const status=String(r[23]||'').trim();
-      if(status!=='LỖI' && status!=='THIẾU') return;
+      if(status!=='LỖI'&&status!=='THIẾU') return;
       const url=String(r[3]||'').trim();
       if(!url) return;
-      const key=exactGroupKeyFromRow_(url,r[4]);
+      const group=groupPolicyInput_(r);
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      if(!profile||profile.enabled===false) return;
       const cls=classifyAutoSheetException_(status,r[25]);
       if(['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)<0) return;
-      const state=getAutoRetryState_(key);
-      if(state.hard || (state.nextAt && state.nextAt>Date.now())) return;
+      const state=getAutoRetryState_(group.groupKey);
+      if(state.hard||(state.nextAt&&state.nextAt>Date.now())) return;
+      const policy=resolveEffectiveScanPolicy_(profile,group,config);
       out.push({
         row,
-        name:String(r[2]||'').trim()||('Group '+key),
+        name:String(r[2]||'').trim()||('Group '+group.groupKey),
         profile:String(r[1]||'').trim()||'AUTO',
+        policyProfileId:profile.id,
         url,
-        groupKey:key,
-        targetCount:normalizeGroupTarget_(r[8]||25),
+        groupKey:group.groupKey,
+        targetCount:policy.postsPerScan,
+        scansPerDay:policy.scansPerDay,
+        effectivePolicy:policy,
         status,
         lifecycle:String(r[6]||'').trim(),
         priorityRank:groupPriorityRank_(r[6]),
@@ -5514,8 +6235,9 @@ const RemoteApp = (() => {
         errorClass:cls
       });
     });
-    out.sort((a,b)=>a.priorityRank-b.priorityRank || Number(a.retryState.attempts||0)-Number(b.retryState.attempts||0) || a.row-b.row);
-    return out.slice(0,Math.max(1,Number(limit||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK)));
+    out.sort((a,b)=>a.priorityRank-b.priorityRank||Number(a.retryState.attempts||0)-Number(b.retryState.attempts||0)||a.row-b.row);
+    const cap=Math.max(1,Number(limit||config.global.auto.maxGroupsPerCycle||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK));
+    return out.slice(0,cap);
   }
 
   function isAutoMonitorEnabled_() {
@@ -5548,7 +6270,9 @@ const RemoteApp = (() => {
     return getAutoMonitorTriggerAccess_().triggers;
   }
 
-  function ensureAutoMonitorTrigger_() {
+  function ensureAutoMonitorTrigger_(forceRecreate) {
+    const policy=getAutoPolicyConfig_();
+    const triggerMinutes=Number(policy.global.auto.triggerMinutes||CFG.AUTO_MONITOR_TRIGGER_MINUTES);
     let access=getAutoMonitorTriggerAccess_();
     if(!access.permissionOk){
       return {
@@ -5558,16 +6282,16 @@ const RemoteApp = (() => {
     }
 
     try{
-      if(access.triggers.length>1){
-        access.triggers.slice(1).forEach(t=>ScriptApp.deleteTrigger(t));
+      if(access.triggers.length>1 || (forceRecreate===true && access.triggers.length)){
+        access.triggers.forEach(t=>ScriptApp.deleteTrigger(t));
         access=getAutoMonitorTriggerAccess_();
       }
       if(access.triggers.length){
-        return {installed:true,count:1,permissionOk:true,authRequired:false,error:''};
+        return {installed:true,count:1,permissionOk:true,authRequired:false,error:'',intervalMinutes:triggerMinutes};
       }
       ScriptApp.newTrigger(CFG.AUTO_MONITOR_TRIGGER_HANDLER)
         .timeBased()
-        .everyMinutes(CFG.AUTO_MONITOR_TRIGGER_MINUTES)
+        .everyMinutes(triggerMinutes)
         .create();
       access=getAutoMonitorTriggerAccess_();
       return {
@@ -5575,6 +6299,7 @@ const RemoteApp = (() => {
         count:access.triggerCount,
         permissionOk:access.permissionOk,
         authRequired:access.authRequired,
+        intervalMinutes:triggerMinutes,
         error:access.error||''
       };
     }catch(err){
@@ -5607,6 +6332,8 @@ const RemoteApp = (() => {
 
   function getAutoMonitorV2State_(repairTrigger) {
     const props=PropertiesService.getDocumentProperties();
+    const policy=getAutoPolicyConfig_();
+    const triggerMinutes=Number(policy.global.auto.triggerMinutes||CFG.AUTO_MONITOR_TRIGGER_MINUTES);
     const requestedEnabled=isAutoMonitorEnabled_();
     let access=getAutoMonitorTriggerAccess_();
     let repair=null;
@@ -5627,7 +6354,7 @@ const RemoteApp = (() => {
       requestedEnabled,
       degraded:requestedEnabled&&!effectiveEnabled,
       backend:true,
-      intervalMinutes:CFG.AUTO_MONITOR_TRIGGER_MINUTES,
+      intervalMinutes:triggerMinutes,
       permissionOk:access.permissionOk,
       authRequired:access.authRequired,
       triggerInstalled:access.triggerInstalled,
@@ -5690,7 +6417,22 @@ const RemoteApp = (() => {
       }
       const detail=[
         'version='+String(summary.version||CFG.VERSION),
-        'budget='+Number(summary.durationMs||0)+'/'+Number(CFG.AUTO_MONITOR_BUDGET_MS||0)+'ms',
+        summary.policy&&summary.policy.profileId?('profile='+String(summary.policy.profileId)):'',
+        summary.policy?('policy.trigger='+Number(summary.policy.triggerMinutes||0)+'m'):'',
+        summary.policy&&summary.policy.activeWindow
+          ?('policy.window='+String(summary.policy.activeWindow.start||'')+'-'+String(summary.policy.activeWindow.end||'')+'@'+String(summary.policy.activeWindow.timezone||''))
+          :'',
+        summary.policy?('policy.maxGroups='+Number(summary.policy.maxGroups||0)):'',
+        summary.policy&&summary.policy.scan
+          ?('policy.scan='+Number(summary.policy.scan.scansPerDay||0)+'/day, posts='+Number(summary.policy.scan.postsPerScan||0))
+          :'',
+        summary.policy&&summary.policy.comment
+          ?('policy.comment='+(summary.policy.comment.enabled?'ON':'OFF')+', posts='+Number(summary.policy.comment.maxPostsPerCycle||0))
+          :'',
+        summary.policy&&summary.policy.ai
+          ?('policy.ai='+(summary.policy.ai.signalEnabled?'SIGNAL_ON':'SIGNAL_OFF')+'/'+(summary.policy.ai.qualificationEnabled?'QUAL_ON':'QUAL_OFF')+', chunk='+Number(summary.policy.ai.chunkSize||0))
+          :'',
+        'budget='+Number(summary.durationMs||0)+'/'+Number(summary.policy&&summary.policy.runtimeBudgetMs||CFG.AUTO_MONITOR_BUDGET_MS||0)+'ms',
         summary.budgetOverrunMs?('overrun='+Number(summary.budgetOverrunMs||0)+'ms'):'',
         summary.budgetDeferredGroups?('deferredGroups='+Number(summary.budgetDeferredGroups||0)):'',
         summary.aiDeferredSources?('aiDeferred='+Number(summary.aiDeferredSources||0)):'',
@@ -5751,7 +6493,7 @@ const RemoteApp = (() => {
         if(Number.isFinite(started)) summary.durationMs=Math.max(0,now-started);
       }
       summary.finishedAt=summary.finishedAt||new Date(now).toISOString();
-      summary.budgetOverrunMs=Math.max(0,Number(summary.durationMs||0)-Number(CFG.AUTO_MONITOR_BUDGET_MS||0));
+      summary.budgetOverrunMs=Math.max(0,Number(summary.durationMs||0)-Number(summary.policy&&summary.policy.runtimeBudgetMs||CFG.AUTO_MONITOR_BUDGET_MS||0));
       PropertiesService.getDocumentProperties()
         .setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
       logAutoMonitorRun_(summary);
@@ -5763,8 +6505,9 @@ const RemoteApp = (() => {
     try{
       const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
       if(sh.getLastRow()<2) return '';
+      const config=getAutoPolicyConfig_();
       const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
-      const rows=sh.getRange(2,1,sh.getLastRow()-1,24).getValues();
+      const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
       let min=0;
       rows.forEach((row,i)=>{
         if(duplicateRows.has(i+2)) return;
@@ -5772,12 +6515,16 @@ const RemoteApp = (() => {
         const lifecycle=String(row[6]||'').trim();
         const status=String(row[23]||'').trim();
         const url=String(row[3]||'').trim();
-        if(active!=='Có' || !url || lifecycle==='Loại') return;
-        if(status==='ĐANG QUÉT' || status==='LỖI' || status==='THIẾU' || /^DỪNG/.test(status)) return;
-        const lastAt=row[9] instanceof Date ? row[9].getTime() : 0;
-        const nextAt=row[10] instanceof Date ? row[10].getTime() : 0;
-        if(!lastAt || !nextAt || nextAt<=Date.now()) return;
-        if(!min || nextAt<min) min=nextAt;
+        if(active!=='Có'||!url||lifecycle==='Loại') return;
+        if(status==='ĐANG QUÉT'||status==='LỖI'||status==='THIẾU'||/^DỪNG/.test(status)) return;
+        const group=groupPolicyInput_(row);
+        const profile=policyProfileForGroup_(config,group.groupKey);
+        if(!profile||profile.enabled===false) return;
+        const scan=resolveEffectiveScanPolicy_(profile,group,config);
+        const lastAt=opsDateMs_(row[9]);
+        const nextAt=effectiveNextDueMs_(lastAt,scan);
+        if(!lastAt||!nextAt||nextAt<=Date.now()) return;
+        if(!min||nextAt<min) min=nextAt;
       });
       return min?new Date(min).toISOString():'';
     }catch(_){
@@ -5790,8 +6537,17 @@ const RemoteApp = (() => {
     const started=Date.now();
     const runId='auto-'+Utilities.getUuid().slice(0,10);
     const testMode=!!options.testMode;
-    const requestedMaxJobs=Number(options.maxJobs||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK);
-    const maxJobs=Math.max(1,Math.min(CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,requestedMaxJobs));
+    const policyConfig=getAutoPolicyConfig_();
+    const activeProfile=activePolicyProfile_(policyConfig);
+    const autoPolicy=policyConfig.global.auto||{};
+    const commentPolicy=resolveEffectiveCommentPolicy_(activeProfile,null,policyConfig);
+    const aiPolicy=resolveEffectiveAiPolicy_(activeProfile,null,policyConfig);
+    const actionPolicy=resolveEffectiveActionPolicy_(activeProfile,policyConfig);
+    const runtimeBudgetMs=policyInt_(autoPolicy.runtimeBudgetMs,CFG.AUTO_MONITOR_BUDGET_MS,60000,280000);
+    const policyMaxJobs=policyInt_(autoPolicy.maxGroupsPerCycle,CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,1,12);
+    const requestedMaxJobs=Number(options.maxJobs||policyMaxJobs);
+    const maxJobs=Math.max(1,Math.min(policyMaxJobs,requestedMaxJobs));
+    const groupWindowOpen=shouldAutoScanProfile_(activeProfile,policyConfig,options.force===true,null);
     const summary={
       ok:true,version:CFG.VERSION,runId,source:options.source||'TRIGGER',testMode,
       acceptance:testMode?'PENDING':'',
@@ -5799,7 +6555,20 @@ const RemoteApp = (() => {
       commentsProcessed:0,commentsImported:0,aiAnalyzed:0,newSourceIds:[],
       queue:{retryAvailable:0,dueAvailable:0,selected:[]},
       jobResults:[],
-      startedAt:new Date(started).toISOString()
+      startedAt:new Date(started).toISOString(),
+      policy:{
+        profileId:activeProfile&&activeProfile.id||'',
+        profileName:activeProfile&&activeProfile.displayName||'',
+        triggerMinutes:Number(autoPolicy.triggerMinutes||CFG.AUTO_MONITOR_TRIGGER_MINUTES),
+        activeWindow:profileActiveWindow_(activeProfile,policyConfig),
+        activeNow:groupWindowOpen,
+        maxGroups:maxJobs,
+        runtimeBudgetMs,
+        scan:resolveEffectiveScanPolicy_(activeProfile,{},policyConfig),
+        comment:commentPolicy,
+        ai:aiPolicy,
+        action:actionPolicy
+      }
     };
 
     if(testMode){
@@ -5861,9 +6630,15 @@ const RemoteApp = (() => {
         return summary;
       }
 
-      const retry=getAutoRetryJobs_(Math.min(2,maxJobs));
+      const retryAll=getAutoRetryJobs_(Math.min(2,maxJobs),policyConfig);
+      const retry=options.force===true
+        ?retryAll
+        :retryAll.filter(j=>shouldAutoScanProfile_(policyProfileForGroup_(policyConfig,j.groupKey),policyConfig,false,null));
       const retryRows=new Set(retry.map(x=>x.row));
-      const due=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT)
+      const due=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT,{
+          policyConfig,
+          requireActiveWindow:options.force!==true
+        })
         .filter(x=>!retryRows.has(x.row))
         .map(x=>Object.assign({},x,{autoKind:'DUE'}));
 
@@ -5880,9 +6655,11 @@ const RemoteApp = (() => {
       }));
       if(!jobs.length){
         summary.skipped=true;
-        summary.reason='NO_DUE_OR_RETRY';
+        summary.reason=(!options.force&&!groupWindowOpen)?'OUTSIDE_ACTIVE_WINDOW':'NO_DUE_OR_RETRY';
         summary.acceptance=testMode?'SCHEDULER_IDLE':'';
-        summary.message='Scheduler hợp lệ; hiện chưa có Group đến hạn hoặc retry.';
+        summary.message=summary.reason==='OUTSIDE_ACTIVE_WINDOW'
+          ?'Ngoài active window: không mở Group scan mới; Comment/AI backlog vẫn được xử lý theo policy.'
+          :'Scheduler hợp lệ; hiện chưa có Group đến hạn hoặc retry.';
         summary.nextDueAt=getNextAutoDueAt_();
       }
 
@@ -5891,7 +6668,7 @@ const RemoteApp = (() => {
         const work=flattenWorkerPlanJobs_(plan).slice(0,maxJobs);
         for(let i=0;i<work.length;i++){
           const elapsed=Date.now()-started;
-          const remaining=Math.max(0,CFG.AUTO_MONITOR_BUDGET_MS-elapsed);
+          const remaining=Math.max(0,runtimeBudgetMs-elapsed);
           if(remaining<CFG.AUTO_MONITOR_JOB_START_RESERVE_MS){
             summary.budgetDeferredGroups=work.length-i;
             summary.budgetReason='GROUP_START_RESERVE';
@@ -5901,7 +6678,7 @@ const RemoteApp = (() => {
           const job=work[i];
 
           const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
-          if(job.autoKind==='DUE' && !isDueJobStillValid_(sheet,job.row)){
+          if(job.autoKind==='DUE' && !isDueJobStillValid_(sheet,job.row,policyConfig)){
             summary.groupsSkipped++;
             summary.jobResults.push({
               row:job.row,name:job.name,kind:'DUE',outcome:'SKIP_NOT_DUE',workerSlot:job.workerSlot
@@ -5939,6 +6716,9 @@ const RemoteApp = (() => {
             workerSlot:job.workerSlot,
             targetCount:job.targetCount,
             postsRead:Number(result&&result.postsRead||0),
+            newPosts:Number(result&&result.imported&&result.imported.postImported||0),
+            duplicates:Number(result&&result.imported&&result.imported.duplicates||0),
+            durationMs:Number(result&&result.durationMs||0),
             errorClass:String(result&&result.errorClass||''),
             note:String(result&&(result.error||result.note)||'').slice(0,240)
           });
@@ -5948,9 +6728,14 @@ const RemoteApp = (() => {
         }
       }
 
-      if(!options.skipComments && !testMode && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
+      if(!options.skipComments && !testMode && commentPolicy.enabled && Date.now()-started<runtimeBudgetMs-45000){
         heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
-        const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
+        const cr=runCommentIntelligenceCycle_({
+          limit:commentPolicy.maxPostsPerCycle,
+          source:'AUTO',
+          policyConfig,
+          policyProfileId:activeProfile&&activeProfile.id||''
+        });
         summary.commentsProcessed=Number(cr.processed||0);
         summary.commentsImported=Number(cr.commentImported||0);
         summary.commentIntel={
@@ -5968,8 +6753,8 @@ const RemoteApp = (() => {
       summary.newSourceIds=[...new Set(summary.newSourceIds.map(x=>String(x||'').trim()).filter(Boolean))];
 
       const aiCfg=getAiConfig_();
-      if(!options.skipAi && !testMode && aiCfg.autoAnalyze){
-        const remaining=Math.max(0,CFG.AUTO_MONITOR_BUDGET_MS-(Date.now()-started));
+      if(!options.skipAi && !testMode && aiCfg.autoAnalyze && aiPolicy.signalEnabled){
+        const remaining=Math.max(0,runtimeBudgetMs-(Date.now()-started));
         if(remaining>=CFG.AUTO_AI_START_RESERVE_MS){
           heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
           try{
@@ -5978,13 +6763,17 @@ const RemoteApp = (() => {
               ? {
                   silent:true,
                   scope:'source_ids',
-                  sourceIds:summary.newSourceIds.slice(0,CFG.AUTO_AI_SOURCE_CHUNK),
-                  maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK
+                  sourceIds:summary.newSourceIds.slice(0,aiPolicy.chunkSize),
+                  maxRowsOverride:aiPolicy.chunkSize,
+                  policyConfig,
+                  policyProfileId:activeProfile&&activeProfile.id||''
                 }
               : {
                   silent:true,
                   scope:'all_waiting',
-                  maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK
+                  maxRowsOverride:aiPolicy.chunkSize,
+                  policyConfig,
+                  policyProfileId:activeProfile&&activeProfile.id||''
                 };
             const ar=analyzeNewPosts_(aiOptions);
             summary.aiAnalyzed=Number(ar&&ar.analyzed||0);
@@ -5994,8 +6783,8 @@ const RemoteApp = (() => {
               errors:(ar&&ar.errors||[]).length,
               mode:hasNew?'NEW_SOURCE':'BACKLOG'
             };
-            if(hasNew && summary.newSourceIds.length>CFG.AUTO_AI_SOURCE_CHUNK){
-              summary.aiDeferredSources=summary.newSourceIds.length-CFG.AUTO_AI_SOURCE_CHUNK;
+            if(hasNew && summary.newSourceIds.length>aiPolicy.chunkSize){
+              summary.aiDeferredSources=summary.newSourceIds.length-aiPolicy.chunkSize;
             }
           }catch(err){
             summary.aiError=String(err.message||err);
@@ -6421,7 +7210,7 @@ const RemoteApp = (() => {
       return {
         ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
         workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:'',
-        errorClass,error:msg,durationMs:Date.now()-started
+        errorClass,error:msg,durationMs:failDurationMs
       };
     } finally {
       releaseGroupLease_(groupKey||extractGroupKey_(groupUrl),lease.token);
@@ -6498,11 +7287,13 @@ const RemoteApp = (() => {
     return Object.prototype.hasOwnProperty.call(map,key)?map[key]:2;
   }
 
-  function getDueGroupRows_(limit) {
+  function getDueGroupRows_(limit,options) {
+    options=options||{};
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const last=sheet.getLastRow();
     if(last<2) return [];
-    const now=Date.now();
+    const now=Number(options.nowMs||Date.now());
+    const config=options.policyConfig||getAutoPolicyConfig_();
     const rows=sheet.getRange(2,1,last-1,27).getValues();
     const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
     const jobs=[];
@@ -6513,23 +7304,29 @@ const RemoteApp = (() => {
       const url=String(r[3]||'').trim();
       const lifecycle=String(r[6]||'').trim();
       const runtimeStatus=String(r[23]||'').trim();
-      const dueText=String(r[11]||'').trim();
-      const nextAt=r[10] instanceof Date ? r[10].getTime() : 0;
-      const lastAt=r[9] instanceof Date ? r[9].getTime() : 0;
+      const lastAt=opsDateMs_(r[9]);
+      if(active!=='Có'||!url||lifecycle==='Loại') return;
+      if(runtimeStatus==='ĐANG QUÉT'||runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)) return;
 
-      if(active!=='Có' || !url || lifecycle==='Loại') return;
-      if(runtimeStatus==='ĐANG QUÉT' || runtimeStatus==='LỖI' || runtimeStatus==='THIẾU' || /^DỪNG/.test(runtimeStatus)) return;
-
-      const due=!lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=now;
+      const group=groupPolicyInput_(r);
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      if(!profile||profile.enabled===false) return;
+      if(options.requireActiveWindow===true && !shouldAutoScanProfile_(profile,config,false,null)) return;
+      const policy=resolveEffectiveScanPolicy_(profile,group,config);
+      const nextAt=effectiveNextDueMs_(lastAt,policy);
+      const due=!lastAt||!nextAt||nextAt<=now;
       if(!due) return;
 
       jobs.push({
         row:i+2,
-        name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
-        profile:String(r[1]||'').trim() || 'AUTO',
+        name:String(r[2]||'').trim()||('Group '+String(r[4]||'')),
+        profile:String(r[1]||'').trim()||'AUTO',
+        policyProfileId:profile.id,
         url,
-        groupKey:exactGroupKeyFromRow_(url,r[4]),
-        targetCount:normalizeGroupTarget_(r[8]||25),
+        groupKey:group.groupKey,
+        targetCount:policy.postsPerScan,
+        scansPerDay:policy.scansPerDay,
+        effectivePolicy:policy,
         status:runtimeStatus||'CHỜ',
         lifecycle,
         priorityRank:groupPriorityRank_(lifecycle),
@@ -6543,9 +7340,8 @@ const RemoteApp = (() => {
       if(a.nextAtMs!==b.nextAtMs) return a.nextAtMs-b.nextAtMs;
       return a.lastAtMs-b.lastAtMs;
     });
-
-    const cap=Math.max(1,Math.min(CFG.PILOT_GROUP_LIMIT,Number(limit||CFG.DUE_CYCLE_LIMIT)));
-    return jobs.slice(0,cap);
+    const configuredLimit=Number(limit||config.global.auto.maxGroupsPerCycle||CFG.DUE_CYCLE_LIMIT);
+    return jobs.slice(0,Math.max(1,Math.min(CFG.PILOT_GROUP_LIMIT,configuredLimit)));
   }
 
   function countAiBacklogAndPass_() {
@@ -6715,12 +7511,47 @@ const RemoteApp = (() => {
     };
   }
 
+  function schedulerGroupTruth_(row,config,nowMs) {
+    row=row||[];
+    const now=Number(nowMs||Date.now());
+    const active=String(row[0]||'').trim();
+    const lifecycle=String(row[6]||'').trim();
+    const runtimeStatus=String(row[23]||'').trim();
+    const note=String(row[25]||'').trim();
+    const group=groupPolicyInput_(row);
+    if(!group.groupKey) return {state:'IDENTITY_ERROR',reason:'MISSING_GROUP_KEY',group,profile:null,scan:null,nextAtMs:0,due:false};
+    const profile=policyProfileForGroup_(config,group.groupKey);
+    if(active!=='Có'||lifecycle==='Loại'||!profile||profile.enabled===false){
+      return {state:'BLOCKED',reason:active!=='Có'?'INACTIVE':'PROFILE_OR_LIFECYCLE_BLOCK',group,profile,scan:null,nextAtMs:0,due:false};
+    }
+    if(runtimeStatus==='ĐANG QUÉT') return {state:'BLOCKED',reason:'RUNNING',group,profile,scan:null,nextAtMs:0,due:false};
+    if(/Wrong ID|FB account not found|GROUP_ID_RESOLVE|only supports group/i.test(note)){
+      return {state:'IDENTITY_ERROR',reason:'GROUP_ID_RESOLVE',group,profile,scan:null,nextAtMs:0,due:false};
+    }
+    if(runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'){
+      const cls=classifyAutoSheetException_(runtimeStatus,note);
+      const retryState=getAutoRetryState_(group.groupKey);
+      const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)>=0;
+      if(retryState.hard) return {state:'QUARANTINED',reason:cls||'HARD_RETRY',group,profile,scan:null,nextAtMs:Number(retryState.nextAt||0),due:false};
+      if(!retryable) return {state:'BLOCKED',reason:cls||'STRUCTURAL',group,profile,scan:null,nextAtMs:0,due:false};
+      return {state:'RETRY',reason:retryState.nextAt&&retryState.nextAt>now?'BACKOFF':'READY',group,profile,scan:null,nextAtMs:Number(retryState.nextAt||0),due:!retryState.nextAt||retryState.nextAt<=now};
+    }
+    if(/^DỪNG/.test(runtimeStatus)) return {state:'BLOCKED',reason:'STOPPED',group,profile,scan:null,nextAtMs:0,due:false};
+    const scan=resolveEffectiveScanPolicy_(profile,group,config);
+    const lastAt=opsDateMs_(row[9]);
+    const nextAt=effectiveNextDueMs_(lastAt,scan);
+    const due=!lastAt||!nextAt||nextAt<=now;
+    return {state:due?'DUE':'WAIT',reason:due?'DUE':'NOT_DUE',group,profile,scan,nextAtMs:nextAt,due};
+  }
+
   function getMonitoringOverview_() {
     ensureV16Sheets_(false);
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
     const last=sh.getLastRow();
     const now=Date.now();
+    const policyConfig=getAutoPolicyConfig_();
+    const activePolicyProfile=activePolicyProfile_(policyConfig);
     const counts={
       active:0,running:0,error:0,incomplete:0,stopped:0,
       newPostsToday:0,scanUpdatesToday:0,withContext:0,
@@ -6742,15 +7573,12 @@ const RemoteApp = (() => {
         const lifecycle=String(r[6]||'').trim();
         const runtimeStatus=String(r[23]||'').trim();
         const lastAt=opsDateMs_(r[9]);
-        const nextAtRaw=opsDateMs_(r[10]);
-        const scansPerDay=Math.max(1,Number(r[7]||1));
-        const expectedIntervalMs=24*60*60*1000/scansPerDay;
-        const nextAt=nextAtRaw || (lastAt ? lastAt+expectedIntervalMs : 0);
-        const dueText=String(r[11]||'').trim();
-        const due=!lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=now;
+        const truth=schedulerGroupTruth_(r,policyConfig,now);
+        const nextAt=Number(truth.nextAtMs||0);
+        const due=truth.state==='DUE';
         const overdueMs=!lastAt
-          ? CFG.OPS_OVERDUE_SEVERE_MS+1
-          : (due ? Math.max(0,now-nextAt) : 0);
+          ? (due?CFG.OPS_OVERDUE_SEVERE_MS+1:0)
+          : (due&&nextAt ? Math.max(0,now-nextAt) : 0);
 
         if(!lastAt) counts.neverScanned++;
         else if(now-lastAt<=CFG.OPS_COVERAGE_WINDOW_MS) counts.scanned24h++;
@@ -6766,11 +7594,13 @@ const RemoteApp = (() => {
           overduePreview.push({
             row,name,lifecycle,
             status:runtimeStatus||'CHỜ',
-            targetCount:normalizeGroupTarget_(r[8]||25),
+            schedulerState:truth.state,
+            schedulerReason:truth.reason,
+            targetCount:truth.scan?truth.scan.postsPerScan:normalizeGroupTarget_(r[8]||25),
             overdueMs,
             nextAtMs:nextAt,
             lastAtMs:lastAt,
-            exception:runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)
+            exception:false
           });
         }
 
@@ -6782,6 +7612,8 @@ const RemoteApp = (() => {
         if(runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)){
           exceptionPreview.push({
             row,name,status:runtimeStatus,lifecycle,
+            schedulerState:truth.state,
+            schedulerReason:truth.reason,
             lastAtMs:lastAt,
             ageMs:lastAt?Math.max(0,now-lastAt):0,
             progress:String(r[24]||'').trim(),
@@ -6808,7 +7640,7 @@ const RemoteApp = (() => {
       return (b.ageMs||0)-(a.ageMs||0);
     });
 
-    const dueAll=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT);
+    const dueAll=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT,{policyConfig});
     const ai=getAiOperationsStats_(now);
     const workers=getWorkerPoolPublic_();
     const coverage24hPct=counts.active
@@ -6844,7 +7676,15 @@ const RemoteApp = (() => {
       version:CFG.VERSION,
       generatedAt:new Date().toISOString(),
       pilotGroupLimit:CFG.PILOT_GROUP_LIMIT,
-      dueCycleLimit:CFG.DUE_CYCLE_LIMIT,
+      dueCycleLimit:Number(policyConfig.global.auto.maxGroupsPerCycle||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK),
+      policySummary:{
+        profileId:activePolicyProfile&&activePolicyProfile.id||'',
+        activeNow:!!activePolicyProfile&&isProfileActiveNow_(activePolicyProfile,policyConfig,new Date()),
+        window:profileActiveWindow_(activePolicyProfile,policyConfig),
+        scan:resolveEffectiveScanPolicy_(activePolicyProfile,{},policyConfig),
+        comment:resolveEffectiveCommentPolicy_(activePolicyProfile,null,policyConfig),
+        ai:resolveEffectiveAiPolicy_(activePolicyProfile,null,policyConfig)
+      },
       activeGroups:counts.active,
       dueNow:dueAll.length,
       running:counts.running,
@@ -6868,6 +7708,7 @@ const RemoteApp = (() => {
       operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
+        schedulerState:'DUE',policyProfileId:x.policyProfileId||'',
         overdueMs:x.nextAtMs?Math.max(0,now-x.nextAtMs):0
       })),
       overduePreview:overduePreview.slice(0,10),
@@ -7036,7 +7877,15 @@ const RemoteApp = (() => {
       setGroupRowStatus_(sheet,row,status,progress,note);
       if(status==='XONG') sheet.getRange(row,23).setValue(false);
       clearGroupStop_(groupKey);
-      const health=recordWorkerJobHealth_(worker.slot,true,Date.now()-started,'');
+      const durationMs=Date.now()-started;
+      const health=recordWorkerJobHealth_(worker.slot,true,durationMs,'');
+      recordGroupEfficiency_(groupKey,{
+        success:status==='XONG',
+        scannedPosts:Number(result.postsRead||0),
+        newPosts:Number(imported.postImported||0),
+        duplicates:Number(imported.duplicates||0),
+        durationMs
+      });
       SpreadsheetApp.flush();
 
       return Object.assign({},result,{
@@ -7044,6 +7893,7 @@ const RemoteApp = (() => {
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:'ONLINE',
         runId,stopped,stopScope:result.stopScope||'',incomplete:status==='THIẾU',progress,note,
+        durationMs,
         errorClass:result.transientError?'TRANSIENT':(result.timeBudgetExceeded?'TIME_BUDGET':'')
       });
     }catch(err){
@@ -7054,7 +7904,9 @@ const RemoteApp = (() => {
         title:'Worker Group scan failed',code:errorClass||'UNKNOWN',attemptedUrl:groupUrl,
         error:msg,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||'',durationMs:Date.now()-started
       });
-      const health=recordWorkerJobHealth_(worker.slot,false,Date.now()-started,msg);
+      const failDurationMs=Date.now()-started;
+      const health=recordWorkerJobHealth_(worker.slot,false,failDurationMs,msg);
+      recordGroupEfficiency_(groupKey,{success:false,scannedPosts:0,newPosts:0,duplicates:0,durationMs:failDurationMs});
       setGroupRowStatus_(sheet,row,'LỖI',worker.slot+' • 0/'+target+' bài',msg);
       SpreadsheetApp.flush();
       return {
@@ -8014,20 +8866,22 @@ const RemoteApp = (() => {
     }
   }
 
-  function isDueJobStillValid_(sheet,row) {
-    if(!sheet || row<2 || row>sheet.getLastRow()) return false;
-    const vals=sheet.getRange(row,1,1,24).getValues()[0]||[];
+  function isDueJobStillValid_(sheet,row,policyConfig) {
+    if(!sheet||row<2||row>sheet.getLastRow()) return false;
+    const vals=sheet.getRange(row,1,1,27).getValues()[0]||[];
     const active=String(vals[0]||'').trim();
     const lifecycle=String(vals[6]||'').trim();
-    const lastAt=vals[9] instanceof Date ? vals[9].getTime() : 0;
-    const nextAt=vals[10] instanceof Date ? vals[10].getTime() : 0;
-    const dueText=String(vals[11]||'').trim();
     const status=String(vals[23]||'').trim();
-
-    if(active!=='Có' || lifecycle==='Loại') return false;
-    if(status==='ĐANG QUÉT' || status==='LỖI' || status==='THIẾU' || /^DỪNG/.test(status)) return false;
-
-    return !lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=Date.now();
+    if(active!=='Có'||lifecycle==='Loại') return false;
+    if(status==='ĐANG QUÉT'||status==='LỖI'||status==='THIẾU'||/^DỪNG/.test(status)) return false;
+    const config=policyConfig||getAutoPolicyConfig_();
+    const group=groupPolicyInput_(vals);
+    const profile=policyProfileForGroup_(config,group.groupKey);
+    if(!profile||profile.enabled===false) return false;
+    const policy=resolveEffectiveScanPolicy_(profile,group,config);
+    const lastAt=opsDateMs_(vals[9]);
+    const nextAt=effectiveNextDueMs_(lastAt,policy);
+    return !lastAt||!nextAt||nextAt<=Date.now();
   }
 
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
@@ -8751,5 +9605,6 @@ const RemoteApp = (() => {
     runContextIntegrityHarness: runContextIntegrityHarness_,
     runProviderResilienceHarness: runProviderResilienceHarness_,
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
+    runAutoPolicyHarness: runAutoPolicyHarness_,
   };
 })();

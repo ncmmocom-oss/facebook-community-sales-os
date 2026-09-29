@@ -42,11 +42,14 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 .groupTaskTabs::-webkit-scrollbar{display:none}.groupTaskTab{min-width:max-content;background:#f8fafc;color:#334155;border:1px solid #dbe3ec;padding:9px 12px;border-radius:9px;font-size:12px;font-weight:800}.groupTaskTab:hover{background:#eff6ff;color:#1d4ed8;border-color:#bfdbfe}.groupTaskTab.active{background:#1d4ed8;color:#fff;border-color:#1d4ed8}
 .groupTaskPanel{display:none}.groupTaskPanel.active{display:block}.commandIntro{padding:10px 12px;margin-bottom:10px;border:1px solid #dbeafe;background:#f8fbff;border-radius:10px;color:#475569;font-size:11px;line-height:1.5}.commandIntro b{color:#1e3a8a}.commandPanel{border-color:#bfdbfe}.commandActions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.commandKpis{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-top:10px}.commandKpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:9px}.commandKpi span{display:block;color:#64748b;font-size:10px}.commandKpi b{display:block;font-size:15px;margin-top:3px}.viewerAction{background:#f1f5f9;color:#475569}.groupTaskNote{font-size:11px;color:#64748b;margin-top:9px}
 @media(max-width:820px){.groupTaskTabs{top:80px}.commandKpis{grid-template-columns:repeat(2,1fr)}}
+.policyGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.policyGrid .panel{margin:0}.policyRow{display:grid;grid-template-columns:1fr 1fr;gap:9px}.policyToggle{display:flex;align-items:center;gap:8px;padding:8px 0}.policyToggle input{margin:0}.policyToggle label{margin:0}.effectivePolicy{white-space:pre-wrap;background:#0f172a;color:#dbeafe;border-radius:10px;padding:12px;line-height:1.55;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}.policyLocked{padding:9px 10px;border-radius:9px;background:#fef2f2;border:1px solid #fecaca;color:#991b1b;font-weight:800}.policyActions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+@media(max-width:820px){.policyGrid,.policyRow{grid-template-columns:1fr}}
+
 
 </style>
 </head>
 <body>
-<div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">Phase 3 • Operations Dashboard</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
+<div class="appShell"><aside class="sideNav"><div class="brandBlock"><div class="brandTitle">Community Sales OS</div><div class="brandSub">Phase 3 • Operations Dashboard</div></div><nav class="navList"><button class="navBtn" data-view="overview"><span class="navIcon">⌂</span><span>Tổng quan</span></button><button class="navBtn" data-view="groups"><span class="navIcon">◉</span><span>200 Group</span></button><button class="navBtn" data-view="signals"><span class="navIcon">⌁</span><span>Tín hiệu & Lead</span></button><button class="navBtn" data-view="ai"><span class="navIcon">✦</span><span>AI & Offer</span></button><button class="navBtn" data-view="workers"><span class="navIcon">●</span><span>Worker & API</span></button><button class="navBtn" data-view="data"><span class="navIcon">⇄</span><span>Dữ liệu</span></button><button class="navBtn" data-view="policy"><span class="navIcon">⚡</span><span>Auto Policy</span></button><button class="navBtn" data-view="system"><span class="navIcon">⚙</span><span>Hệ thống</span></button></nav><div class="sideFoot"><b>Pilot 200 Group</b><br>Apps Script backend<br>Google Sheets source-of-truth</div></aside>
 <main class="mainPane"><header class="topbar"><div><div id="topViewTitle" class="topTitle">Tổng quan vận hành</div><div id="topViewSub" class="topSub">Theo dõi Group → Signal → AI → Lead trên một luồng.</div></div><div class="topActions"><span id="systemHealthPill" class="healthPill">ĐANG ĐỌC HỆ THỐNG</span><span id="runtimeVersionPill" class="runtimePill">Runtime —</span></div></header>
 <div class="viewStack">
 <section id="view-overview" class="view">
@@ -284,6 +287,85 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 </section>
 <section id="view-workers" class="view"><div class="viewHead"><div><div class="sectionLabel">INFRASTRUCTURE</div><h2>Worker Pool & API Diagnostic</h2><p>Worker Keeper giữ browser online; Control Center giữ registry, health và phân job.</p></div></div><div id="mount-workers"></div></section>
 <section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>Import / Sync / Consistency</h2><p>JSON là fallback; production ưu tiên API scan → import nội bộ → sync.</p></div></div><div id="mount-data"></div></section>
+<section id="view-policy" class="view">
+  <div class="viewHead"><div><div class="sectionLabel">POLICY-DRIVEN ORCHESTRATION</div><h2>AUTO POLICY</h2><p>1 IX Profile = 1 Community Sales Rep. Runtime và UI dùng cùng backend resolver; Group override → Profile default → Global default.</p></div></div>
+
+  <div class="kpiGrid">
+    <div class="kpi"><span>Current IX Profile</span><b id="policyProfileKpi">—</b><small id="policyProfileNameKpi">—</small></div>
+    <div class="kpi"><span>Profile trạng thái</span><b id="policyProfileState">—</b><small>Enabled / Paused</small></div>
+    <div class="kpi"><span>Active Groups</span><b id="policyActiveGroups">0</b><small id="policyCapacityText">Capacity —</small></div>
+    <div class="kpi"><span>Active Window</span><b id="policyWindowState">—</b><small id="policyWindowText">—</small></div>
+  </div>
+
+  <div class="policyGrid">
+    <div class="panel">
+      <div class="panelTitle">Profile</div>
+      <div class="policyRow">
+        <div><label>Profile ID</label><input id="policyProfileId" disabled></div>
+        <div><label>Display Name</label><input id="policyDisplayName"></div>
+      </div>
+      <div><label>Browser / IxBrowser identity</label><input id="policyBrowserIdentity" placeholder="VD: IX01 / GPM profile name"></div>
+      <div><label>Facebook identity của Profile</label><textarea id="policyFacebookIdentities" rows="2" placeholder="Mỗi URL/profile identity một dòng — dùng nhận diện Own Post"></textarea></div>
+      <div class="policyRow">
+        <div class="policyToggle"><input id="policyProfileEnabled" type="checkbox"><label for="policyProfileEnabled">Profile Enabled</label></div>
+        <div><label>Max Group capacity</label><input id="policyCapacity" type="number" min="1" max="100"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">Schedule / Auto Monitor</div>
+      <div class="policyRow"><div><label>Active start</label><input id="policyActiveStart" type="time"></div><div><label>Active end</label><input id="policyActiveEnd" type="time"></div></div>
+      <div class="policyRow"><div><label>Trigger interval</label><select id="policyTrigger"><option value="5">5 phút</option><option value="10">10 phút</option><option value="15">15 phút</option><option value="30">30 phút</option></select></div><div><label>Max Group / cycle</label><input id="policyMaxGroups" type="number" min="1" max="12"></div></div>
+      <div class="policyRow"><div><label>Runtime budget (giây)</label><input id="policyBudgetSec" type="number" min="60" max="280"></div><div><label>Timezone</label><input id="policyTimezone" value="Asia/Ho_Chi_Minh"></div></div>
+      <div class="policyActions"><button id="policyAutoToggle" class="secondary" onclick="toggleAutoMonitor()">AUTO —</button><button class="secondary" onclick="runAutoMonitorNow()">▶ CHẠY MANUAL 1 CYCLE</button></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">Group Scan</div>
+      <div class="policyRow"><div><label>Global scans/day</label><input id="policyScansPerDay" type="number" min="1" max="24"></div><div><label>Global posts/scan</label><input id="policyPostsPerScan" type="number" min="1" max="200"></div></div>
+      <div class="policyRow"><div><label>Max posts/scan</label><input id="policyMaxPosts" type="number" min="1" max="200"></div><div><label>Due tolerance (phút)</label><input id="policyDueTolerance" type="number" min="0" max="120"></div></div>
+      <div class="policyRow"><div><label>Retry attempts</label><input id="policyRetryAttempts" type="number" min="1" max="10"></div><div><label>Retry backoff (phút)</label><input id="policyRetryBackoff" placeholder="2,10,30,120,360"></div></div>
+      <div class="muted">Cột H/I ở QUÉT NHÓM vẫn là override theo Group. Effective Policy bên dưới cho biết resolver đang lấy nguồn nào.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">Comment Policy</div>
+      <div class="policyToggle"><input id="policyCommentEnabled" type="checkbox"><label for="policyCommentEnabled">Comment monitoring ON</label></div>
+      <div class="policyRow"><div><label>Posts / cycle</label><input id="policyCommentPosts" type="number" min="1" max="20"></div><div><label>Max pages / post</label><input id="policyCommentPages" type="number" min="1" max="10"></div></div>
+      <div class="policyRow"><div><label>Max comments / post</label><input id="policyCommentMax" type="number" min="10" max="1000"></div><div><label>Recheck (phút)</label><input id="policyCommentRecheck" type="number" min="5" max="1440"></div></div>
+      <div class="policyRow"><div><label>Hot Post watch (giờ)</label><input id="policyCommentHot" type="number" min="1" max="168"></div><div><label>Provider breaker (phút)</label><input id="policyBreaker" type="number" min="1" max="120"></div></div>
+      <div class="policyRow"><div><label>Own Post priority</label><input id="policyOwnPriority" type="number" min="0" max="1000"></div><div><label>External Post priority</label><input id="policyExternalPriority" type="number" min="0" max="1000"></div></div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">AI Policy</div>
+      <div class="policyToggle"><input id="policySignalAi" type="checkbox"><label for="policySignalAi">Stage A — Signal Intelligence</label></div>
+      <div class="policyToggle"><input id="policyQualificationAi" type="checkbox"><label for="policyQualificationAi">Stage B — Sales Qualification</label></div>
+      <div><label>AI chunk size</label><input id="policyAiChunk" type="number" min="1" max="50"></div>
+      <div class="muted">Context thiếu → Product Fit bắt buộc Chưa rõ; Lead Gate không thể PASS.</div>
+    </div>
+
+    <div class="panel">
+      <div class="panelTitle">Action Policy</div>
+      <div class="policyToggle"><input id="policyHumanApproval" type="checkbox"><label for="policyHumanApproval">Human Approval bắt buộc</label></div>
+      <div class="policyLocked">AUTO COMMENT = OFF — HF10 chỉ Detect → Recommend → Human Approve.</div>
+      <div style="margin-top:10px" class="muted">Action states: IGNORE • WATCH • NO_ACTION_RELEVANT • VALUE_COMMENT • LEAD • OUTREACH_CANDIDATE • HUMAN_REVIEW.</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <div class="panelTitle">Effective Policy</div>
+    <div id="policyEffective" class="effectivePolicy">Đang đọc backend resolver...</div>
+    <div class="policyActions"><button class="primary" onclick="saveAutoPolicy()">LƯU AUTO POLICY</button><button class="secondary" onclick="loadAutoPolicy()">↻ RELOAD</button><button class="dark" onclick="runAutoPolicyAcceptance()">✓ POLICY ACCEPTANCE</button></div>
+  </div>
+
+  <div class="panel" style="margin-top:12px">
+    <div class="panelTitle">Group Scan Efficiency — Recommendation Only</div>
+    <div class="muted">New Yield = New Posts / Posts Scanned. Chỉ recommendation khi có ≥5 successful scans; hệ thống không tự đổi Group Policy.</div>
+    <div id="policyEfficiency" class="opsQueue" style="margin-top:10px"><div class="muted">Đang đọc metrics...</div></div>
+    <div class="policyActions"><button class="secondary" onclick="loadGroupEfficiency()">↻ REFRESH METRICS</button><button class="primary" onclick="applySelectedScanRecommendation()">APPLY CHO GROUP ĐANG CHỌN</button></div>
+  </div>
+</section>
 <section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button><button class="primary" onclick="runProductionSelfTest()">✓ SELF-TEST & REPAIR</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('api_log','NHẬT KÝ API')" title="Mở / tái sử dụng tab NHẬT KÝ API"><b>NHẬT KÝ API ↗</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('import_log','NHẬT KÝ IMPORT')" title="Mở / tái sử dụng tab NHẬT KÝ IMPORT"><b>NHẬT KÝ IMPORT ↗</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('ai_log','NHẬT KÝ AI')" title="Mở / tái sử dụng tab NHẬT KÝ AI"><b>NHẬT KÝ AI ↗</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('auto_log','NHẬT KÝ AUTO')" title="Mở / tái sử dụng tab NHẬT KÝ AUTO"><b>NHẬT KÝ AUTO ↗</b><div class="muted">Backend cycle: Group scan, retry, Comment Intelligence, AI và self-repair.</div></div><div class="emptyNote">V1.9.4: AUTO V2 chạy backend trigger + Comment Intelligence delta/pagination. Scanner, raw pagination và Lead Gate vẫn giữ business logic cũ.</div></div></section>
 </div><div class="statusDock"><div class="statusDockHead"><b>LIVE ACTIVITY</b><span id="statusHeadline">Sẵn sàng.</span></div><div id="status">Sẵn sàng.</div></div></main></div><div id="legacyRoot">
 
@@ -790,6 +872,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       document.getElementById('duePreview').innerHTML=due.length
         ? due.map(x=>
             '<div><b>Dòng '+x.row+'</b> — '+escapeHtml(x.name||'')+
+            ' • '+escapeHtml(x.schedulerState||'DUE')+
             ' • '+escapeHtml(x.lifecycle||'')+
             ' • '+Number(x.targetCount||25)+' bài'+
             (x.profile&&x.profile!=='AUTO'?' • '+escapeHtml(x.profile):'')+
@@ -1815,7 +1898,175 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     }
 
 
-    const PHASE2_VIEWS={overview:{title:'Tổng quan vận hành',sub:'Theo dõi Group → Signal → AI → Lead trên một luồng.'},groups:{title:'200 Group Monitoring',sub:'Due Queue, quét thủ công và exception handling.'},signals:{title:'Tín hiệu & Lead',sub:'Drill-down đúng bảng khi cần phân tích hoặc xử lý lead.'},ai:{title:'AI & Offer Context',sub:'Qualification, context và cấu hình model.'},workers:{title:'Worker & API',sub:'Worker Pool, health evidence và API Diagnostic.'},data:{title:'Dữ liệu',sub:'Import fallback, sync và consistency audit.'},system:{title:'Hệ thống',sub:'Runtime, version, logs và maintenance.'}};
+    let autoPolicyState=null;
+    function policyInputValue(id){const el=document.getElementById(id);return el?el.value:'';}
+    function policyInputNumber(id){return Number(policyInputValue(id)||0);}
+    function policyCheck(id){const el=document.getElementById(id);return !!(el&&el.checked);}
+    function policySetValue(id,value){const el=document.getElementById(id);if(el)el.value=value==null?'':String(value);}
+    function policySetCheck(id,value){const el=document.getElementById(id);if(el)el.checked=!!value;}
+
+    function renderAutoPolicy(state){
+      if(!state)return;
+      autoPolicyState=state;
+      const cfg=state.config||{},g=cfg.global||{},a=g.auto||{},s=g.scan||{},c=g.comment||{},ai=g.ai||{},act=g.action||{};
+      const p=state.activeProfile||((cfg.profiles||[])[0])||{};
+      phase2SetText('policyProfileKpi',p.id||'—');
+      phase2SetText('policyProfileNameKpi',p.displayName||'—');
+      phase2SetText('policyProfileState',(p.enabled===false?'PAUSED':'ENABLED')+' • '+String(p.health||'UNBOUND')+(p.workerSlot?(' '+p.workerSlot):''));
+      phase2SetText('policyActiveGroups',Number(state.assignedGroups||state.activeGroups||0));
+      phase2SetText('policyCapacityText','Capacity '+Number(state.capacity||0)+(state.overCapacity?' • OVER CAPACITY':''));
+      phase2SetText('policyWindowState',state.activeNow?'ACTIVE':'OUTSIDE');
+      const eff=state.effective||{},w=eff.window||{};
+      phase2SetText('policyWindowText',(w.start||'')+'–'+(w.end||'')+' • '+(w.timezone||''));
+      policySetValue('policyProfileId',p.id||'');
+      policySetValue('policyDisplayName',p.displayName||'');
+      policySetValue('policyBrowserIdentity',p.browserIdentity||'');
+      policySetValue('policyFacebookIdentities',(p.facebookIdentities||[]).join('\n'));
+      policySetCheck('policyProfileEnabled',p.enabled!==false);
+      policySetValue('policyCapacity',p.maxGroupCapacity||30);
+      policySetValue('policyActiveStart',a.activeStart||'07:00');
+      policySetValue('policyActiveEnd',a.activeEnd||'23:00');
+      policySetValue('policyTrigger',a.triggerMinutes||5);
+      policySetValue('policyMaxGroups',a.maxGroupsPerCycle||4);
+      policySetValue('policyBudgetSec',Math.round(Number(a.runtimeBudgetMs||230000)/1000));
+      policySetValue('policyTimezone',a.timezone||'Asia/Ho_Chi_Minh');
+      policySetValue('policyScansPerDay',s.scansPerDay||3);
+      policySetValue('policyPostsPerScan',s.postsPerScan||10);
+      policySetValue('policyMaxPosts',s.maxPostsPerScan||200);
+      policySetValue('policyDueTolerance',s.dueToleranceMinutes||0);
+      policySetValue('policyRetryAttempts',s.retryAttempts||5);
+      policySetValue('policyRetryBackoff',(s.retryBackoffMinutes||[]).join(','));
+      policySetCheck('policyCommentEnabled',c.enabled!==false);
+      policySetValue('policyCommentPosts',c.maxPostsPerCycle||4);
+      policySetValue('policyCommentPages',c.maxPagesPerPost||3);
+      policySetValue('policyCommentMax',c.maxCommentsPerPost||100);
+      policySetValue('policyCommentHot',c.hotWatchHours||24);
+      policySetValue('policyCommentRecheck',c.recheckMinutes||30);
+      policySetValue('policyOwnPriority',c.ownPostPriority||100);
+      policySetValue('policyExternalPriority',c.externalPostPriority||50);
+      policySetValue('policyBreaker',c.providerBreakerMinutes||10);
+      policySetCheck('policySignalAi',ai.signalEnabled!==false);
+      policySetCheck('policyQualificationAi',ai.qualificationEnabled!==false);
+      policySetValue('policyAiChunk',ai.chunkSize||12);
+      policySetCheck('policyHumanApproval',act.humanApproval!==false);
+      const e=state.effective||{},scan=e.scan||{},comment=e.comment||{},epAi=e.ai||{},action=e.action||{};
+      const examples=(state.examples||[]).slice(0,6).map(x=>
+        '• '+String(x.name||x.groupKey||'Group')+': '+Number(x.scansPerDay||0)+'/day • '+Number(x.postsPerScan||0)+' posts ['+
+        String(x.sources&&x.sources.scansPerDay||'?')+'/'+String(x.sources&&x.sources.postsPerScan||'?')+']'
+      );
+      const text=[
+        'PROFILE '+String(p.id||'—')+' — '+String(p.displayName||'')+' • health='+String(p.health||'UNBOUND')+(p.lastActivity?(' • last='+String(p.lastActivity)):'')+(p.errorState?(' • error='+String(p.errorState)):'') ,
+        'Window: '+String(w.start||'')+'–'+String(w.end||'')+' @ '+String(w.timezone||'')+' • '+(state.activeNow?'ACTIVE':'OUTSIDE'),
+        'Scan: '+Number(scan.scansPerDay||0)+'/day • '+Number(scan.postsPerScan||0)+' posts • max '+Number(scan.maxPostsPerScan||0),
+        'Retry: '+Number(scan.retryAttempts||0)+' attempts • '+(scan.retryBackoffMinutes||[]).join('/')+'m',
+        'Comment: '+(comment.enabled?'ON':'OFF')+' • '+Number(comment.maxPostsPerCycle||0)+' posts/cycle • own '+Number(comment.ownPostPriority||0)+' > external '+Number(comment.externalPostPriority||0),
+        'AI: Signal '+(epAi.signalEnabled?'ON':'OFF')+' • Qualification '+(epAi.qualificationEnabled?'ON':'OFF')+' • chunk '+Number(epAi.chunkSize||0),
+        'Action: Human Approval '+(action.humanApproval?'ON':'OFF')+' • Auto Comment OFF',
+        'Portfolio: '+Number(state.assignedGroups||0)+'/'+Number(state.capacity||0)+' Group',
+        '',
+        'Sample effective Group policy:',
+        examples.length?examples.join('\n'):'• Chưa có Group'
+      ].join('\n');
+      const box=document.getElementById('policyEffective');if(box)box.textContent=text;
+      const autoBtn=document.getElementById('policyAutoToggle');
+      if(autoBtn){autoBtn.textContent=state.enabled?'⚡ AUTO ON':'⚡ AUTO OFF';autoBtn.className=state.enabled?'monitorOn':'secondary';}
+    }
+
+    function loadAutoPolicy(){
+      loadGroupEfficiency();
+      command({__command:'GET_AUTO_POLICY'},r=>renderAutoPolicy(r),e=>{
+        const box=document.getElementById('policyEffective');if(box)box.textContent='Không đọc được Auto Policy: '+(e.message||e);
+      });
+    }
+
+    function saveAutoPolicy(){
+      if(!autoPolicyState||!autoPolicyState.config){setStatus('Auto Policy chưa load xong.');return;}
+      const cfg=JSON.parse(JSON.stringify(autoPolicyState.config));
+      cfg.global=cfg.global||{};cfg.global.auto=cfg.global.auto||{};cfg.global.scan=cfg.global.scan||{};cfg.global.comment=cfg.global.comment||{};cfg.global.ai=cfg.global.ai||{};cfg.global.action=cfg.global.action||{};
+      cfg.global.auto.activeStart=policyInputValue('policyActiveStart');
+      cfg.global.auto.activeEnd=policyInputValue('policyActiveEnd');
+      cfg.global.auto.triggerMinutes=policyInputNumber('policyTrigger');
+      cfg.global.auto.maxGroupsPerCycle=policyInputNumber('policyMaxGroups');
+      cfg.global.auto.runtimeBudgetMs=policyInputNumber('policyBudgetSec')*1000;
+      cfg.global.auto.timezone=policyInputValue('policyTimezone').trim();
+      cfg.global.scan.scansPerDay=policyInputNumber('policyScansPerDay');
+      cfg.global.scan.postsPerScan=policyInputNumber('policyPostsPerScan');
+      cfg.global.scan.maxPostsPerScan=policyInputNumber('policyMaxPosts');
+      cfg.global.scan.dueToleranceMinutes=policyInputNumber('policyDueTolerance');
+      cfg.global.scan.retryAttempts=policyInputNumber('policyRetryAttempts');
+      cfg.global.scan.retryBackoffMinutes=policyInputValue('policyRetryBackoff').split(',').map(x=>Number(x.trim())).filter(x=>x>0);
+      cfg.global.comment.enabled=policyCheck('policyCommentEnabled');
+      cfg.global.comment.maxPostsPerCycle=policyInputNumber('policyCommentPosts');
+      cfg.global.comment.maxPagesPerPost=policyInputNumber('policyCommentPages');
+      cfg.global.comment.maxCommentsPerPost=policyInputNumber('policyCommentMax');
+      cfg.global.comment.hotWatchHours=policyInputNumber('policyCommentHot');
+      cfg.global.comment.recheckMinutes=policyInputNumber('policyCommentRecheck');
+      cfg.global.comment.ownPostPriority=policyInputNumber('policyOwnPriority');
+      cfg.global.comment.externalPostPriority=policyInputNumber('policyExternalPriority');
+      cfg.global.comment.providerBreakerMinutes=policyInputNumber('policyBreaker');
+      cfg.global.ai.signalEnabled=policyCheck('policySignalAi');
+      cfg.global.ai.qualificationEnabled=policyCheck('policyQualificationAi');
+      cfg.global.ai.chunkSize=policyInputNumber('policyAiChunk');
+      cfg.global.action.humanApproval=policyCheck('policyHumanApproval');
+      cfg.global.action.autoComment=false;
+      const p=(cfg.profiles||[]).find(x=>x.id===cfg.activeProfileId)||(cfg.profiles||[])[0];
+      if(p){
+        p.displayName=policyInputValue('policyDisplayName').trim();
+        p.browserIdentity=policyInputValue('policyBrowserIdentity').trim();
+        p.facebookIdentities=policyInputValue('policyFacebookIdentities').split(/\n|,/).map(x=>x.trim()).filter(Boolean);
+        p.enabled=policyCheck('policyProfileEnabled');
+        p.maxGroupCapacity=policyInputNumber('policyCapacity');
+      }
+      setStatus('Đang lưu Auto Policy...');
+      command({__command:'SAVE_AUTO_POLICY',policy:cfg},r=>{
+        renderAutoPolicy(r);
+        setStatus('✅ AUTO POLICY đã lưu • Runtime V'+String(r.version||'')+' • '+Number(r.assignedGroups||0)+'/'+Number(r.capacity||0)+' Group.');
+        pollMonitoring();
+      },e=>setStatus('Lưu Auto Policy lỗi: '+(e.message||e)));
+    }
+
+    function runAutoPolicyAcceptance(){
+      setStatus('Đang chạy POLICY-T01…T12...');
+      command({__command:'RUN_AUTO_POLICY_HARNESS'},r=>{
+        const tests=r.tests||{};const lines=Object.keys(tests).map(k=>(tests[k]?'✅ ':'❌ ')+k);
+        setStatus((r.ok?'✅ HF10 POLICY ACCEPTANCE PASS':'❌ HF10 POLICY ACCEPTANCE FAIL')+'\n'+lines.join('\n'));
+      },e=>setStatus('Policy acceptance lỗi: '+(e.message||e)));
+    }
+
+    function renderGroupEfficiency(report){
+      const el=document.getElementById('policyEfficiency');if(!el)return;
+      const rows=(report&&report.rows)||[];
+      el.innerHTML='';
+      if(!rows.length){el.innerHTML='<div class="emptyNote">Chưa có scan metrics HF10.</div>';return;}
+      rows.slice(0,15).forEach(x=>{
+        const r=x.recommendation||{};
+        const item=document.createElement('div');
+        item.className='opsQueueItem '+(r.band==='LOW_YIELD'?'warn':r.band==='HIGH_YIELD'?'':'');
+        const pct=Math.round(Number(x.yield||0)*1000)/10;
+        const avg=Math.round(Number(x.avgDurationMs||0)/100)/10;
+        item.innerHTML='<div class="opsQueueTitle"><span>'+escapeHtml(x.name||x.groupKey||'Group')+'</span><span>'+escapeHtml(r.band||'')+'</span></div>'+
+          '<div class="muted">'+Number(x.successfulScans||0)+' successful • '+Number(x.scannedPosts||0)+' scanned • '+Number(x.newPosts||0)+' new • '+Number(x.duplicates||0)+' duplicate • yield '+pct+'% • avg '+avg+'s</div>'+
+          '<div class="muted">Current '+Number(x.current&&x.current.scansPerDay||0)+'/day × '+Number(x.current&&x.current.postsPerScan||0)+' → Recommend '+Number(r.recommendedScansPerDay||0)+'/day × '+Number(r.recommendedPostsPerScan||0)+(r.eligible?'':' • cần đủ sample')+'</div>';
+        el.appendChild(item);
+      });
+    }
+
+    function loadGroupEfficiency(){
+      command({__command:'GET_GROUP_EFFICIENCY',limit:30},renderGroupEfficiency,e=>{
+        const el=document.getElementById('policyEfficiency');if(el)el.textContent='Metrics lỗi: '+(e.message||e);
+      });
+    }
+
+    function applySelectedScanRecommendation(){
+      setStatus('Đang apply recommendation cho Group đang chọn trong QUÉT NHÓM...');
+      command({__command:'APPLY_SELECTED_SCAN_RECOMMENDATION'},r=>{
+        const x=r.recommendation||{};
+        setStatus('✅ Đã apply Group row '+Number(r.row||0)+' • '+Number(x.recommendedScansPerDay||0)+'/day × '+Number(x.recommendedPostsPerScan||0)+' posts.');
+        loadAutoPolicy();loadGroupEfficiency();pollMonitoring();
+      },e=>setStatus('Không apply recommendation: '+(e.message||e)));
+    }
+
+    const PHASE2_VIEWS={overview:{title:'Tổng quan vận hành',sub:'Theo dõi Group → Signal → AI → Lead trên một luồng.'},groups:{title:'200 Group Monitoring',sub:'Due Queue, quét thủ công và exception handling.'},signals:{title:'Tín hiệu & Lead',sub:'Drill-down đúng bảng khi cần phân tích hoặc xử lý lead.'},ai:{title:'AI & Offer Context',sub:'Qualification, context và cấu hình model.'},workers:{title:'Worker & API',sub:'Worker Pool, health evidence và API Diagnostic.'},data:{title:'Dữ liệu',sub:'Import fallback, sync và consistency audit.'},policy:{title:'Auto Policy',sub:'IX Profile, schedule và Effective Policy từ backend resolver.'},system:{title:'Hệ thống',sub:'Runtime, version, logs và maintenance.'}};
     let phase2CurrentView='overview';
     function phase2SetText(id,value){const el=document.getElementById(id);if(el)el.textContent=String(value==null?'':value);}
     function phase2MoveLegacyBlocks(){
@@ -1860,7 +2111,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       else if(key==='comments'||key==='auto'){pollMonitoring();}
       else if(key==='ai'){pollProgressOnce();}
     }
-    function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}if(key==='ai'||key==='signals')loadSalesReadiness();window.scrollTo({top:0,behavior:'auto'});}
+    function showPhase2View(name){const key=PHASE2_VIEWS[name]?name:'overview';phase2CurrentView=key;document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id==='view-'+key));document.querySelectorAll('.navBtn').forEach(b=>b.classList.toggle('active',b.dataset.view===key));const meta=PHASE2_VIEWS[key];phase2SetText('topViewTitle',meta.title);phase2SetText('topViewSub',meta.sub);try{sessionStorage.setItem('socialAioPhase2View',key);}catch(_){}if(key==='ai'||key==='signals')loadSalesReadiness();if(key==='policy')loadAutoPolicy();window.scrollTo({top:0,behavior:'auto'});}
     function setPhase2RuntimeVersion(version){const v=String(version||'').trim();if(!v)return;phase2SetText('runtimeVersionPill','Runtime V'+v);phase2SetText('sysRuntime','V'+v);}
     function opsAgeText(ms){
       const n=Number(ms||0);
@@ -1901,9 +2152,10 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 
         const meta=document.createElement('div');
         meta.className='opsQueueMeta';
+        const truth=String(x.schedulerState||'');
         meta.textContent=type==='exception'
-          ? ('Age '+opsAgeText(x.ageMs)+(x.lifecycle?' • '+x.lifecycle:''))
-          : ((x.lifecycle||'')+' • '+Number(x.targetCount||25)+' bài'+(x.exception?' • QUARANTINE':''));
+          ? ((truth?('['+truth+'] • '):'')+'Age '+opsAgeText(x.ageMs)+(x.lifecycle?' • '+x.lifecycle:''))
+          : ((truth?('['+truth+'] • '):'')+(x.lifecycle||'')+' • '+Number(x.targetCount||25)+' bài');
         row.appendChild(meta);
 
         const note=String(x.error||x.progress||'').trim();
@@ -2054,12 +2306,13 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     }
 
     function renderPhase2WorkerHealth(x){if(!x)return;phase2SetText('p2WorkerHealth',x.enabledCount?(x.online+'/'+x.enabledCount+' ONLINE'+(x.offline?' • '+x.offline+' OFFLINE':'')+(x.stale?' • '+x.stale+' STALE':'')):'CHƯA CẤU HÌNH');}
-    function initPhase2Shell(){phase2MoveLegacyBlocks();document.querySelectorAll('[data-view]').forEach(btn=>btn.addEventListener('click',()=>showPhase2View(btn.dataset.view)));document.querySelectorAll('[data-goto]').forEach(btn=>btn.addEventListener('click',()=>showPhase2View(btn.dataset.goto)));let savedGroupTask='scan';try{savedGroupTask=sessionStorage.getItem('socialAioGroupTask')||'scan';}catch(_){}showGroupTask(savedGroupTask);const initial=(document.body.dataset.initialView||'scan').toLowerCase(),map={scan:'overview',overview:'overview',groups:'groups',signals:'signals',ai:'ai',settings:'ai',workers:'workers',data:'data',system:'system'};const target=map[initial]||'overview';showPhase2View(target);document.body.classList.add('p2-ready');}
+    function initPhase2Shell(){phase2MoveLegacyBlocks();document.querySelectorAll('[data-view]').forEach(btn=>btn.addEventListener('click',()=>showPhase2View(btn.dataset.view)));document.querySelectorAll('[data-goto]').forEach(btn=>btn.addEventListener('click',()=>showPhase2View(btn.dataset.goto)));let savedGroupTask='scan';try{savedGroupTask=sessionStorage.getItem('socialAioGroupTask')||'scan';}catch(_){}showGroupTask(savedGroupTask);const initial=(document.body.dataset.initialView||'scan').toLowerCase(),map={scan:'overview',overview:'overview',groups:'groups',signals:'signals',ai:'ai',settings:'ai',workers:'workers',data:'data',policy:'policy',system:'system'};const target=map[initial]||'overview';showPhase2View(target);document.body.classList.add('p2-ready');}
     function activateInitialView(){return phase2CurrentView;}
 
     initPhase2Shell();
     loadAiConfig();
     loadWorkerPool();
+    loadAutoPolicy();
     startMonitoringPolling();
     startGroupScanPolling();
     setAutoMonitorUi();
