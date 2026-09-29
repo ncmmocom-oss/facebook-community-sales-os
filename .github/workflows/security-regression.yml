@@ -288,6 +288,7 @@ jobs:
           save_ctx_block = runtime[save_ctx_start:save_ctx_end]
           assert "validateOfferContext_(command.context)" in save_ctx_block
           assert "validation.missing.join" in save_ctx_block
+          assert save_ctx_block.index("validateOfferContext_(command.context)") < save_ctx_block.index("SpreadsheetApp.getActiveSpreadsheet()"), "invalid Context must reject before any Sheet access/write"
           alias_start = runtime.index('function offerContextCanonicalField_(')
           alias_end = runtime.index('function isMeaningfulOfferContextValue_', alias_start)
           alias_block = runtime[alias_start:alias_end]
