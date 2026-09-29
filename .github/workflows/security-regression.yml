@@ -54,7 +54,11 @@ jobs:
             'T04_GLOBAL_CONTEXT_ISOLATION',
             'ID_NUMERIC_SAFE_INTEGER',
             'ID_SCIENTIFIC_DISPLAY_REJECTED',
-            'ID_PRODUCT_SERVICE_EXACT'
+            'ID_PRODUCT_SERVICE_EXACT',
+            'SALES_NONPASS_NEW_BLOCKED',
+            'SALES_PASS_NEW_ALLOWED',
+            'SALES_EXISTING_CAN_CLOSE',
+            'SALES_TERMINAL_CLEARS_FOLLOWUP'
           ];
           for(const k of required){
             if(r.tests[k]!==true) throw new Error('acceptance failed: '+k);
@@ -232,7 +236,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF2-group-identity-text'" in runtime
+          assert "VERSION: '1.9.8.7-HF3-sales-state-guard'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -241,6 +245,16 @@ jobs:
           assert "SALES_STAGE_OPTIONS" in runtime
           assert "GET_SALES_RECOVERY_QUEUE" in runtime
           assert "SET_SELECTED_SALES_STAGE" in runtime
+          assert "function canSetSalesStage_(" in runtime
+          assert "function nextFollowUpForSalesStage_(" in runtime
+          sales_start = runtime.index('function setSelectedOpportunitySalesStage_(')
+          sales_end = runtime.index('function getSalesPipelineStats_', sales_start)
+          sales_block = runtime[sales_start:sales_end]
+          assert "stage!=='Lost'" not in sales_block
+          assert "canSetSalesStage_(gate,alreadyInSales)" in sales_block
+          assert "existingConversions=sh.getRange(start,18,n,1).getValues()" in sales_block
+          assert "sh.getRange(start+i,18).getValue()" not in sales_block
+          assert "nextFollowUpForSalesStage_(stage,nextFollow,prev[2])" in sales_block
           assert "function validateOfferContext_(" in runtime
           assert "function loadValidatedGroupContexts_(" in runtime
           assert "function buildSourceGroupKeyMap_(" in runtime

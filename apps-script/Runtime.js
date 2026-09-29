@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF2-group-identity-text',
+    VERSION: '1.9.8.7-HF3-sales-state-guard',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -98,6 +98,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF3 Sales State Guard: non-PASS chưa vào pipeline không thể nhận bất kỳ Sales Stage nào kể cả Lost; source đã ở pipeline vẫn được đóng Lost; terminal stage clear Next Follow-up; conversion state batch-read để bỏ per-row Sheet I/O.\n' +
       'V1.9.8.7-HF2 Group Identity Text: khóa Group ID/Group Key thành TEXT, cấm scientific display làm identity, backfill/repair AF từ Source ID evidence và canonical Group URL để tránh numeric coercion làm sai Group Key.\n' +
       'V1.9.8.7-HF1 Context Integrity: Context Ready chỉ khi đủ 7 field bắt buộc; Recovery/Gate map bằng Group Key canonical thay vì tên Group; global Business Context không được dùng thay Offer Context của Group; CƠ HỘI có Group Key riêng và tự backfill từ source-of-truth.\n' +
       'V1.9.8.7 Sales Readiness Recovery: repair schema NHÓM, archive Lead LEGACY khỏi production inbox, Offer Context workflow, requalification queue, Sales Stage AA:AE và AI cross-provider failover khi provider tạm 5xx/429.\n' +
@@ -1494,7 +1495,11 @@ const RemoteApp = (() => {
       T04_GLOBAL_CONTEXT_ISOLATION: isolated==='' && t04Gate==='CONTEXT_REQUIRED',
       ID_NUMERIC_SAFE_INTEGER: identityKeyFromCell_(2444637922355640)==='2444637922355640',
       ID_SCIENTIFIC_DISPLAY_REJECTED: identityKeyFromCell_('2,44464E+15')==='',
-      ID_PRODUCT_SERVICE_EXACT: offerContextCanonicalField_('PRODUCT-SERVICE')==='PRODUCT-SERVICE' && offerContextCanonicalField_('PRODUCT')==='' && offerContextCanonicalField_('SERVICE')===''
+      ID_PRODUCT_SERVICE_EXACT: offerContextCanonicalField_('PRODUCT-SERVICE')==='PRODUCT-SERVICE' && offerContextCanonicalField_('PRODUCT')==='' && offerContextCanonicalField_('SERVICE')==='',
+      SALES_NONPASS_NEW_BLOCKED: canSetSalesStage_('REVIEW_REQUIRED','')===false && canSetSalesStage_('FAIL','')===false,
+      SALES_PASS_NEW_ALLOWED: canSetSalesStage_('PASS','')===true,
+      SALES_EXISTING_CAN_CLOSE: canSetSalesStage_('REVIEW_REQUIRED','Follow-up')===true,
+      SALES_TERMINAL_CLEARS_FOLLOWUP: nextFollowUpForSalesStage_('Đã bán',new Date(),'2026-09-30')==='' && nextFollowUpForSalesStage_('Lost',new Date(),'2026-09-30')===''
     };
     const failed=Object.keys(tests).filter(k=>!tests[k]);
     return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
@@ -1514,6 +1519,15 @@ const RemoteApp = (() => {
     return 'Chưa có';
   }
 
+  function canSetSalesStage_(gate,existingStage) {
+    return String(gate||'').trim()==='PASS' || !!String(existingStage||'').trim();
+  }
+
+  function nextFollowUpForSalesStage_(stage,nextFollow,previousFollow) {
+    if(stage==='Đã bán' || stage==='Lost') return '';
+    return nextFollow || previousFollow || '';
+  }
+
   function setSelectedOpportunitySalesStage_(command) {
     command=command||{};
     const stage=normalizeSalesStage_(command.stage);
@@ -1528,6 +1542,7 @@ const RemoteApp = (() => {
     const n=end-start+1;
     const sourceIds=sh.getRange(start,2,n,1).getDisplayValues();
     const gates=sh.getRange(start,25,n,1).getDisplayValues();
+    const existingConversions=sh.getRange(start,18,n,1).getValues();
     const existingStages=sh.getRange(start,27,n,5).getValues();
     const now=new Date();
     const days=Math.max(0,Math.min(30,Number(command.followUpDays||0)));
@@ -1542,18 +1557,19 @@ const RemoteApp = (() => {
       const sourceId=String(sourceIds[i][0]||'').trim();
       const gate=String(gates[i][0]||'').trim();
       const prev=existingStages[i]||[];
-      if(!sourceId){salesRows.push(prev);conversions.push(['']);skipped++;continue;}
+      const currentConversion=existingConversions[i] ? existingConversions[i][0] : '';
+      if(!sourceId){salesRows.push(prev);conversions.push([currentConversion]);skipped++;continue;}
       const alreadyInSales=String(prev[0]||'').trim();
-      if(stage!=='Lost' && gate!=='PASS' && !alreadyInSales){
+      if(!canSetSalesStage_(gate,alreadyInSales)){
         salesRows.push(prev);
-        conversions.push([sh.getRange(start+i,18).getValue()]);
+        conversions.push([currentConversion]);
         skipped++;
         continue;
       }
       salesRows.push([
         stage,
         now,
-        nextFollow || prev[2] || '',
+        nextFollowUpForSalesStage_(stage,nextFollow,prev[2]),
         owner || prev[3] || '',
         outcome || prev[4] || ''
       ]);
