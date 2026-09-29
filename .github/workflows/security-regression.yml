@@ -145,6 +145,12 @@ jobs:
           ]){
             if(intel.tests[k]!==true) throw new Error('group intelligence acceptance failed: '+k);
           }
+          const native=sandbox.__remoteApp.runApiNativeCleanupHarness();
+          console.log(JSON.stringify(native,null,2));
+          if(!native || native.ok!==true) process.exit(1);
+          for(const k of ['API_NATIVE_WRAPPER_EXISTS','API_NATIVE_NO_SERIALIZE','LEGACY_JSON_PARSE_RETAINED','PARSED_PAYLOAD_SUPPORTED']){
+            if(native.tests[k]!==true) throw new Error('API native acceptance failed: '+k);
+          }
           const policy=sandbox.__remoteApp.runAutoPolicyHarness();
           console.log(JSON.stringify(policy,null,2));
           if(!policy || policy.ok!==true) process.exit(1);
@@ -347,7 +353,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.3-group-intelligence'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.4-api-native-cleanup'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -367,6 +373,10 @@ jobs:
           assert "function resolveEffectiveActionPolicy_(" in runtime
           assert "function runGroupOnboardingHarness_(" in runtime
           assert "function runGroupIntelligenceHarness_(" in runtime
+          assert "function ingestApiRecords_(" in runtime
+          assert "function runApiNativeCleanupHarness_(" in runtime
+          assert "parsed:list" in runtime
+          assert "Object.prototype.hasOwnProperty.call(file,'parsed')" in runtime
           assert "function measureGroupActivityWindow_(" in runtime
           assert "GROUP_SUMMARY_LEGACY_ARCHIVE_SHEET: 'NHÓM LEGACY ARCHIVE'" in runtime
           assert "'Members — FB REPORTED'" in runtime
@@ -591,6 +601,9 @@ jobs:
           assert "MEASURE_GROUP_ACTIVITY" in ui
           assert "group_intelligence" in ui
           assert "ĐO ACTIVITY 24H / 7D" in ui
+          assert "Legacy Debug / Recovery" in ui
+          assert "Production primary path: FBAIO API" in ui
+          assert "LEGACY IMPORT JSON" in ui
           assert "ONBOARDING_DISCOVERY" in ui
           assert 'class="groupTaskTabs"' in ui
           assert 'data-group-task="scan"' in ui
