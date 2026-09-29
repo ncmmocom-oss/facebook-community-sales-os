@@ -5640,7 +5640,8 @@ const RemoteApp = (() => {
       let totalComments=[];
       let lastPage=null;
 
-      while(pagesRead<maxPages && totalComments.length<softMaxComments){
+      const deadlineAt=Number(options.deadlineAt||0);
+      while(pagesRead<maxPages && totalComments.length<softMaxComments && (!deadlineAt || Date.now()<deadlineAt-2000)){
         const page=fetchCommentsPageRaw_(clientId,{url:job.url,type:'Newest',cursor});
         lastPage=page;
         const comments=page.comments||[];
@@ -5841,7 +5842,7 @@ const RemoteApp = (() => {
       if(Date.now()-started>CFG.COMMENT_CYCLE_BUDGET_MS) break;
       const job=jobs[i];
       try{
-        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO',commentPolicy:job.commentPolicy,policyConfig});
+        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO',commentPolicy:job.commentPolicy,policyConfig,deadlineAt:started+CFG.COMMENT_CYCLE_BUDGET_MS});
         results.push(r);
         imported+=Number(r.commentImported||0);
         (r.newSourceIds||[]).forEach(id=>sourceIds.push(id));
