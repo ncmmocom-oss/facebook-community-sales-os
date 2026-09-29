@@ -63,6 +63,16 @@ jobs:
           for(const k of required){
             if(r.tests[k]!==true) throw new Error('acceptance failed: '+k);
           }
+          const p=sandbox.__remoteApp.runProviderResilienceHarness();
+          console.log(JSON.stringify(p,null,2));
+          if(!p || p.ok!==true) process.exit(1);
+          const providerRequired=[
+            'TRANSIENT_HTTP_CODES','TRANSIENT_TEXT_HIGH_DEMAND','TRANSIENT_TEXT_RATE_LIMIT',
+            'GEMINI_TO_OPENAI','OPENAI_TO_GEMINI','NO_SECOND_PROVIDER_FAIL_CLOSED','NON_TRANSIENT_NO_FAILOVER'
+          ];
+          for(const k of providerRequired){
+            if(p.tests[k]!==true) throw new Error('provider acceptance failed: '+k);
+          }
           NODE
 
       - name: Assert manual and Due scopes cannot cross
@@ -236,7 +246,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF4-auto-budget'" in runtime
+          assert "VERSION: '1.9.8.7-HF5-provider-resilience'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -309,7 +319,17 @@ jobs:
           assert "Business context fallback" not in prompt_block
 
           assert "function analyzeBatchWithProviderFailover_(" in runtime
+          assert "function getAiFailoverTarget_(" in runtime
+          assert "function logAiFailover_(" in runtime
+          assert "function runProviderResilienceHarness_(" in runtime
           assert "PROVIDER_FAILOVER" in runtime
+          assert "PROVIDER_FAILOVER_FAILED" in runtime
+          failover_start = runtime.index('function analyzeBatchWithProviderFailover_(')
+          failover_end = runtime.index('function analyzeBatchWithOpenAi_', failover_start)
+          failover_block = runtime[failover_start:failover_end]
+          assert "getAiFailoverTarget_(cfg,primaryErr)" in failover_block
+          assert "logAiFailover_(meta,target,primaryErr,'OK','')" in failover_block
+          assert "logAiFailover_(meta,target,primaryErr,'ERROR'" in failover_block
           assert "id=\"salesStage\"" in ui
           assert "id=\"groupContextDraft\"" in ui
           assert "bắt buộc đủ 7 field" in ui
