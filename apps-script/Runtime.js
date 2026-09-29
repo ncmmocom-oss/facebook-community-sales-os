@@ -353,6 +353,15 @@ const RemoteApp = (() => {
     return isWithinActiveWindowMinutes_(w.start,w.end,policyMinute_(hhmm));
   }
 
+  function isProfileOwnPost_(profile,authorUrl) {
+    const author=normalizeFacebookProfileUrl_(authorUrl);
+    if(!author) return false;
+    const identities=new Set((profile&&profile.facebookIdentities||[])
+      .map(x=>normalizeFacebookProfileUrl_(x)||normalizeUrl_(x))
+      .filter(Boolean));
+    return identities.has(author);
+  }
+
   function autoPolicyLanePlan_(config,profile) {
     const c=config||getAutoPolicyConfig_(),p=profile||activePolicyProfile_(c);
     const cp=resolveEffectiveCommentPolicy_(p,null,c);
@@ -5092,12 +5101,15 @@ const RemoteApp = (() => {
     };
   }
 
-  function openCommentProviderBreaker_(err) {
+  function openCommentProviderBreaker_(err,policyConfig,profile) {
     const now=Date.now();
+    const config=policyConfig||getAutoPolicyConfig_();
+    const p=profile||activePolicyProfile_(config);
+    const commentPolicy=resolveEffectiveCommentPolicy_(p,null,config);
     const state={
       open:true,
       openedAt:now,
-      openUntil:now+Number(CFG.COMMENT_PROVIDER_BREAKER_MS||10*60*1000),
+      openUntil:now+Number(commentPolicy.providerBreakerMinutes||10)*60*1000,
       lastError:String(err&&err.message||err||'').slice(0,500)
     };
     PropertiesService.getDocumentProperties()
@@ -5176,11 +5188,12 @@ const RemoteApp = (() => {
     return out;
   }
 
-  function getCommentBacklog_(limit) {
+  function getCommentBacklog_(limit,policyConfig) {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const raw=mustSheet_(ss,CFG.RAW_SHEET);
     if(raw.getLastRow()<5) return [];
     if(raw.getMaxColumns()<20) ensureV16Sheets_(true);
+    const config=policyConfig||getAutoPolicyConfig_();
     const existing=loadExistingCommentCountByPost_();
     const watchMap=loadCommentWatchMap_();
     const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
@@ -5189,7 +5202,13 @@ const RemoteApp = (() => {
     rows.forEach((r,i)=>{
       const postId=String(r[4]||'').trim();
       const url=String(r[5]||'').trim();
-      if(!postId || !url) return;
+      if(!postId||!url) return;
+      const groupKey=String(r[3]||'').trim().toLowerCase();
+      const profile=policyProfileForGroup_(config,groupKey);
+      if(!profile||profile.enabled===false) return;
+      const ownPost=isProfileOwnPost_(profile,r[7]);
+      const commentPolicy=resolveEffectiveCommentPolicy_(profile,{ownPost},config);
+      if(!commentPolicy.enabled) return;
 
       const expected=Math.max(0,toNumber_(r[9]));
       const stored=Math.max(0,toNumber_(r[16]));
@@ -5202,28 +5221,23 @@ const RemoteApp = (() => {
       if(/^HARD:/i.test(status)) return;
       if(!commentRetryDue_(status,lastScanMs,now)) return;
 
-      const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
-      const hotDue=
-        hotRecent &&
-        !!watchMap[postId] &&
-        (!lastScanMs || now-lastScanMs>=CFG.COMMENT_HOT_RECHECK_MS);
-
-      const deltaPending=cursor || fetched<expected;
-      if(!deltaPending && !hotDue) return;
+      const hotRecent=!!importedAtMs&&now-importedAtMs<=Number(commentPolicy.hotWatchHours||24)*60*60*1000;
+      const hotDue=hotRecent&&!!watchMap[postId]&&
+        (!lastScanMs||now-lastScanMs>=Number(commentPolicy.recheckMinutes||30)*60*1000);
+      const deltaPending=cursor||fetched<expected;
+      if(!deltaPending&&!hotDue) return;
 
       jobs.push({
-        rawRow:i+5,
-        postId,
-        url,
+        rawRow:i+5,postId,url,
         groupName:String(r[2]||'').trim(),
-        groupKey:String(r[3]||'').trim().toLowerCase(),
-        expected,
-        fetched,
-        cursor,
-        status,
+        groupKey,
+        profileId:profile.id,
+        ownPost,
+        policyPriority:Number(commentPolicy.priority||0),
+        commentPolicy,
+        expected,fetched,cursor,status,
         retryCount:commentRetryCount_(status),
-        importedAtMs,
-        lastScanMs,
+        importedAtMs,lastScanMs,
         delta:Math.max(0,expected-fetched),
         hotWatch:hotDue,
         watch:watchMap[postId]||null
@@ -5231,14 +5245,16 @@ const RemoteApp = (() => {
     });
 
     jobs.sort((a,b)=>{
-      // New delta first, then hot watch, with cursor continuation kept in the mix.
+      if((b.policyPriority||0)!==(a.policyPriority||0)) return (b.policyPriority||0)-(a.policyPriority||0);
       const rank=x=>x.delta>0?0:(x.hotWatch?1:(x.cursor?2:3));
       const ra=rank(a),rb=rank(b);
       if(ra!==rb) return ra-rb;
       if((b.importedAtMs||0)!==(a.importedAtMs||0)) return (b.importedAtMs||0)-(a.importedAtMs||0);
       return (b.delta||0)-(a.delta||0);
     });
-    const cap=Math.max(1,Math.min(100,Number(limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
+    const active=activePolicyProfile_(config);
+    const defaultPolicy=resolveEffectiveCommentPolicy_(active,null,config);
+    const cap=Math.max(1,Math.min(100,Number(limit||defaultPolicy.maxPostsPerCycle||CFG.COMMENT_MAX_POSTS_PER_TICK)));
     return jobs.slice(0,cap);
   }
 
@@ -5539,8 +5555,12 @@ const RemoteApp = (() => {
     options=options||{};
     ensureV16Sheets_(false);
     const props=PropertiesService.getDocumentProperties();
-    const enabled=(props.getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
-    if(!enabled) return {ok:true,enabled:false,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
+    const legacyEnabled=(props.getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    const policyConfig=options.policyConfig||getAutoPolicyConfig_();
+    const policyProfile=policyProfileForGroup_(policyConfig,'')||activePolicyProfile_(policyConfig);
+    const commentPolicy=resolveEffectiveCommentPolicy_(policyProfile,null,policyConfig);
+    const enabled=legacyEnabled&&commentPolicy.enabled;
+    if(!enabled) return {ok:true,enabled:false,reason:'COMMENT_POLICY_OFF',processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION};
 
     const started=Date.now();
     const repaired=repairCommentProviderHardQuarantine_();
@@ -5555,8 +5575,8 @@ const RemoteApp = (() => {
       };
     }
 
-    const limit=Math.max(1,Math.min(20,Number(options.limit||CFG.COMMENT_MAX_POSTS_PER_TICK)));
-    const jobs=getCommentBacklog_(limit);
+    const limit=Math.max(1,Math.min(20,Number(options.limit||commentPolicy.maxPostsPerCycle)));
+    const jobs=getCommentBacklog_(limit,policyConfig);
     if(!jobs.length) return {
       ok:true,enabled:true,processed:0,commentImported:0,newSourceIds:[],version:CFG.VERSION,
       repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
@@ -5584,7 +5604,7 @@ const RemoteApp = (() => {
       if(Date.now()-started>CFG.COMMENT_CYCLE_BUDGET_MS) break;
       const job=jobs[i];
       try{
-        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO'});
+        const r=runSinglePostCommentIntelligence_(job,{clientId,source:options.source||'AUTO',commentPolicy:job.commentPolicy,policyConfig});
         results.push(r);
         imported+=Number(r.commentImported||0);
         (r.newSourceIds||[]).forEach(id=>sourceIds.push(id));
@@ -5607,7 +5627,7 @@ const RemoteApp = (() => {
           postId:job.postId,error:String(err&&err.message||err||'')
         });
         if(providerTransient){
-          const opened=openCommentProviderBreaker_(err);
+          const opened=openCommentProviderBreaker_(err,policyConfig,policyProfile);
           providerCircuitOpen=true;
           providerRetryAt=Number(opened.openUntil||0);
           providerError=String(opened.lastError||'');
