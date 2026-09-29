@@ -402,6 +402,96 @@ const RemoteApp = (() => {
     return m;
   }
 
+  function recommendedScanPolicy_(metric,currentPolicy) {
+    metric=metric||{};
+    const p=currentPolicy||{scansPerDay:1,postsPerScan:10,maxPostsPerScan:200};
+    const successful=Number(metric.successfulScans||0);
+    const scanned=Number(metric.scannedPosts||0);
+    const yieldRate=scanned?Number(metric.newPosts||0)/scanned:0;
+    const avgDurationMs=Number(metric.totalScans||0)?Number(metric.totalDurationMs||0)/Number(metric.totalScans||1):0;
+    const out={
+      eligible:successful>=5,
+      sampleSize:successful,
+      yield:yieldRate,
+      avgDurationMs,
+      recommendedScansPerDay:Number(p.scansPerDay||1),
+      recommendedPostsPerScan:Number(p.postsPerScan||10),
+      band:'INSUFFICIENT_SAMPLE',
+      reason:'Cần >=5 successful scans.'
+    };
+    if(successful<5) return out;
+    if(yieldRate>=0.25){
+      out.band='HIGH_YIELD';
+      out.recommendedScansPerDay=Math.min(6,Math.max(3,Number(p.scansPerDay||1)));
+      out.recommendedPostsPerScan=Math.min(Number(p.maxPostsPerScan||200),Math.max(25,Number(p.postsPerScan||10)));
+      out.reason='Yield cao; đề xuất tăng/giữ coverage.';
+    }else if(yieldRate<=0.05){
+      out.band='LOW_YIELD';
+      out.recommendedScansPerDay=Math.max(1,Math.min(2,Number(p.scansPerDay||1)));
+      out.recommendedPostsPerScan=Math.max(1,Math.min(10,Number(p.postsPerScan||10)));
+      out.reason='Yield thấp sau đủ sample; đề xuất giảm workload.';
+    }else{
+      out.band='BALANCED';
+      out.reason='Yield trung bình; giữ policy hiện tại.';
+    }
+    return out;
+  }
+
+  function getGroupEfficiencyReport_(limit) {
+    const config=getAutoPolicyConfig_();
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {version:CFG.VERSION,rows:[]};
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
+    const out=[];
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có') return;
+      const group=groupPolicyInput_(r);
+      if(!group.groupKey) return;
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      const policy=resolveEffectiveScanPolicy_(profile,group,config);
+      const metric=getGroupEfficiencyMetric_(group.groupKey);
+      const recommendation=recommendedScanPolicy_(metric,policy);
+      out.push({
+        row:i+2,
+        name:String(r[2]||'').trim()||('Group '+group.groupKey),
+        groupKey:group.groupKey,
+        scans:Number(metric.totalScans||0),
+        successfulScans:Number(metric.successfulScans||0),
+        scannedPosts:Number(metric.scannedPosts||0),
+        newPosts:Number(metric.newPosts||0),
+        duplicates:Number(metric.duplicates||0),
+        errors:Number(metric.errors||0),
+        yield:Number(recommendation.yield||0),
+        avgDurationMs:Number(recommendation.avgDurationMs||0),
+        current:{scansPerDay:policy.scansPerDay,postsPerScan:policy.postsPerScan},
+        recommendation
+      });
+    });
+    out.sort((a,b)=>b.successfulScans-a.successfulScans||b.yield-a.yield);
+    return {version:CFG.VERSION,minimumSample:5,rows:out.slice(0,Math.max(1,Math.min(100,Number(limit||30))))};
+  }
+
+  function applySelectedScanRecommendation_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=ss.getActiveSheet(),ar=sh&&sh.getActiveRange();
+    if(!sh||sh.getName()!==CFG.GROUP_SCAN_SHEET||!ar||ar.getRow()<2) throw new Error('Chọn một dòng Group trong QUÉT NHÓM trước.');
+    const row=ar.getRow();
+    const vals=sh.getRange(row,1,1,27).getValues()[0]||[];
+    if(String(vals[0]||'').trim()!=='Có') throw new Error('Group đang không hoạt động.');
+    const group=groupPolicyInput_(vals);
+    if(!group.groupKey) throw new Error('Group chưa có deterministic identity.');
+    const config=getAutoPolicyConfig_();
+    const profile=policyProfileForGroup_(config,group.groupKey);
+    const policy=resolveEffectiveScanPolicy_(profile,group,config);
+    const metric=getGroupEfficiencyMetric_(group.groupKey);
+    const rec=recommendedScanPolicy_(metric,policy);
+    if(!rec.eligible) throw new Error('Chưa đủ 5 successful scans để apply recommendation.');
+    sh.getRange(row,8).setValue(rec.recommendedScansPerDay);
+    sh.getRange(row,9).setValue(rec.recommendedPostsPerScan);
+    SpreadsheetApp.flush();
+    return {ok:true,version:CFG.VERSION,row,groupKey:group.groupKey,recommendation:rec};
+  }
+
   function groupPolicyInput_(row) {
     row=row||[];
     return {
@@ -2236,6 +2326,8 @@ const RemoteApp = (() => {
     if (name === 'GET_AUTO_POLICY') return getAutoPolicyState_();
     if (name === 'SAVE_AUTO_POLICY') return saveAutoPolicyConfig_(command);
     if (name === 'RUN_AUTO_POLICY_HARNESS') return runAutoPolicyHarness_();
+    if (name === 'GET_GROUP_EFFICIENCY') return getGroupEfficiencyReport_(command.limit);
+    if (name === 'APPLY_SELECTED_SCAN_RECOMMENDATION') return applySelectedScanRecommendation_();
     if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_(false);
     if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2_(command.enabled !== false);
     if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
