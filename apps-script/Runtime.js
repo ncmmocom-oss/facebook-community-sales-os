@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF6-sheet-capacity',
+    VERSION: '1.9.8.7-HF7-sales-transition-guard',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -100,6 +100,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF7 Sales Transition Guard: Sales Stage là state machine thật; nguồn mới chỉ được vào Qualified khi Lead Gate=PASS; chỉ cho transition tuần tự Qualified→Outreach→Đang hội thoại→Chờ phản hồi→Follow-up→Đã bán/Lost; same-stage update idempotent và terminal stage không tự mở lại.\n' +
       'V1.9.8.7-HF6 Sheet Capacity: worker-fast append tự mở rộng grid trước write; lỗi lịch sử "rows out of bounds" được phân loại transient, clear hard quarantine và retry có kiểm soát; AUTO/self-test ghi evidence capacity repair.\n' +
       'V1.9.8.7-HF5 Provider Resilience: centralize transient failover decision, log fallback success/failure với actual provider/model, và thêm executable provider harness cho 408/429/5xx/high-demand hai chiều.\n' +
       'V1.9.8.7-HF4 Auto Budget: AUTO chừa 120s trước khi start Group job mới; AI auto tối đa 12 source và chỉ start khi còn 160s reserve; cycle rảnh drain AI backlog; AUTO log ghi Runtime/budget/deferred evidence để tránh silent overrun.\n' +
@@ -1525,7 +1526,20 @@ const RemoteApp = (() => {
       ID_PRODUCT_SERVICE_EXACT: offerContextCanonicalField_('PRODUCT-SERVICE')==='PRODUCT-SERVICE' && offerContextCanonicalField_('PRODUCT')==='' && offerContextCanonicalField_('SERVICE')==='',
       SALES_NONPASS_NEW_BLOCKED: canSetSalesStage_('REVIEW_REQUIRED','')===false && canSetSalesStage_('FAIL','')===false,
       SALES_PASS_NEW_ALLOWED: canSetSalesStage_('PASS','')===true,
-      SALES_EXISTING_CAN_CLOSE: canSetSalesStage_('REVIEW_REQUIRED','Follow-up')===true,
+      SALES_ENTRY_ONLY_QUALIFIED: isSalesStageTransitionAllowed_('PASS','','Qualified')===true && isSalesStageTransitionAllowed_('PASS','','Outreach')===false,
+      SALES_SEQUENCE_FORWARD_ONLY:
+        isSalesStageTransitionAllowed_('PASS','Qualified','Outreach')===true &&
+        isSalesStageTransitionAllowed_('PASS','Outreach','Đang hội thoại')===true &&
+        isSalesStageTransitionAllowed_('PASS','Đang hội thoại','Chờ phản hồi')===true &&
+        isSalesStageTransitionAllowed_('PASS','Chờ phản hồi','Follow-up')===true &&
+        isSalesStageTransitionAllowed_('PASS','Follow-up','Đã bán')===true &&
+        isSalesStageTransitionAllowed_('PASS','Follow-up','Lost')===true,
+      SALES_SKIP_BLOCKED:
+        isSalesStageTransitionAllowed_('PASS','Qualified','Đang hội thoại')===false &&
+        isSalesStageTransitionAllowed_('PASS','Outreach','Follow-up')===false &&
+        isSalesStageTransitionAllowed_('PASS','Đang hội thoại','Đã bán')===false,
+      SALES_SAME_STAGE_IDEMPOTENT: isSalesStageTransitionAllowed_('REVIEW_REQUIRED','Outreach','Outreach')===true,
+      SALES_TERMINAL_LOCKED: isSalesStageTransitionAllowed_('PASS','Đã bán','Follow-up')===false && isSalesStageTransitionAllowed_('PASS','Lost','Qualified')===false,
       SALES_TERMINAL_CLEARS_FOLLOWUP: nextFollowUpForSalesStage_('Đã bán',new Date(),'2026-09-30')==='' && nextFollowUpForSalesStage_('Lost',new Date(),'2026-09-30')==='',
       SHEET_CAPACITY_ERROR_TRANSIENT: classifyAutoSheetException_('LỖI','Those rows are out of bounds.')==='TRANSIENT' && classifyAutoSheetException_('LỖI','ROW_CAPACITY_RETRY')==='TRANSIENT'
     };
@@ -1571,6 +1585,34 @@ const RemoteApp = (() => {
     return String(gate||'').trim()==='PASS' || !!String(existingStage||'').trim();
   }
 
+  function isSalesStageTransitionAllowed_(gate,currentStage,targetStage) {
+    const gateValue=String(gate||'').trim();
+    const current=String(currentStage||'').trim();
+    const target=normalizeSalesStage_(targetStage);
+    if(!current) return gateValue==='PASS' && target==='Qualified';
+    if(current===target) return true;
+    if(current==='Đã bán' || current==='Lost') return false;
+
+    const next={
+      'Qualified':'Outreach',
+      'Outreach':'Đang hội thoại',
+      'Đang hội thoại':'Chờ phản hồi',
+      'Chờ phản hồi':'Follow-up'
+    };
+    if(next[current]===target) return true;
+    if(current==='Follow-up' && (target==='Đã bán' || target==='Lost')) return true;
+    return false;
+  }
+
+  function salesTransitionReason_(gate,currentStage,targetStage) {
+    const current=String(currentStage||'').trim();
+    const target=String(targetStage||'').trim();
+    if(!current && String(gate||'').trim()!=='PASS') return 'NON_PASS_ENTRY';
+    if(!current && target!=='Qualified') return 'ENTRY_MUST_BE_QUALIFIED';
+    if(current==='Đã bán' || current==='Lost') return 'TERMINAL_STAGE';
+    return 'INVALID_TRANSITION';
+  }
+
   function nextFollowUpForSalesStage_(stage,nextFollow,previousFollow) {
     if(stage==='Đã bán' || stage==='Lost') return '';
     return nextFollow || previousFollow || '';
@@ -1600,18 +1642,32 @@ const RemoteApp = (() => {
     const salesRows=[];
     const conversions=[];
     let updated=0,skipped=0;
+    const skipReasons={};
 
     for(let i=0;i<n;i++){
       const sourceId=String(sourceIds[i][0]||'').trim();
       const gate=String(gates[i][0]||'').trim();
       const prev=existingStages[i]||[];
       const currentConversion=existingConversions[i] ? existingConversions[i][0] : '';
-      if(!sourceId){salesRows.push(prev);conversions.push([currentConversion]);skipped++;continue;}
+      if(!sourceId){
+        salesRows.push(prev);conversions.push([currentConversion]);skipped++;
+        skipReasons.MISSING_SOURCE_ID=(skipReasons.MISSING_SOURCE_ID||0)+1;
+        continue;
+      }
       const alreadyInSales=String(prev[0]||'').trim();
       if(!canSetSalesStage_(gate,alreadyInSales)){
         salesRows.push(prev);
         conversions.push([currentConversion]);
         skipped++;
+        skipReasons.NON_PASS_ENTRY=(skipReasons.NON_PASS_ENTRY||0)+1;
+        continue;
+      }
+      if(!isSalesStageTransitionAllowed_(gate,alreadyInSales,stage)){
+        salesRows.push(prev);
+        conversions.push([currentConversion]);
+        skipped++;
+        const reason=salesTransitionReason_(gate,alreadyInSales,stage);
+        skipReasons[reason]=(skipReasons[reason]||0)+1;
         continue;
       }
       salesRows.push([
@@ -1630,7 +1686,7 @@ const RemoteApp = (() => {
       sh.getRange(start,18,n,1).setValues(conversions);
       SpreadsheetApp.flush();
     }
-    return {ok:true,version:CFG.VERSION,stage,updated,skipped,startRow:start,endRow:end,pipeline:getSalesPipelineStats_()};
+    return {ok:true,version:CFG.VERSION,stage,updated,skipped,skipReasons,startRow:start,endRow:end,pipeline:getSalesPipelineStats_()};
   }
 
   function getSalesPipelineStats_() {

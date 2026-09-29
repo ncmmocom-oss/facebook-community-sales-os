@@ -57,7 +57,11 @@ jobs:
             'ID_PRODUCT_SERVICE_EXACT',
             'SALES_NONPASS_NEW_BLOCKED',
             'SALES_PASS_NEW_ALLOWED',
-            'SALES_EXISTING_CAN_CLOSE',
+            'SALES_ENTRY_ONLY_QUALIFIED',
+            'SALES_SEQUENCE_FORWARD_ONLY',
+            'SALES_SKIP_BLOCKED',
+            'SALES_SAME_STAGE_IDEMPOTENT',
+            'SALES_TERMINAL_LOCKED',
             'SALES_TERMINAL_CLEARS_FOLLOWUP',
             'SHEET_CAPACITY_ERROR_TRANSIENT'
           ];
@@ -247,7 +251,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF6-sheet-capacity'" in runtime
+          assert "VERSION: '1.9.8.7-HF7-sales-transition-guard'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -257,12 +261,16 @@ jobs:
           assert "GET_SALES_RECOVERY_QUEUE" in runtime
           assert "SET_SELECTED_SALES_STAGE" in runtime
           assert "function canSetSalesStage_(" in runtime
+          assert "function isSalesStageTransitionAllowed_(" in runtime
+          assert "function salesTransitionReason_(" in runtime
           assert "function nextFollowUpForSalesStage_(" in runtime
           sales_start = runtime.index('function setSelectedOpportunitySalesStage_(')
           sales_end = runtime.index('function getSalesPipelineStats_', sales_start)
           sales_block = runtime[sales_start:sales_end]
           assert "stage!=='Lost'" not in sales_block
           assert "canSetSalesStage_(gate,alreadyInSales)" in sales_block
+          assert "isSalesStageTransitionAllowed_(gate,alreadyInSales,stage)" in sales_block
+          assert "skipReasons" in sales_block
           assert "existingConversions=sh.getRange(start,18,n,1).getValues()" in sales_block
           assert "sh.getRange(start+i,18).getValue()" not in sales_block
           assert "nextFollowUpForSalesStage_(stage,nextFollow,prev[2])" in sales_block
