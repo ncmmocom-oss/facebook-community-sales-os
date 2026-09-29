@@ -872,6 +872,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       document.getElementById('duePreview').innerHTML=due.length
         ? due.map(x=>
             '<div><b>Dòng '+x.row+'</b> — '+escapeHtml(x.name||'')+
+            ' • '+escapeHtml(x.schedulerState||'DUE')+
             ' • '+escapeHtml(x.lifecycle||'')+
             ' • '+Number(x.targetCount||25)+' bài'+
             (x.profile&&x.profile!=='AUTO'?' • '+escapeHtml(x.profile):'')+
