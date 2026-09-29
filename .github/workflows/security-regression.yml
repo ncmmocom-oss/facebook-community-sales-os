@@ -151,6 +151,12 @@ jobs:
           for(const k of ['API_NATIVE_WRAPPER_EXISTS','API_NATIVE_NO_SERIALIZE','LEGACY_JSON_PARSE_RETAINED','PARSED_PAYLOAD_SUPPORTED']){
             if(native.tests[k]!==true) throw new Error('API native acceptance failed: '+k);
           }
+          const identity=sandbox.__remoteApp.runVerifiedIdentityRetryHarness();
+          console.log(JSON.stringify(identity,null,2));
+          if(!identity || identity.ok!==true) process.exit(1);
+          for(const k of ['ID_RETRY_VERIFIED_NUMERIC','ID_RETRY_NO_NUMERIC_BLOCKED','ID_RETRY_NON_IDENTITY_BLOCKED','ID_RETRY_SAME_CANONICAL_BLOCKED']){
+            if(identity.tests[k]!==true) throw new Error('identity retry acceptance failed: '+k);
+          }
           const policy=sandbox.__remoteApp.runAutoPolicyHarness();
           console.log(JSON.stringify(policy,null,2));
           if(!policy || policy.ok!==true) process.exit(1);
@@ -353,7 +359,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.4-api-native-cleanup'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.5-verified-identity-retry'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -375,6 +381,12 @@ jobs:
           assert "function runGroupIntelligenceHarness_(" in runtime
           assert "function ingestApiRecords_(" in runtime
           assert "function runApiNativeCleanupHarness_(" in runtime
+          assert "function repairVerifiedIdentityQuarantineOnce_(" in runtime
+          assert "function runVerifiedIdentityRetryHarness_(" in runtime
+          assert "GROUP_IDENTITY_RETRY_PREFIX" in runtime
+          assert "historicNumericGroupIdFromRow_(" in runtime
+          assert "skippedAttempted" in runtime
+          assert "idRetry=" in runtime
           assert "parsed:list" in runtime
           assert "Object.prototype.hasOwnProperty.call(file,'parsed')" in runtime
           assert "function measureGroupActivityWindow_(" in runtime
