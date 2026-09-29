@@ -7,6 +7,8 @@ const RemoteApp = (() => {
     SIGNAL_FEED_SHEET: 'TÍN HIỆU',
     GROUP_SCAN_SHEET: 'QUÉT NHÓM',
     GROUP_SUMMARY_SHEET: 'NHÓM',
+    GROUP_ALIAS_REGISTRY_SHEET: 'GROUP_ALIAS_REGISTRY',
+    GROUP_REGISTRY_CLEANUP_KEY: 'SOCIAL_AIO_GROUP_REGISTRY_CLEANUP_V1',
     LEAD_SHEET: 'KHÁCH HÀNG TIỀM NĂNG',
     LEAD_LEGACY_ARCHIVE_SHEET: 'KH LEGACY ARCHIVE',
     COORDINATION_SHEET: 'ĐIỀU PHỐI',
@@ -4179,6 +4181,199 @@ const RemoteApp = (() => {
     return groups;
   }
 
+  function buildGroupRegistryCleanupPlan_(scanRows) {
+    const groups=buildCanonicalGroupSummaryRegistry_(scanRows||[]);
+    const duplicateRows=[];
+    const aliases=[];
+    const now=new Date();
+    groups.forEach(group=>{
+      const members=(group.memberRows||[]).slice().sort((a,b)=>a-b);
+      members.forEach(row=>{if(row!==group.row) duplicateRows.push(row);});
+      const numericAliases=(group.aliases||[]).filter(x=>/^\d+$/.test(String(x||'')));
+      const numericId=numericAliases[0]||'';
+      let firstSeenMs=0,lastSeenMs=0;
+      members.forEach(row=>{
+        const r=(scanRows||[])[row-2]||[];
+        const t=opsDateMs_(r[9]);
+        if(t){
+          if(!firstSeenMs||t<firstSeenMs) firstSeenMs=t;
+          if(t>lastSeenMs) lastSeenMs=t;
+        }
+      });
+      (group.aliases||[]).forEach(alias=>{
+        const a=String(alias||'').trim().toLowerCase();
+        if(!a) return;
+        aliases.push({
+          canonicalKey:String(group.canonicalKey||'').trim().toLowerCase(),
+          alias:a,
+          numericId:/^\d+$/.test(a)?a:numericId,
+          source:'QUÉT NHÓM',
+          firstSeen:firstSeenMs?new Date(firstSeenMs):now,
+          lastSeen:lastSeenMs?new Date(lastSeenMs):now,
+          reason:members.length>1?'PHYSICAL_DUPLICATE_MERGE':'CANONICAL_IDENTITY_OBSERVED'
+        });
+      });
+    });
+    duplicateRows.sort((a,b)=>b-a);
+    return {
+      canonicalCount:groups.length,
+      duplicateRows,
+      aliases,
+      groups
+    };
+  }
+
+  function ensureGroupAliasRegistry_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    let sh=ss.getSheetByName(CFG.GROUP_ALIAS_REGISTRY_SHEET);
+    if(!sh) sh=ss.insertSheet(CFG.GROUP_ALIAS_REGISTRY_SHEET);
+    if(sh.getMaxColumns()<7) sh.insertColumnsAfter(sh.getMaxColumns(),7-sh.getMaxColumns());
+    sh.getRange(1,1,1,7).setValues([[
+      'Canonical Key','Alias','Numeric ID','Source','First Seen','Last Seen','Reason'
+    ]]);
+    sh.setFrozenRows(1);
+    try{sh.hideSheet();}catch(_){}
+    return sh;
+  }
+
+  function mergeGroupAliasRegistry_(records) {
+    const sh=ensureGroupAliasRegistry_();
+    const existing=new Map();
+    if(sh.getLastRow()>=2){
+      sh.getRange(2,1,sh.getLastRow()-1,7).getValues().forEach((r,i)=>{
+        const canonical=String(r[0]||'').trim().toLowerCase();
+        const alias=String(r[1]||'').trim().toLowerCase();
+        if(canonical&&alias) existing.set(canonical+'|'+alias,{row:i+2,data:r});
+      });
+    }
+    const append=[];
+    (records||[]).forEach(rec=>{
+      const canonical=String(rec.canonicalKey||'').trim().toLowerCase();
+      const alias=String(rec.alias||'').trim().toLowerCase();
+      if(!canonical||!alias) return;
+      const key=canonical+'|'+alias;
+      const prior=existing.get(key);
+      if(prior){
+        const first=opsDateMs_(prior.data[4])||opsDateMs_(rec.firstSeen)||Date.now();
+        const last=Math.max(opsDateMs_(prior.data[5])||0,opsDateMs_(rec.lastSeen)||0,Date.now());
+        sh.getRange(prior.row,1,1,7).setValues([[
+          canonical,
+          alias,
+          String(prior.data[2]||rec.numericId||''),
+          String(prior.data[3]||rec.source||'QUÉT NHÓM'),
+          new Date(first),
+          new Date(last),
+          String(prior.data[6]||rec.reason||'CANONICAL_IDENTITY_OBSERVED')
+        ]]);
+        return;
+      }
+      append.push([
+        canonical,alias,String(rec.numericId||''),String(rec.source||'QUÉT NHÓM'),
+        rec.firstSeen||new Date(),rec.lastSeen||new Date(),String(rec.reason||'CANONICAL_IDENTITY_OBSERVED')
+      ]);
+      existing.set(key,{row:-1,data:append[append.length-1]});
+    });
+    if(append.length){
+      const start=Math.max(2,sh.getLastRow()+1);
+      sh.getRange(start,1,append.length,7).setValues(append);
+    }
+    return {rows:Math.max(0,sh.getLastRow()-1),added:append.length};
+  }
+
+  function groupRegistryHasActiveLease_(plan) {
+    const seen=new Set();
+    for(const rec of (plan&&plan.aliases||[])){
+      const alias=String(rec.alias||'').trim().toLowerCase();
+      if(!alias||seen.has(alias)) continue;
+      seen.add(alias);
+      const lease=getRuntimeLease_(groupLeasePropertyKey_(alias));
+      if(lease&&lease.active) return true;
+    }
+    return false;
+  }
+
+  function cleanGroupRegistryCanonicalOnce_() {
+    const props=PropertiesService.getDocumentProperties();
+    const prior=String(props.getProperty(CFG.GROUP_REGISTRY_CLEANUP_KEY)||'').trim();
+    if(prior) {
+      try{return Object.assign({skipped:true,reason:'ALREADY_DONE'},JSON.parse(prior));}
+      catch(_){return {skipped:true,reason:'ALREADY_DONE',state:prior};}
+    }
+
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {ok:true,canonicalCount:0,deleted:0};
+
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
+    if(rows.some(r=>String(r[23]||'').trim()==='ĐANG QUÉT')){
+      return {ok:false,deferred:true,reason:'GROUP_SCAN_RUNNING'};
+    }
+    const plan=buildGroupRegistryCleanupPlan_(rows);
+    if(groupRegistryHasActiveLease_(plan)){
+      return {ok:false,deferred:true,reason:'GROUP_LEASE_ACTIVE'};
+    }
+
+    const lock=LockService.getDocumentLock();
+    if(!lock.tryLock(10000)) return {ok:false,deferred:true,reason:'DOCUMENT_LOCK_BUSY'};
+    try{
+      mergeGroupAliasRegistry_(plan.aliases);
+      plan.duplicateRows.forEach(row=>{
+        if(row>=2&&row<=sh.getLastRow()) sh.deleteRow(row);
+      });
+
+      const verifyRows=sh.getLastRow()>=2?sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues():[];
+      const verify=buildGroupRegistryCleanupPlan_(verifyRows);
+      if(verify.duplicateRows.length){
+        throw new Error('GROUP_REGISTRY_CLEANUP_VERIFY_FAILED: duplicates='+verify.duplicateRows.join(','));
+      }
+      refreshGroupSummary_();
+      const result={
+        ok:true,
+        canonicalCount:verify.canonicalCount,
+        deleted:plan.duplicateRows.length,
+        deletedRows:plan.duplicateRows.slice().sort((a,b)=>a-b),
+        aliasRecords:plan.aliases.length,
+        completedAt:new Date().toISOString()
+      };
+      props.setProperty(CFG.GROUP_REGISTRY_CLEANUP_KEY,JSON.stringify(result));
+      return result;
+    } finally {
+      lock.releaseLock();
+    }
+  }
+
+  function runGroupRegistryCleanupHarness_() {
+    const row=(active,name,url,id,note,status,lastAt)=>{
+      const r=Array(27).fill('');
+      r[0]=active?'Có':'Không';
+      r[2]=name;
+      r[3]=url;
+      r[4]=id;
+      r[9]=lastAt||'';
+      r[15]=note||'';
+      r[23]=status||'XONG';
+      return r;
+    };
+    const rows=[
+      row(true,'Active slug','https://www.facebook.com/groups/3diot.laptrinhnhungiot/','3diot.laptrinhnhungiot',
+        'Canonical identity: https://www.facebook.com/groups/1358105521809310/ -> https://www.facebook.com/groups/3diot.laptrinhnhungiot/','XONG',new Date('2026-09-29T02:00:00Z')),
+      row(false,'Duplicate slug','https://www.facebook.com/groups/3diot.laptrinhnhungiot/','3diot.laptrinhnhungiot',
+        'Duplicate -> canonical','DỪNG',new Date('2026-09-28T02:00:00Z')),
+      row(true,'Other','https://www.facebook.com/groups/other-group/','other-group','','XONG',new Date('2026-09-29T03:00:00Z'))
+    ];
+    const plan=buildGroupRegistryCleanupPlan_(rows);
+    const aliasSet=new Set(plan.aliases.map(x=>x.alias));
+    const tests={
+      REGISTRY_ONE_CANONICAL_ROW:plan.canonicalCount===2,
+      REGISTRY_DUPLICATE_DELETE_ONLY:plan.duplicateRows.length===1&&plan.duplicateRows[0]===3,
+      REGISTRY_ACTIVE_REPRESENTATIVE:plan.groups[0]&&plan.groups[0].row===2&&plan.groups[0].active===true,
+      REGISTRY_NUMERIC_ALIAS_PRESERVED:aliasSet.has('1358105521809310'),
+      REGISTRY_SLUG_ALIAS_PRESERVED:aliasSet.has('3diot.laptrinhnhungiot')
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function buildGroupSummaryOpportunityIndex_(oppRows) {
     const byGroupKey=new Map();
     (oppRows||[]).forEach(r=>{
@@ -6962,6 +7157,7 @@ const RemoteApp = (() => {
     try{
       const repairs=cleanupExpiredRuntimeState_(true);
       summary.repairs=repairs;
+      summary.registryCleanup=cleanGroupRegistryCanonicalOnce_();
 
       const configured=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
       const available=configured.filter(w=>workerHealthState_(w)!=='OFFLINE');
@@ -9952,6 +10148,7 @@ const RemoteApp = (() => {
     runContextIntegrityHarness: runContextIntegrityHarness_,
     runProviderResilienceHarness: runProviderResilienceHarness_,
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
+    runGroupRegistryCleanupHarness: runGroupRegistryCleanupHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,
     runConcurrencyLeaseHarness: runConcurrencyLeaseHarness_,
   };
