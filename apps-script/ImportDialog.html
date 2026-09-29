@@ -197,6 +197,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <div class="commandActions">
         <button id="groupOnboardBtn" class="primary" onclick="onboardGroupUrl()">＋ THÊM GROUP &amp; DISCOVERY 10 BÀI</button>
         <button class="secondary" onclick="openWorkspaceTab('groups','QUÉT NHÓM')">XEM REGISTRY ↗</button>
+        <button class="secondary" onclick="openWorkspaceTab('group_intelligence','GROUP INTELLIGENCE')">GROUP INTELLIGENCE ↗</button>
+        <button id="measureGroupActivityBtn" class="secondary" onclick="measureSelectedGroupActivity()">ĐO ACTIVITY 24H / 7D</button>
       </div>
       <div id="groupOnboardResult" class="muted" style="margin-top:8px">Tên Group chỉ ghi khi API trả title thật; nếu chưa có sẽ hiển thị CHƯA LẤY TÊN.</div>
     </div>
@@ -1803,6 +1805,29 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         'Đề xuất sampling: '+Number(r.recommendedScansPerDay||0)+'/day × '+Number(r.recommendedPostsPerScan||0)+' posts',
         'Offer inferred: NO • Posts/day inferred: NO'
       ].join('\n');
+    }
+
+    function measureSelectedGroupActivity(){
+      const btn=document.getElementById('measureGroupActivityBtn');
+      if(btn)btn.disabled=true;
+      setStatus('Đang paginate newest posts đến boundary 7 ngày hoặc safety cap...');
+      command({__command:'MEASURE_GROUP_ACTIVITY'},r=>{
+        if(btn)btn.disabled=false;
+        const p24=r.complete24h?Number(r.post24hObserved||0):'CHƯA ĐỦ COVERAGE';
+        const avg7=r.complete7d?Number(r.avgPostsDay7dObserved||0):'CHƯA ĐỦ COVERAGE';
+        setStatus(
+          '✅ GROUP ACTIVITY MEASURED'+
+          '\nPosts/24h OBSERVED: '+p24+
+          '\nAvg posts/day 7d OBSERVED: '+avg7+
+          '\nPages: '+Number(r.pages||0)+' • Posts seen: '+Number(r.postsSeen||0)+
+          (r.stoppedByCap?'\n⚠️ Safety cap reached — metric incomplete được giữ trống.':'')
+        );
+        openWorkspaceTab('group_intelligence','GROUP INTELLIGENCE');
+        pollMonitoring();
+      },e=>{
+        if(btn)btn.disabled=false;
+        setStatus('Đo Group activity lỗi: '+(e.message||e));
+      });
     }
 
     function onboardGroupUrl(){
