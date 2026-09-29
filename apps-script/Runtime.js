@@ -656,6 +656,14 @@ const RemoteApp = (() => {
       {gate:'PASS',intent:'Cần mua gấp',classification:'Rất tiềm năng',nextAction:'Mời inbox'},
       {humanApproval:true,autoComment:false}
     );
+    const ownModerate=resolveActionPolicyDecision_(
+      {gate:'PASS',intent:'Muốn mua',classification:'Rất tiềm năng',nextAction:'Mời inbox',ownPost:true},
+      {humanApproval:true,autoComment:false}
+    );
+    const externalModerate=resolveActionPolicyDecision_(
+      {gate:'PASS',intent:'Muốn mua',classification:'Rất tiềm năng',nextAction:'Mời inbox',ownPost:false},
+      {humanApproval:true,autoComment:false}
+    );
     const hf9=runGroupSummaryCardinalityHarness_();
     const tests={
       POLICY_T01_GLOBAL_DEFAULT:t01.postsPerScan===10&&t01.sources.postsPerScan==='GLOBAL',
@@ -668,7 +676,8 @@ const RemoteApp = (() => {
       POLICY_T08_SIGNAL_CONTEXT_MISSING:noContextFit==='Chưa rõ'&&noContextGate==='CONTEXT_REQUIRED',
       POLICY_T09_QUALIFICATION_REQUIRES_POLICY:passGate==='PASS'&&signalOnly!=='PASS',
       POLICY_T10_HUMAN_APPROVAL_NO_EXTERNAL_ACTION:
-        action.action==='OUTREACH_CANDIDATE'&&action.requiresHumanApproval===true&&action.externalExecutionAllowed===false&&action.autoComment===false,
+        action.action==='OUTREACH_CANDIDATE'&&action.requiresHumanApproval===true&&action.externalExecutionAllowed===false&&action.autoComment===false&&
+        ownModerate.action==='OUTREACH_CANDIDATE'&&externalModerate.action==='LEAD',
       POLICY_T11_HF9_CARDINALITY:!!hf9.ok,
       POLICY_T12_LEASE_ISOLATION:CFG.AI_LEASE_KEY!==CFG.AUTO_MONITOR_LEASE_KEY&&CFG.COMMENT_POST_LEASE_PREFIX!==CFG.GROUP_LEASE_PREFIX
     };
