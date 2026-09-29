@@ -1449,6 +1449,57 @@ const RemoteApp = (() => {
   }
 
 
+  function decideLeadGate_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext) {
+    if(buyerRole==='Không') return 'FAIL';
+    if(!String(effectiveContext||'').trim()) return 'CONTEXT_REQUIRED';
+    if(productFit==='Không') return 'FAIL';
+    if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) return 'REVIEW_REQUIRED';
+    if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) return 'PASS';
+    return 'WATCH';
+  }
+
+  function runContextIntegrityHarness_() {
+    const full=[
+      'OFFER: Test offer',
+      'BUYER: Test buyer',
+      'PROBLEM: Test problem',
+      'PRODUCT-SERVICE: Test service',
+      'VALUE: Test value',
+      'QUALIFICATION: Test qualification',
+      'CTA: Test CTA'
+    ].join('\n');
+    const noCta=[
+      'OFFER: Test offer',
+      'BUYER: Test buyer',
+      'PROBLEM: Test problem',
+      'PRODUCT-SERVICE: Test service',
+      'VALUE: Test value',
+      'QUALIFICATION: Test qualification'
+    ].join('\n');
+
+    const t01=validateOfferContext_('abc');
+    const t02=validateOfferContext_(noCta);
+    const t03=validateOfferContext_(full);
+    const fixtureKey='2444637922355640';
+    const fixtureMap={};
+    fixtureMap['KEY|'+fixtureKey]=t03.normalized;
+    const resolved=resolveAiContextForGroup_('Display name must not matter',fixtureKey,{businessContext:'GLOBAL SHOULD NOT QUALIFY'},fixtureMap);
+    const isolated=resolveAiContextForGroup_('Display name',fixtureKey,{businessContext:'GLOBAL SHOULD NOT QUALIFY'},{});
+    const t04Gate=decideLeadGate_('Có','Chưa rõ',true,true,isolated);
+
+    const tests={
+      T01_GARBAGE_CONTEXT: !t01.valid && t01.missing.length===CFG.OFFER_CONTEXT_FIELDS.length,
+      T02_MISSING_CTA: !t02.valid && t02.missing.indexOf('CTA')>=0,
+      T03_FULL_SEVEN_FIELDS: t03.valid && CFG.OFFER_CONTEXT_FIELDS.every(k=>isMeaningfulOfferContextValue_(t03.fields[k])) && resolved===t03.normalized,
+      T04_GLOBAL_CONTEXT_ISOLATION: isolated==='' && t04Gate==='CONTEXT_REQUIRED',
+      ID_NUMERIC_SAFE_INTEGER: identityKeyFromCell_(2444637922355640)==='2444637922355640',
+      ID_SCIENTIFIC_DISPLAY_REJECTED: identityKeyFromCell_('2,44464E+15')==='',
+      ID_PRODUCT_SERVICE_EXACT: offerContextCanonicalField_('PRODUCT-SERVICE')==='PRODUCT-SERVICE' && offerContextCanonicalField_('PRODUCT')==='' && offerContextCanonicalField_('SERVICE')===''
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function normalizeSalesStage_(stage) {
     const raw=String(stage||'').trim();
     const match=CFG.SALES_STAGE_OPTIONS.find(x=>x.toLowerCase()===raw.toLowerCase());
@@ -1547,6 +1598,7 @@ const RemoteApp = (() => {
     if (name === 'TEST_AI') return testAiConnection_();
     if (name === 'GET_AI_PROGRESS') return getAiProgress_();
     if (name === 'GET_CONTEXT_READINESS') return getContextReadiness_();
+    if (name === 'RUN_CONTEXT_INTEGRITY_HARNESS') return runContextIntegrityHarness_();
     if (name === 'SAVE_ACTIVE_GROUP_CONTEXT') return saveActiveGroupContext_(command);
     if (name === 'GET_SALES_RECOVERY_QUEUE') return getSalesRecoveryQueue_();
     if (name === 'GET_SALES_PIPELINE') return getSalesPipelineStats_();
@@ -2528,20 +2580,7 @@ const RemoteApp = (() => {
           actionableIntents.has(intent) &&
           !passiveActions.has(action);
 
-        let gate='WATCH';
-        if(buyerRole==='Không') {
-          gate='FAIL';
-        } else if(!effectiveContext) {
-          gate='CONTEXT_REQUIRED';
-        } else if(productFit==='Không') {
-          gate='FAIL';
-        } else if(buyerRole==='Chưa rõ' || productFit==='Chưa rõ' || !needEvidencePass) {
-          gate='REVIEW_REQUIRED';
-        } else if(buyerRole==='Có' && productFit==='Có' && needEvidencePass && actionIntentPass) {
-          gate='PASS';
-        } else {
-          gate='WATCH';
-        }
+        const gate=decideLeadGate_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext);
 
         let classification=suggestedClass;
         if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
@@ -8301,5 +8340,6 @@ const RemoteApp = (() => {
     autoMonitorTick: autoMonitorTick_,
     runCommentIntelligenceCycle: runCommentIntelligenceCycle_,
     runProductionSelfTest: runProductionSelfTest_,
+    runContextIntegrityHarness: runContextIntegrityHarness_,
   };
 })();
