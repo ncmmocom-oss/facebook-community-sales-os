@@ -188,6 +188,18 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
   </div>
 
   <div id="group-task-scan" class="groupTaskPanel active">
+    <div class="panel commandPanel" style="margin-bottom:10px">
+      <div class="panelTitle">THÊM GROUP — URL ONLY</div>
+      <div class="muted">Operator chỉ dán Facebook Group URL. Hệ thống normalize → check duplicate → tạo canonical registry → discovery scan đúng 10 bài → AI Group evaluation. Không suy Offer/Product và không dùng 10 bài để suy Posts/day.</div>
+      <div class="row" style="margin-top:10px">
+        <div style="flex:1"><label>Facebook Group URL</label><input id="groupOnboardUrl" placeholder="https://www.facebook.com/groups/..."></div>
+      </div>
+      <div class="commandActions">
+        <button id="groupOnboardBtn" class="primary" onclick="onboardGroupUrl()">＋ THÊM GROUP &amp; DISCOVERY 10 BÀI</button>
+        <button class="secondary" onclick="openWorkspaceTab('groups','QUÉT NHÓM')">XEM REGISTRY ↗</button>
+      </div>
+      <div id="groupOnboardResult" class="muted" style="margin-top:8px">Tên Group chỉ ghi khi API trả title thật; nếu chưa có sẽ hiển thị CHƯA LẤY TÊN.</div>
+    </div>
     <div class="commandIntro"><b>LỆNH QUÉT NHÓM:</b> chọn Group trong bảng rồi bấm QUÉT ĐÃ CHỌN, hoặc quét dòng hiện tại. Tab này chạy command backend; không mở Sheet thay cho lệnh.</div>
     <div id="mount-groups"></div>
   </div>
@@ -1675,14 +1687,18 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       const ctx={results:[],started:Date.now(),runId};
       let remaining=workers.length;
       const workerNames=workers.map(w=>w.slot+'('+w.jobs.length+')').join(' • ');
-      const expectedScope=plan.mode==='due'?'SCHEDULER_DUE':(retryMode?'EXCEPTION_RETRY':'CHECKBOX_SELECTION');
+      const expectedScope=plan.mode==='due'
+        ?'SCHEDULER_DUE'
+        :(plan.mode==='onboarding'?'ONBOARDING_DISCOVERY':(retryMode?'EXCEPTION_RETRY':'CHECKBOX_SELECTION'));
       if(plan.scope!==expectedScope){
         const msg='❌ SCAN_SCOPE_MISMATCH: plan '+String(plan.scope||'NONE')+' ≠ '+expectedScope+'. Đã chặn trước khi gọi Worker.';
         setStatus(msg);
         if(doneCallback) doneCallback({pauseAuto:true,message:msg});
         return;
       }
-      const label=plan.mode==='due'?'DUE QUEUE':(retryMode?'RETRY':'QUÉT ĐÃ CHỌN');
+      const label=plan.mode==='due'
+        ?'DUE QUEUE'
+        :(plan.mode==='onboarding'?'GROUP DISCOVERY':(retryMode?'RETRY':'QUÉT ĐÃ CHỌN'));
       setStatus(
         label+' bằng '+workers.length+' Worker...'+
         (runId?'\nRun: '+runId:'')+
@@ -1771,6 +1787,69 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 
       workers.forEach(w=>runWorkerQueue(w,ctx,onWorkerDone));
     }
+    function renderGroupDiscoveryResult(r){
+      const el=document.getElementById('groupOnboardResult');if(!el)return;
+      if(!r){el.textContent='Không có kết quả discovery.';return;}
+      if(r.ok===false){
+        el.textContent='Discovery chưa hoàn tất: '+String(r.reason||'UNKNOWN')+' • sample='+Number(r.sampleSize||0);
+        return;
+      }
+      el.textContent=[
+        '✅ Discovery '+Number(r.sampleSize||0)+' bài',
+        'Topic: '+String(r.topicSummary||'—'),
+        'Audience: '+String(r.audienceSummary||'—'),
+        'Pain: '+String(r.painSummary||'—'),
+        'Buyer signal: '+String(r.buyerSignalLevel||'—')+' — '+String(r.buyerSignalSummary||'—'),
+        'Đề xuất sampling: '+Number(r.recommendedScansPerDay||0)+'/day × '+Number(r.recommendedPostsPerScan||0)+' posts',
+        'Offer inferred: NO • Posts/day inferred: NO'
+      ].join('\n');
+    }
+
+    function onboardGroupUrl(){
+      const input=document.getElementById('groupOnboardUrl');
+      const btn=document.getElementById('groupOnboardBtn');
+      const groupUrl=String(input&&input.value||'').trim();
+      if(!groupUrl){setStatus('Hãy dán Facebook Group URL.');return;}
+      if(btn)btn.disabled=true;
+      setStatus('Đang kiểm tra canonical identity và tạo discovery plan...');
+      command({__command:'ONBOARD_GROUP_URL',groupUrl},r=>{
+        if(btn)btn.disabled=false;
+        if(r&&r.duplicate){
+          const x=r.existing||{};
+          setStatus('Group đã tồn tại ở registry • row '+Number(x.row||0)+' • '+String(x.name||'CHƯA LẤY TÊN')+'. Không tạo duplicate.');
+          const el=document.getElementById('groupOnboardResult');
+          if(el)el.textContent='DUPLICATE BLOCKED • canonical='+String(x.canonicalKey||'')+' • row='+Number(x.row||0);
+          pollGroupScanState();pollMonitoring();
+          return;
+        }
+        const plan=r&&r.plan;
+        if(!plan||plan.mode!=='onboarding'||plan.scope!=='ONBOARDING_DISCOVERY'){
+          setStatus('❌ ONBOARD_SCOPE_MISMATCH: backend không trả đúng discovery plan. Đã chặn scan.');
+          return;
+        }
+        const row=Number(r.row||0);
+        setStatus('Đã thêm canonical Group row '+row+'. Đang discovery scan đúng 10 bài...');
+        runWorkerPlan(plan,false,result=>{
+          if(result&&result.pauseAuto){
+            setStatus('Discovery scan lỗi; Group vẫn giữ trong registry để retry có kiểm soát.\n'+String(result.message||''));
+            return;
+          }
+          setStatus('Discovery scan xong. Đang AI Group evaluation...');
+          command({__command:'EVALUATE_GROUP_DISCOVERY',row},ev=>{
+            renderGroupDiscoveryResult(ev);
+            setStatus('✅ GROUP ONBOARDING XONG • row '+row+' • sample '+Number(ev.sampleSize||0)+' • '+String(ev.buyerSignalLevel||'')+'.');
+            if(input)input.value='';
+            pollGroupScanState();pollMonitoring();
+          },e=>{
+            setStatus('Discovery scan đã lưu nhưng AI Group evaluation chưa xong: '+(e.message||e));
+          });
+        });
+      },e=>{
+        if(btn)btn.disabled=false;
+        setStatus('Không thêm được Group: '+(e.message||e));
+      });
+    }
+
     function runCheckedGroups() {
       const target=selectedTarget();
       const btn=document.getElementById('scanSelectedBtn');
