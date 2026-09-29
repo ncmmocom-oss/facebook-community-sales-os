@@ -3371,6 +3371,7 @@ const RemoteApp = (() => {
 
       valid.forEach(x=>{
         const a=x.a;
+        const sourceId=x.sourceId;
         const idx=x.row-minRow;
         const r=values[idx];
 
