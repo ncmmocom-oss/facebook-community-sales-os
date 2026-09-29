@@ -5575,95 +5575,120 @@ const RemoteApp = (() => {
 
     const started=Date.now();
     try{
-    const clientId=String(options.clientId||'').trim() || getBridgeClientId_();
-    const currentFetched=Math.max(0,Number(job.fetched||0));
-    const expected=Math.max(0,Number(job.expected||0));
-    const page=fetchCommentsPageRaw_(clientId,{
-      url:job.url,
-      type:'Newest',
-      cursor:String(job.cursor||'')
-    });
-    const comments=page.comments||[];
-    if(comments.length) clearCommentProviderBreaker_();
+      const clientId=String(options.clientId||'').trim()||getBridgeClientId_();
+      const currentFetched=Math.max(0,Number(job.fetched||0));
+      const expected=Math.max(0,Number(job.expected||0));
+      const policy=options.commentPolicy||job.commentPolicy||resolveEffectiveCommentPolicy_(
+        policyProfileForGroup_(options.policyConfig||getAutoPolicyConfig_(),job.groupKey),
+        {ownPost:!!job.ownPost},
+        options.policyConfig||getAutoPolicyConfig_()
+      );
+      const maxPages=policyInt_(policy.maxPagesPerPost,CFG.COMMENT_MAX_PAGES_PER_POST,1,10);
+      const softMaxComments=policyInt_(policy.maxCommentsPerPost,CFG.COMMENT_MAX_RECORDS_PER_POST,10,1000);
+      let cursor=String(job.cursor||'');
+      let lastCursor=cursor;
+      let pagesRead=0;
+      let totalComments=[];
+      let lastPage=null;
 
-    if(!comments.length){
-      if(job.hotWatch && expected<=currentFetched){
+      while(pagesRead<maxPages && totalComments.length<softMaxComments){
+        const page=fetchCommentsPageRaw_(clientId,{url:job.url,type:'Newest',cursor});
+        lastPage=page;
+        const comments=page.comments||[];
+        if(!comments.length) break;
+        clearCommentProviderBreaker_();
+        totalComments=totalComments.concat(comments);
+        pagesRead++;
+        const next=String(page.cursor||'');
+        if(!next||next===cursor){
+          lastCursor='';
+          break;
+        }
+        lastCursor=next;
+        cursor=next;
+      }
+
+      if(!totalComments.length){
+        if(job.hotWatch&&expected<=currentFetched){
+          updateRawCommentState_(job,{
+            fetched:currentFetched,cursor:'',lastScan:new Date(),
+            status:'WATCH_EMPTY '+currentFetched+'/'+expected
+          });
+          return {
+            ok:true,hotWatch:true,postId:job.postId,postUrl:job.url,
+            commentsRead:0,commentImported:0,newSourceIds:[],
+            pagesRead:0,status:'WATCH_EMPTY',durationMs:Date.now()-started
+          };
+        }
+        const n=Math.max(0,Number(job.retryCount||0))+1;
+        const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
         updateRawCommentState_(job,{
-          fetched:currentFetched,
-          cursor:'',
-          lastScan:new Date(),
-          status:'WATCH_EMPTY '+currentFetched+'/'+expected
+          fetched:currentFetched,cursor:'',lastScan:new Date(),
+          status:(hard?'HARD: ':'RETRY '+n+': ')+'API_EMPTY expected '+expected+' fetched '+currentFetched
         });
         return {
-          ok:true,hotWatch:true,postId:job.postId,postUrl:job.url,
-          commentsRead:0,commentImported:0,newSourceIds:[],
-          status:'WATCH_EMPTY',durationMs:Date.now()-started
+          ok:false,hard,retry:!hard,postId:job.postId,postUrl:job.url,
+          commentsRead:0,commentImported:0,newSourceIds:[],pagesRead:0,
+          error:'Comment API page rỗng sau retry.',durationMs:Date.now()-started
         };
       }
-      const n=Math.max(0,Number(job.retryCount||0))+1;
-      const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
+
+      const fileName='api_comments_'+job.postId+'_'
+        +Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+      const imported=importJsonFiles([{
+        name:fileName,
+        text:JSON.stringify(totalComments),
+        __workerFast:true,
+        __sourcePostId:job.postId,
+        __sourcePostUrl:job.url,
+        __sourceGroupKey:job.groupKey||'',
+        __sourceGroupName:job.groupName||''
+      }]);
+
+      const newCount=Math.max(0,Number(imported.commentImported||0));
+      const observedExpected=Math.max(expected,currentFetched+newCount);
+      const fetched=Math.min(observedExpected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
+      const capped=(pagesRead>=maxPages||totalComments.length>=softMaxComments)&&!!lastCursor;
+      let status='',nextCursor='';
+
+      if(fetched>=observedExpected&&!capped){
+        status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
+      }else if(lastCursor){
+        status='BACKLOG '+fetched+'/'+observedExpected;
+        nextCursor=lastCursor;
+      }else if(fetched>=observedExpected){
+        status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
+      }else{
+        const n=Math.max(0,Number(job.retryCount||0))+1;
+        const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
+        status=(hard?'HARD: ':'RETRY '+n+': ')+'GAP '+fetched+'/'+observedExpected+' no cursor';
+      }
+
       updateRawCommentState_(job,{
-        fetched:currentFetched,
-        cursor:'',
-        lastScan:new Date(),
-        status:(hard?'HARD: ':'RETRY '+n+': ')+'API_EMPTY expected '+expected+' fetched '+currentFetched
+        fetched,cursor:nextCursor,lastScan:new Date(),status,commentsCount:observedExpected
       });
       return {
-        ok:false,hard,retry:!hard,postId:job.postId,postUrl:job.url,
-        commentsRead:0,commentImported:0,newSourceIds:[],
-        error:'Comment API page rỗng sau retry.',durationMs:Date.now()-started
+        ok:true,
+        postId:job.postId,
+        postUrl:job.url,
+        commentsRead:totalComments.length,
+        commentImported:newCount,
+        duplicates:Number(imported.duplicates||0),
+        fetched,
+        expected:observedExpected,
+        nextCursor,
+        pagesRead,
+        maxPages,
+        softMaxComments,
+        status,
+        newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
+        durationMs:Date.now()-started
       };
-    }
-
-    const fileName='api_comments_'+job.postId+'_'
-      +Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-    const imported=importJsonFiles([{
-      name:fileName,
-      text:JSON.stringify(comments),
-      __workerFast:true,
-      __sourcePostId:job.postId,
-      __sourcePostUrl:job.url,
-      __sourceGroupKey:job.groupKey||'',
-      __sourceGroupName:job.groupName||''
-    }]);
-
-    const newCount=Math.max(0,Number(imported.commentImported||0));
-    const observedExpected=Math.max(expected,currentFetched+newCount);
-    const fetched=Math.min(observedExpected||Number.MAX_SAFE_INTEGER,currentFetched+newCount);
-    const nextCursor=String(page.cursor||'');
-    let status='';
-    let cursor='';
-
-    if(fetched>=observedExpected){
-      status=(job.hotWatch?'WATCH_SYNCED ':'SYNCED ')+fetched+'/'+observedExpected;
-    } else if(nextCursor){
-      status='BACKLOG '+fetched+'/'+expected;
-      cursor=nextCursor;
-    } else {
-      const n=Math.max(0,Number(job.retryCount||0))+1;
-      const hard=n>=CFG.COMMENT_EMPTY_RETRY_MAX;
-      status=(hard?'HARD: ':'RETRY '+n+': ')+'GAP '+fetched+'/'+expected+' no cursor';
-    }
-
-    updateRawCommentState_(job,{fetched,cursor,lastScan:new Date(),status,commentsCount:observedExpected});
-    return {
-      ok:true,
-      postId:job.postId,
-      postUrl:job.url,
-      commentsRead:comments.length,
-      commentImported:newCount,
-      duplicates:Number(imported.duplicates||0),
-      fetched,
-      expected:observedExpected,
-      nextCursor:cursor,
-      status,
-      newSourceIds:(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:')),
-      durationMs:Date.now()-started
-    };
     } finally {
       releaseRuntimeLease_(commentPostLeasePropertyKey_(leaseIdentity),postLease.token);
     }
   }
+
   function runCommentIntelligenceUi_(limit) {
     const started=Date.now();
     const runId='comment-'+Utilities.getUuid().slice(0,10);
