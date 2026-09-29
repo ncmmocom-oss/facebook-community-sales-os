@@ -365,7 +365,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.6-identity-display-cleanup'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.7-display-fallback-closure'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -413,6 +413,8 @@ jobs:
           assert "setNumberFormat('@')" in runtime
           assert "name = 'Group ' + gid" not in runtime
           assert "setValue('Group ' + key)" not in runtime
+          assert "`Group ${groupKey" not in runtime
+          assert "('Group '+String(r[4]||''))" not in runtime
           assert "targetCount:10" in runtime
           assert "'ONBOARDING_DISCOVERY'" in runtime
           assert "offerInferred:false" in runtime
