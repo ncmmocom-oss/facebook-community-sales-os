@@ -1911,7 +1911,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       const p=state.activeProfile||((cfg.profiles||[])[0])||{};
       phase2SetText('policyProfileKpi',p.id||'—');
       phase2SetText('policyProfileNameKpi',p.displayName||'—');
-      phase2SetText('policyProfileState',p.enabled===false?'PAUSED':'ENABLED');
+      phase2SetText('policyProfileState',(p.enabled===false?'PAUSED':'ENABLED')+' • '+String(p.health||'UNBOUND')+(p.workerSlot?(' '+p.workerSlot):''));
       phase2SetText('policyActiveGroups',Number(state.assignedGroups||state.activeGroups||0));
       phase2SetText('policyCapacityText','Capacity '+Number(state.capacity||0)+(state.overCapacity?' • OVER CAPACITY':''));
       phase2SetText('policyWindowState',state.activeNow?'ACTIVE':'OUTSIDE');
@@ -1954,7 +1954,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
         String(x.sources&&x.sources.scansPerDay||'?')+'/'+String(x.sources&&x.sources.postsPerScan||'?')+']'
       );
       const text=[
-        'PROFILE '+String(p.id||'—')+' — '+String(p.displayName||''),
+        'PROFILE '+String(p.id||'—')+' — '+String(p.displayName||'')+' • health='+String(p.health||'UNBOUND')+(p.lastActivity?(' • last='+String(p.lastActivity)):'')+(p.errorState?(' • error='+String(p.errorState)):'') ,
         'Window: '+String(w.start||'')+'–'+String(w.end||'')+' @ '+String(w.timezone||'')+' • '+(state.activeNow?'ACTIVE':'OUTSIDE'),
         'Scan: '+Number(scan.scansPerDay||0)+'/day • '+Number(scan.postsPerScan||0)+' posts • max '+Number(scan.maxPostsPerScan||0),
         'Retry: '+Number(scan.retryAttempts||0)+' attempts • '+(scan.retryBackoffMinutes||[]).join('/')+'m',
