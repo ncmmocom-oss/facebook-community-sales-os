@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF8-group-summary-identity',
+    VERSION: '1.9.8.7-HF9-group-summary-cardinality',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -100,6 +100,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF9 Group Summary Cardinality: NHÓM được collapse theo connected canonical Group aliases thành tối đa 1 row/canonical identity; active registry row thắng metadata, inactive-only identity vẫn giữ một representative; KPI source được dedupe theo Source ID.\n' +
       'V1.9.8.7-HF8 Group Summary Identity: NHÓM/Group Summary join CƠ HỘI bằng canonical Group Key aliases thay vì display name; sold KPI chỉ dùng Sales Stage=Đã bán, không fallback Chuyển đổi legacy.\n' +
       'V1.9.8.7-HF7 Sales Transition Guard: Sales Stage là state machine thật; nguồn mới chỉ được vào Qualified khi Lead Gate=PASS; chỉ cho transition tuần tự Qualified→Outreach→Đang hội thoại→Chờ phản hồi→Follow-up→Đã bán/Lost; same-stage update idempotent và terminal stage không tự mở lại.\n' +
       'V1.9.8.7-HF6 Sheet Capacity: worker-fast append tự mở rộng grid trước write; lỗi lịch sử "rows out of bounds" được phân loại transient, clear hard quarantine và retry có kiểm soát; AUTO/self-test ghi evidence capacity repair.\n' +
@@ -3390,6 +3391,209 @@ const RemoteApp = (() => {
     return { count:passRows.length, newCount, legacyCount:0, archivedLegacy:Number(archive.archived||0), rows:passRows.length };
   }
 
+  function buildCanonicalGroupSummaryRegistry_(scanRows) {
+    const items=[];
+    const aliasOwner=new Map();
+    const parent=[];
+
+    const find=i=>{
+      let x=i;
+      while(parent[x]!==x){
+        parent[x]=parent[parent[x]];
+        x=parent[x];
+      }
+      return x;
+    };
+    const union=(a,b)=>{
+      let ra=find(a), rb=find(b);
+      if(ra===rb) return;
+      if(ra>rb){const t=ra;ra=rb;rb=t;}
+      parent[rb]=ra;
+    };
+
+    (scanRows||[]).forEach((s,idx)=>{
+      s=s||[];
+      const url=String(s[3]||'').trim();
+      if(!url) return;
+      const aliases=canonicalGroupKeyAliasesFromScanRow_(s,idx+2)
+        .map(x=>String(x||'').trim().toLowerCase())
+        .filter(Boolean);
+      if(!aliases.length) return;
+
+      const itemIndex=items.length;
+      const item={
+        row:idx+2,
+        rowData:s,
+        aliases:[...new Set(aliases)],
+        active:String(s[0]||'').trim()==='Có',
+        status:String(s[23]||'').trim(),
+        lastAt:opsDateMs_(s[9]),
+        name:String(s[2]||'').trim()
+      };
+      items.push(item);
+      parent[itemIndex]=itemIndex;
+
+      item.aliases.forEach(alias=>{
+        if(aliasOwner.has(alias)) union(itemIndex,aliasOwner.get(alias));
+        else aliasOwner.set(alias,itemIndex);
+      });
+    });
+
+    const components=new Map();
+    items.forEach((item,i)=>{
+      const root=find(i);
+      if(!components.has(root)) components.set(root,[]);
+      components.get(root).push(item);
+    });
+
+    const groups=[];
+    components.forEach(list=>{
+      list.sort((a,b)=>{
+        if(a.active!==b.active) return a.active?-1:1;
+        const doneA=a.status==='XONG'?1:0, doneB=b.status==='XONG'?1:0;
+        if(doneA!==doneB) return doneB-doneA;
+        return (b.lastAt||0)-(a.lastAt||0) || a.row-b.row;
+      });
+      const representative=list[0];
+      const aliasSet=new Set();
+      list.forEach(item=>item.aliases.forEach(alias=>aliasSet.add(alias)));
+      const primary=String(representative.aliases[0]||'').trim().toLowerCase();
+      const aliases=[primary,...[...aliasSet].filter(x=>x!==primary)].filter(Boolean);
+      groups.push({
+        canonicalKey:primary,
+        aliases,
+        row:representative.row,
+        rowData:representative.rowData,
+        active:representative.active,
+        memberRows:list.map(x=>x.row)
+      });
+    });
+
+    groups.sort((a,b)=>a.row-b.row);
+    return groups;
+  }
+
+  function buildGroupSummaryOpportunityIndex_(oppRows) {
+    const byGroupKey=new Map();
+    (oppRows||[]).forEach(r=>{
+      const key=String(r&&r[CFG.OPPORTUNITY_GROUP_KEY_COL-1]||'').trim().toLowerCase();
+      if(!key) return; // fail closed: identityMissing never joins by display name
+      if(!byGroupKey.has(key)) byGroupKey.set(key,[]);
+      byGroupKey.get(key).push(r);
+    });
+    return byGroupKey;
+  }
+
+  function collectGroupSummaryOpportunities_(byGroupKey,aliases) {
+    const out=[];
+    const seenSourceIds=new Set();
+    const seenRows=new Set();
+    (aliases||[]).forEach(alias=>{
+      const key=String(alias||'').trim().toLowerCase();
+      const rows=key && byGroupKey ? (byGroupKey.get(key)||[]) : [];
+      rows.forEach(r=>{
+        const sourceId=String(r&&r[1]||'').trim();
+        if(sourceId){
+          if(seenSourceIds.has(sourceId)) return;
+          seenSourceIds.add(sourceId);
+        }else{
+          if(seenRows.has(r)) return;
+          seenRows.add(r);
+        }
+        out.push(r);
+      });
+    });
+    return out;
+  }
+
+  function summarizeGroupOpportunities_(list) {
+    list=list||[];
+    const leads=list
+      .filter(r=>String(r[24]||'').trim()==='PASS')
+      .sort((a,b)=>Number(b[10]||0)-Number(a[10]||0));
+    return {
+      leads,
+      top:leads.slice(0,5).map(r=>`${r[5]||'(ẩn danh)'} (${Number(r[10]||0)})`).join('\n'),
+      sold:list.filter(r=>String(r[26]||'').trim()==='Đã bán').length,
+      analyzed:list.filter(r=>[r[8],r[9],r[10],r[11]].some(v=>v!==''&&v!==null&&v!==undefined)).length,
+      posts:list.filter(r=>String(r[3]||'')==='Bài viết').length,
+      comments:list.filter(r=>String(r[3]||'')==='Bình luận').length,
+      total:list.length
+    };
+  }
+
+  function runGroupSummaryCardinalityHarness_() {
+    const scanRow=(active,name,url,groupId,note,status)=>{
+      const r=Array(26).fill('');
+      r[0]=active?'Có':'Không';
+      r[2]=name;
+      r[3]=url;
+      r[4]=groupId;
+      r[15]=note||'';
+      r[23]=status||'XONG';
+      return r;
+    };
+    const oppRow=(sourceId,key,displayName)=>{
+      const r=Array(CFG.OPPORTUNITY_TOTAL_COLS).fill('');
+      r[1]=sourceId;
+      r[3]='Bài viết';
+      r[4]=displayName||'Display Name';
+      r[5]='Buyer';
+      r[10]=90;
+      r[24]='PASS';
+      r[26]='Đã bán';
+      r[CFG.OPPORTUNITY_GROUP_KEY_COL-1]=key||'';
+      return r;
+    };
+
+    const sameKey=buildCanonicalGroupSummaryRegistry_([
+      scanRow(false,'Inactive duplicate','https://www.facebook.com/groups/shared-key/','shared-key','','XONG'),
+      scanRow(true,'Active canonical','https://www.facebook.com/groups/shared-key/','shared-key','','XONG')
+    ]);
+
+    const numeric='533833410127672';
+    const slug='eagleamazonvietnam';
+    const aliasRegistry=buildCanonicalGroupSummaryRegistry_([
+      scanRow(true,'Active slug','https://www.facebook.com/groups/'+slug+'/',slug,
+        'Canonical identity: https://www.facebook.com/groups/'+numeric+'/ -> https://www.facebook.com/groups/'+slug+'/','XONG'),
+      scanRow(false,'Inactive numeric','https://www.facebook.com/groups/'+numeric+'/',numeric,'','DỪNG')
+    ]);
+    const aliasGroup=aliasRegistry[0]||{aliases:[]};
+
+    const duplicatedSourceA=oppRow('SAME-SOURCE',slug,'Same display');
+    const duplicatedSourceB=oppRow('SAME-SOURCE',numeric,'Same display');
+    const identityMissing=oppRow('IDENTITY-MISSING','', 'Active slug');
+    const oppIndex=buildGroupSummaryOpportunityIndex_([duplicatedSourceA,duplicatedSourceB,identityMissing]);
+    const collected=collectGroupSummaryOpportunities_(oppIndex,aliasGroup.aliases);
+    const metrics=summarizeGroupOpportunities_(collected);
+
+    const inactiveOnly=buildCanonicalGroupSummaryRegistry_([
+      scanRow(false,'Historical only','https://www.facebook.com/groups/historical-only/','historical-only','','DỪNG')
+    ]);
+
+    const tests={
+      GROUP_SUMMARY_ACTIVE_INACTIVE_ONE_ROW:
+        sameKey.length===1 && sameKey[0].memberRows.length===2,
+      GROUP_SUMMARY_ALIAS_COMPONENT_ONE_ROW:
+        aliasRegistry.length===1 &&
+        aliasGroup.aliases.indexOf(slug)>=0 &&
+        aliasGroup.aliases.indexOf(numeric)>=0,
+      GROUP_SUMMARY_KPI_NOT_MULTIPLIED:
+        collected.length===1 && metrics.posts===1 && metrics.leads.length===1 && metrics.sold===1,
+      GROUP_SUMMARY_ACTIVE_METADATA_WINS:
+        aliasRegistry.length===1 &&
+        aliasRegistry[0].active===true &&
+        String(aliasRegistry[0].rowData[2]||'')==='Active slug',
+      GROUP_SUMMARY_IDENTITY_MISSING_FAIL_CLOSED:
+        !oppIndex.has('') &&
+        collected.every(r=>String(r[1]||'')!=='IDENTITY-MISSING'),
+      GROUP_SUMMARY_INACTIVE_ONLY_RETAINED:
+        inactiveOnly.length===1 && inactiveOnly[0].active===false
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function refreshGroupSummary_() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const summarySheet = ss.getSheetByName(CFG.GROUP_SUMMARY_SHEET);
@@ -3411,46 +3615,27 @@ const RemoteApp = (() => {
     }
 
     const scanLast = scanSheet.getLastRow();
-    const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getDisplayValues() : [];
+    const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 26).getDisplayValues() : [];
+    const registry=buildCanonicalGroupSummaryRegistry_(scanRows);
     const oppLast = oppSheet.getLastRow();
     const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, CFG.OPPORTUNITY_TOTAL_COLS).getValues() : [];
-    const byGroupKey = new Map();
-    oppRows.forEach(r => {
-      const key = String(r[CFG.OPPORTUNITY_GROUP_KEY_COL - 1] || '').trim().toLowerCase();
-      if (!key) return; // fail closed: never infer Group from display name
-      if (!byGroupKey.has(key)) byGroupKey.set(key, []);
-      byGroupKey.get(key).push(r);
-    });
+    const byGroupKey=buildGroupSummaryOpportunityIndex_(oppRows);
 
     const output = [];
-    scanRows.forEach((s, idx) => {
+    registry.forEach(group => {
+      const s=group.rowData||[];
       const url = String(s[3] || '').trim();
-      if (!url) return;
-      const name = String(s[2] || '').trim() || ('Group ' + String(s[4] || extractGroupKey_(url)));
-      const aliases = canonicalGroupKeyAliasesFromScanRow_(s, idx + 2);
-      const primaryKey = String(aliases[0] || '').trim().toLowerCase();
+      const name = String(s[2] || '').trim() || ('Group ' + String(group.canonicalKey||extractGroupKey_(url)));
+      const prevByKey=(group.aliases||[]).map(alias=>old['KEY|'+alias]).find(Boolean);
       const prev =
-        (primaryKey ? old['KEY|' + primaryKey] : null) ||
+        prevByKey ||
         old['URL|' + normalizeUrl_(url)] ||
         old['NAME|' + name] ||
         [];
-      const list = [];
-      aliases.forEach(alias => {
-        const key = String(alias || '').trim().toLowerCase();
-        const rows = key ? (byGroupKey.get(key) || []) : [];
-        rows.forEach(r => list.push(r));
-      });
-
-      const leads = list
-        .filter(r => String(r[24] || '').trim()==='PASS')
-        .sort((a,b) => Number(b[10] || 0) - Number(a[10] || 0));
-      const top = leads.slice(0, 5).map(r => `${r[5] || '(ẩn danh)'} (${Number(r[10] || 0)})`).join('\n');
-      const sold = list.filter(r => String(r[26] || '').trim() === 'Đã bán').length;
-      const analyzed = list.filter(r => [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined)).length;
-      const pending = Math.max(0, list.length - analyzed);
-      const posts = list.filter(r => String(r[3]||'') === 'Bài viết').length;
-      const comments = list.filter(r => String(r[3]||'') === 'Bình luận').length;
-      const stat = `${posts} bài | ${comments} comment | ${analyzed} đã phân tích | ${pending} chờ AI`;
+      const list=collectGroupSummaryOpportunities_(byGroupKey,group.aliases);
+      const metrics=summarizeGroupOpportunities_(list);
+      const pending=Math.max(0,metrics.total-metrics.analyzed);
+      const stat=`${metrics.posts} bài | ${metrics.comments} comment | ${metrics.analyzed} đã phân tích | ${pending} chờ AI`;
       const oldNote = String(prev[11] || '').split('\n').filter(x => !/\d+ bài \| (?:\d+ comment \| )?\d+ đã phân tích \| \d+ chờ AI/.test(x)).join('\n').trim();
 
       output.push([
@@ -3461,9 +3646,9 @@ const RemoteApp = (() => {
         s[5] || prev[4] || '',
         prev[5] || '',
         prev[6] || '',
-        leads.length,
-        top,
-        sold,
+        metrics.leads.length,
+        metrics.top,
+        metrics.sold,
         s[6] || prev[10] || 'Thử nghiệm',
         oldNote ? oldNote + '\n' + stat : stat
       ]);
@@ -8565,5 +8750,6 @@ const RemoteApp = (() => {
     runProductionSelfTest: runProductionSelfTest_,
     runContextIntegrityHarness: runContextIntegrityHarness_,
     runProviderResilienceHarness: runProviderResilienceHarness_,
+    runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
   };
 })();
