@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.3-group-intelligence',
+    VERSION: '1.9.8.7-HF10.4-api-native-cleanup',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -740,7 +740,7 @@ const RemoteApp = (() => {
   function onOpen() {
     SpreadsheetApp.getUi()
       .createMenu('SOCIAL AIO')
-      .addItem('Import JSON', 'showImportDialog')
+      .addItem('Legacy Debug / Import JSON', 'showImportDialog')
       .addItem('CẬP NHẬT DỮ LIỆU', 'refreshCurrentData')
       .addSeparator()
       .addItem('Đồng bộ KH tiềm năng', 'syncPotentialCustomers')
@@ -756,6 +756,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.4 API-Native Cleanup: production FBAIO paths truyền parsed records trực tiếp vào normalization/write core; JSON file parsing giữ riêng cho Legacy Debug/Recovery; NHẬP JSON vẫn giữ làm RAW POSTS storage để tránh destructive migration.\n' +
       'V1.9.8.7-HF10.3 Group Intelligence: NHÓM trở thành canonical Group Intelligence; tách FB REPORTED/OBSERVED, archive schema cũ, activity-window measurement chỉ ghi Posts/24h và Avg 7d khi đã paginate qua boundary tương ứng.\n' +
       'V1.9.8.7-HF10.2 Group Onboarding: operator chỉ dán Facebook Group URL; canonical duplicate check, registry append với CHƯA LẤY TÊN, discovery scan 10 bài và AI Group evaluation không infer Offer/Posts-day.\n' +
       'V1.9.8.7-HF10 Auto Policy & Profile Settings: structured IX Profile policy; Scan/Comment/AI/Action dùng backend resolver chung; active window + trigger/budget/retry configurable; Auto Comment khóa OFF; AUTO log ghi effective policy.\n' +
@@ -817,6 +818,17 @@ const RemoteApp = (() => {
     return showControlCenter('scan');
   }
 
+  function ingestApiRecords_(records,meta) {
+    meta=meta||{};
+    const list=Array.isArray(records)?records:[];
+    if(!list.length) return {version:CFG.VERSION,postImported:0,commentImported:0,duplicates:0,newSourceIds:[]};
+    return importJsonFiles([Object.assign({
+      name:String(meta.name||'api_payload'),
+      parsed:list,
+      __apiNative:true
+    },meta)]);
+  }
+
   function importJsonFiles(files) {
     if (Array.isArray(files) && files.length === 1 && files[0] && files[0].__command) {
       return handleUiCommand_(files[0]);
@@ -868,7 +880,9 @@ const RemoteApp = (() => {
           file && file.__sourceGroupKey || extractGroupKey_(sourceGroupUrl) || ''
         ).trim().toLowerCase();
 
-        const parsed = JSON.parse(file.text || '[]');
+        const parsed = file && Object.prototype.hasOwnProperty.call(file,'parsed')
+          ? file.parsed
+          : JSON.parse(file.text || '[]');
         const kind = detectJsonKind_(file.name || '', parsed);
 
         if (kind === 'comments') {
@@ -5991,14 +6005,13 @@ const RemoteApp = (() => {
     if(!lock.tryLock(120000)) throw new Error('Sheet đang bận ghi dữ liệu từ Worker khác. Hãy RETRY.');
     let imported;
     try{
-      imported=importJsonFiles([{
+      imported=ingestApiRecords_(selectedPosts,{
         name:fileName,
-        text:JSON.stringify(selectedPosts),
         __workerFast:!!workerFast,
         __sourceGroupRow:Number(sourceRow||0),
         __sourceGroupUrl:groupUrl,
         __sourceGroupKey:String(groupKey||extractGroupKey_(groupUrl)||'').trim().toLowerCase()
-      }]);
+      });
     }finally{
       lock.releaseLock();
     }
@@ -6465,15 +6478,14 @@ const RemoteApp = (() => {
 
       const fileName='api_comments_'+job.postId+'_'
         +Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-      const imported=importJsonFiles([{
+      const imported=ingestApiRecords_(totalComments,{
         name:fileName,
-        text:JSON.stringify(totalComments),
         __workerFast:true,
         __sourcePostId:job.postId,
         __sourcePostUrl:job.url,
         __sourceGroupKey:job.groupKey||'',
         __sourceGroupName:job.groupName||''
-      }]);
+      });
 
       const newCount=Math.max(0,Number(imported.commentImported||0));
       const observedExpected=Math.max(expected,currentFetched+newCount);
@@ -7686,10 +7698,9 @@ const RemoteApp = (() => {
       return {ok:true,version:CFG.VERSION,postUrl,commentsRead:0,nextCursor:page.cursor||'',imported:null,durationMs:Date.now()-started};
     }
     const fileName='api_comments_'+postId+'_'+Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
-    const imported=importJsonFiles([{
-      name:fileName,text:JSON.stringify(comments),
-      __sourcePostId:postId,__sourcePostUrl:postUrl
-    }]);
+    const imported=ingestApiRecords_(comments,{
+      name:fileName,__sourcePostId:postId,__sourcePostUrl:postUrl
+    });
     return {
       ok:true,version:CFG.VERSION,postUrl,
       commentsRead:comments.length,nextCursor:page.cursor||'',
@@ -8952,7 +8963,7 @@ const RemoteApp = (() => {
     const fileName = 'api_posts_' + (extractGroupKey_(groupUrl) || 'group') + '_' +
       Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') + '.json';
 
-    const imported = importJsonFiles([{ name:fileName, text:JSON.stringify(posts) }]);
+    const imported = ingestApiRecords_(posts,{ name:fileName });
     const cursor = findBridgeCursor_(apiResult);
 
     SpreadsheetApp.getUi().alert(
@@ -8963,7 +8974,7 @@ const RemoteApp = (() => {
       'Trùng: ' + (imported.duplicates || 0) + '\n' +
       'Cursor tiếp: ' + (cursor ? 'CÓ' : 'KHÔNG') + '\n' +
       'Thời gian: ' + (Date.now() - started) + ' ms\n\n' +
-      'Dữ liệu đã đẩy thẳng vào NHẬP JSON / CƠ HỘI, không tạo file thủ công.'
+      'Dữ liệu API đã normalize trực tiếp vào RAW POSTS (sheet NHẬP JSON legacy) / CƠ HỘI; không cần Export/Import JSON.'
     );
 
     return {
@@ -8997,7 +9008,7 @@ const RemoteApp = (() => {
     const postId = normalizePostId_('', postUrl) || 'post';
     const fileName = 'api_comments_' + postId + '_' +
       Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyyMMdd_HHmmss') + '.json';
-    const imported = importJsonFiles([{ name:fileName, text:JSON.stringify(comments) }]);
+    const imported = ingestApiRecords_(comments,{ name:fileName });
     const cursor = findBridgeCursor_(apiResult);
 
     SpreadsheetApp.getUi().alert(
@@ -10392,7 +10403,21 @@ const RemoteApp = (() => {
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
     runGroupRegistryCleanupHarness: runGroupRegistryCleanupHarness_,
     runGroupOnboardingHarness: runGroupOnboardingHarness_,
+  function runApiNativeCleanupHarness_() {
+    const body=ingestApiRecords_.toString();
+    const importer=importJsonFiles.toString();
+    const tests={
+      API_NATIVE_WRAPPER_EXISTS:body.indexOf('parsed:list')>=0,
+      API_NATIVE_NO_SERIALIZE:body.indexOf('JSON.stringify')<0,
+      LEGACY_JSON_PARSE_RETAINED:importer.indexOf("JSON.parse(file.text || '[]')")>=0,
+      PARSED_PAYLOAD_SUPPORTED:importer.indexOf("hasOwnProperty.call(file,'parsed')")>=0
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
     runGroupIntelligenceHarness: runGroupIntelligenceHarness_,
+    runApiNativeCleanupHarness: runApiNativeCleanupHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,
     runConcurrencyLeaseHarness: runConcurrencyLeaseHarness_,
   };
