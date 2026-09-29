@@ -58,7 +58,8 @@ jobs:
             'SALES_NONPASS_NEW_BLOCKED',
             'SALES_PASS_NEW_ALLOWED',
             'SALES_EXISTING_CAN_CLOSE',
-            'SALES_TERMINAL_CLEARS_FOLLOWUP'
+            'SALES_TERMINAL_CLEARS_FOLLOWUP',
+            'SHEET_CAPACITY_ERROR_TRANSIENT'
           ];
           for(const k of required){
             if(r.tests[k]!==true) throw new Error('acceptance failed: '+k);
@@ -246,7 +247,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF5-provider-resilience'" in runtime
+          assert "VERSION: '1.9.8.7-HF6-sheet-capacity'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -416,6 +417,20 @@ jobs:
           assert "source:'COMMENT_UI'" in runtime
           assert "logAutoMonitorRun_(" in runtime
 
+          assert "function ensureSheetRowCapacity_(" in runtime
+          write_fast_start = runtime.index('function writeRowsForImport_(')
+          write_fast_end = runtime.index('function logImportRun_', write_fast_start)
+          write_fast_block = runtime[write_fast_start:write_fast_end]
+          assert "ensureSheetRowCapacity_(sheet,row+rows.length-1)" in write_fast_block
+          assert write_fast_block.index("ensureSheetRowCapacity_") < write_fast_block.index("sheet.getRange(row,1,rows.length,totalCols)")
+          classify_start = runtime.index('function classifyAutoSheetException_(')
+          classify_end = runtime.index('function getAutoRetryJobs_', classify_start)
+          classify_block = runtime[classify_start:classify_end]
+          assert "rows are out of bounds|ROW_CAPACITY" in classify_block
+          assert "function repairRowCapacityQuarantine_(" in runtime
+          assert "rowCapacityRepairs=repairRowCapacityQuarantine_" in runtime
+          assert "ROW_CAPACITY_RETRY" in runtime
+          assert "capacity='+Number(summary.repairs.rowCapacityRepairs||0)" in runtime
           assert "SHEET_ROW_HEIGHT_PX: 21" in runtime
           assert not re.search(r"setRowHeights\([^\n;]*,\s*42\s*\)", runtime), "Runtime must not hard-code 42px row heights"
           assert "setRowHeights(startRow, rows.length, CFG.SHEET_ROW_HEIGHT_PX)" in runtime
