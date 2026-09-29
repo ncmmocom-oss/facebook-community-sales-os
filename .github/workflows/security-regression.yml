@@ -34,6 +34,33 @@ jobs:
           node --check worker-keeper/content.js
           node --check worker-keeper/popup.js
 
+      - name: Execute Context/Identity acceptance harness
+        run: |
+          node - <<'NODE'
+          const fs=require('fs');
+          const vm=require('vm');
+          let src=fs.readFileSync('apps-script/Runtime.js','utf8');
+          src += '\n;globalThis.__remoteApp = RemoteApp;';
+          const sandbox={console};
+          vm.createContext(sandbox);
+          vm.runInContext(src,sandbox,{timeout:5000});
+          const r=sandbox.__remoteApp.runContextIntegrityHarness();
+          console.log(JSON.stringify(r,null,2));
+          if(!r || r.ok!==true) process.exit(1);
+          const required=[
+            'T01_GARBAGE_CONTEXT',
+            'T02_MISSING_CTA',
+            'T03_FULL_SEVEN_FIELDS',
+            'T04_GLOBAL_CONTEXT_ISOLATION',
+            'ID_NUMERIC_SAFE_INTEGER',
+            'ID_SCIENTIFIC_DISPLAY_REJECTED',
+            'ID_PRODUCT_SERVICE_EXACT'
+          ];
+          for(const k of required){
+            if(r.tests[k]!==true) throw new Error('acceptance failed: '+k);
+          }
+          NODE
+
       - name: Assert manual and Due scopes cannot cross
         run: |
           python - <<'PY'
@@ -205,7 +232,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF1-context-integrity'" in runtime
+          assert "VERSION: '1.9.8.7-HF2-group-identity-text'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -218,6 +245,11 @@ jobs:
           assert "function loadValidatedGroupContexts_(" in runtime
           assert "function buildSourceGroupKeyMap_(" in runtime
           assert "function backfillOpportunityGroupKeys_(" in runtime
+          assert "function identityKeyFromCell_(" in runtime
+          assert "function normalizeIdentityColumnToText_(" in runtime
+          assert "function normalizeGroupRegistryIdentityText_(" in runtime
+          assert "function runContextIntegrityHarness_(" in runtime
+          assert "function decideLeadGate_(" in runtime
           assert "'Sales Stage','Last Contact','Next Follow-up','Owner','Outcome / Value','Group Key'" in runtime
 
           readiness_start = runtime.index('function getContextReadiness_(')
@@ -231,12 +263,18 @@ jobs:
           save_ctx_block = runtime[save_ctx_start:save_ctx_end]
           assert "validateOfferContext_(command.context)" in save_ctx_block
           assert "validation.missing.join" in save_ctx_block
+          assert "PRODUCT:'PRODUCT-SERVICE'" not in runtime
+          assert "SERVICE:'PRODUCT-SERVICE'" not in runtime
 
           recovery_start = runtime.index('function getSalesRecoveryQueue_(')
           recovery_end = runtime.index('function normalizeSalesStage_', recovery_start)
           recovery_block = runtime[recovery_start:recovery_end]
           assert "OPPORTUNITY_GROUP_KEY_COL" in recovery_block
           assert "contextKeys.has(groupKey)" in recovery_block
+          assert "getDisplayValues()" not in runtime[runtime.index('function buildSourceGroupKeyMap_('):runtime.index('function backfillOpportunityGroupKeys_(')]
+          assert "keyRange.setNumberFormat('@')" in runtime[runtime.index('function backfillOpportunityGroupKeys_('):runtime.index('function getSalesRecoveryQueue_(')]
+          assert "writeRowsForImport_(rawSheet, 5, rawRows, 16, [4,5]" in runtime
+          assert "writeRowsForImport_(commentSheet, 2, commentRows, 27, [4,5,7]" in runtime
           assert "contextNames" not in recovery_block
           assert "String(r[4]||'').trim()" not in recovery_block, "Recovery must not identify context by Group display name"
 
