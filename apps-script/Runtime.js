@@ -5044,7 +5044,7 @@ const RemoteApp = (() => {
 
   function groupDiscoverySystemPrompt_() {
     return [
-      'Bạn đánh giá một Facebook Group từ đúng 10 bài discovery gần nhất.',
+      'Bạn đánh giá một Facebook Group từ sample discovery tối đa 10 bài gần nhất được cung cấp.',
       'Chỉ mô tả topic, audience, pain và buyer signals nhìn thấy trong sample.',
       'TUYỆT ĐỐI KHÔNG suy ra Offer/Product/Service của Owner từ tên Group hoặc nội dung.',
       'TUYỆT ĐỐI KHÔNG suy ra Posts/day hay tần suất đăng từ sample 10 bài.',
@@ -5158,8 +5158,15 @@ const RemoteApp = (() => {
 
   function prepareOnboardingWorkerBatch_(command) {
     command=command||{};
+    const existingInput=normalizeFacebookGroupInput_(command.groupUrl);
+    const existing=findExistingCanonicalGroup_(existingInput.groupKey);
+    if(existing) return {ok:true,duplicate:true,existing,input:existingInput,plan:null};
+    const available=getWorkerPoolRaw_()
+      .filter(w=>w.enabled&&w.clientId&&workerSupportsRole_(w,'GROUP')&&workerHealthState_(w)!=='OFFLINE');
+    if(!available.length){
+      throw new Error('ONBOARDING_NO_WORKER: chưa có Worker GROUP/BOTH khả dụng; chưa ghi Group mới vào registry.');
+    }
     const added=appendOnboardedGroup_(command.groupUrl);
-    if(added.duplicate) return Object.assign({},added,{plan:null});
     const job={
       row:added.row,name:added.name,profile:'AUTO',url:added.url,groupKey:added.groupKey,
       targetCount:10,status:'CHỜ',lifecycle:'Thử nghiệm',priorityRank:0
