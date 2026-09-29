@@ -324,7 +324,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10-auto-policy-profile-settings'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.1-comment-acquisition'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -498,17 +498,16 @@ jobs:
           finalize_block = runtime[finalize_start:finalize_end]
           assert "sortOpportunityNewestFirst_();" not in finalize_block, "hot finalize path must not reorder CƠ HỘI while AI may run"
           assert "COMMENT_PROVIDER_BREAKER_KEY" in runtime
-          assert "COMMENT_P0_TRACE_KEY" in runtime
-          assert "COMMENT_P0_TRACE_POST_ID: '1451746643056271'" in runtime
-          assert "function runP0CommentTraceOnce_(" in runtime
-          assert "apiname:'get_list_fb_comment'" in runtime
-          assert "COMMENT_URL_NEWEST" in runtime
-          assert "COMMENT_URL_DEFAULT" in runtime
-          assert "COMMENT_URLFIELD_ID_NEWEST" in runtime
-          assert "COMMENT_IDFIELD_NEWEST" in runtime
-          assert "status:'RUNNING'" in runtime
-          assert "TRACE_ALREADY_RECORDED" in runtime
-          assert "P0_COMMENT_IMPORT_PASS" in runtime
+          single_comment_start = runtime.index('function runSinglePostCommentIntelligence_(')
+          single_comment_end = runtime.index('function runCommentIntelligenceUi_', single_comment_start)
+          single_comment_block = runtime[single_comment_start:single_comment_end]
+          assert "fetchCommentsPageRaw_(clientId,{url:job.url,cursor})" in single_comment_block
+          assert "type:'Newest'" not in single_comment_block
+          poc_comment_start = runtime.index('function apiBridgeFetchCommentsSelectedPost(')
+          poc_comment_end = runtime.index('function apiBridgeStatus()', poc_comment_start)
+          poc_comment_block = runtime[poc_comment_start:poc_comment_end]
+          assert "get_list_fb_comment" in poc_comment_block
+          assert "type: 'Newest'" not in poc_comment_block
           assert "COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000" in runtime
           assert "COMMENT_RETRY_DELAYS_MS" in runtime
           assert "function isCommentProviderTransientError_(" in runtime
