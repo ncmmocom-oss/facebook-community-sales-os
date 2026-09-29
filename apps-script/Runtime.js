@@ -1498,6 +1498,16 @@ const RemoteApp = (() => {
     const t01=validateOfferContext_('abc');
     const t02=validateOfferContext_(noCta);
     const t03=validateOfferContext_(full);
+    const saveRejects=context=>{
+      try{
+        saveActiveGroupContext_({context});
+        return {rejected:false,message:''};
+      }catch(err){
+        return {rejected:true,message:String(err&&err.message||err||'')};
+      }
+    };
+    const saveT01=saveRejects('abc');
+    const saveT02=saveRejects(noCta);
     const fixtureKey='2444637922355640';
     const fixtureMap={};
     fixtureMap['KEY|'+fixtureKey]=t03.normalized;
@@ -1506,8 +1516,8 @@ const RemoteApp = (() => {
     const t04Gate=decideLeadGate_('Có','Chưa rõ',true,true,isolated);
 
     const tests={
-      T01_GARBAGE_CONTEXT: !t01.valid && t01.missing.length===CFG.OFFER_CONTEXT_FIELDS.length,
-      T02_MISSING_CTA: !t02.valid && t02.missing.indexOf('CTA')>=0,
+      T01_GARBAGE_CONTEXT: !t01.valid && t01.missing.length===CFG.OFFER_CONTEXT_FIELDS.length && saveT01.rejected && /Offer Context chưa hợp lệ/.test(saveT01.message),
+      T02_MISSING_CTA: !t02.valid && t02.missing.indexOf('CTA')>=0 && saveT02.rejected && /CTA/.test(saveT02.message),
       T03_FULL_SEVEN_FIELDS: t03.valid && CFG.OFFER_CONTEXT_FIELDS.every(k=>isMeaningfulOfferContextValue_(t03.fields[k])) && resolved===t03.normalized,
       T04_GLOBAL_CONTEXT_ISOLATION: isolated==='' && t04Gate==='CONTEXT_REQUIRED',
       ID_NUMERIC_SAFE_INTEGER: identityKeyFromCell_(2444637922355640)==='2444637922355640',
