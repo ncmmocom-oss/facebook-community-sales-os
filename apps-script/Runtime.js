@@ -7043,7 +7043,7 @@ const RemoteApp = (() => {
       return {
         ok:false,row,name,groupKey,groupUrl,targetCount:target,status:'LỖI',
         workerSlot:healthWorkerSlot||'',workerHealth:health&&health.health?health.health:'',
-        errorClass,error:msg,durationMs:Date.now()-started
+        errorClass,error:msg,durationMs:failDurationMs
       };
     } finally {
       releaseGroupLease_(groupKey||extractGroupKey_(groupUrl),lease.token);
@@ -7710,7 +7710,15 @@ const RemoteApp = (() => {
       setGroupRowStatus_(sheet,row,status,progress,note);
       if(status==='XONG') sheet.getRange(row,23).setValue(false);
       clearGroupStop_(groupKey);
-      const health=recordWorkerJobHealth_(worker.slot,true,Date.now()-started,'');
+      const durationMs=Date.now()-started;
+      const health=recordWorkerJobHealth_(worker.slot,true,durationMs,'');
+      recordGroupEfficiency_(groupKey,{
+        success:status==='XONG',
+        scannedPosts:Number(result.postsRead||0),
+        newPosts:Number(imported.postImported||0),
+        duplicates:Number(imported.duplicates||0),
+        durationMs
+      });
       SpreadsheetApp.flush();
 
       return Object.assign({},result,{
@@ -7718,7 +7726,7 @@ const RemoteApp = (() => {
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:'ONLINE',
         runId,stopped,stopScope:result.stopScope||'',incomplete:status==='THIẾU',progress,note,
-        durationMs:Date.now()-started,
+        durationMs,
         errorClass:result.transientError?'TRANSIENT':(result.timeBudgetExceeded?'TIME_BUDGET':'')
       });
     }catch(err){
@@ -7729,7 +7737,9 @@ const RemoteApp = (() => {
         title:'Worker Group scan failed',code:errorClass||'UNKNOWN',attemptedUrl:groupUrl,
         error:msg,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||'',durationMs:Date.now()-started
       });
-      const health=recordWorkerJobHealth_(worker.slot,false,Date.now()-started,msg);
+      const failDurationMs=Date.now()-started;
+      const health=recordWorkerJobHealth_(worker.slot,false,failDurationMs,msg);
+      recordGroupEfficiency_(groupKey,{success:false,scannedPosts:0,newPosts:0,duplicates:0,durationMs:failDurationMs});
       setGroupRowStatus_(sheet,row,'LỖI',worker.slot+' • 0/'+target+' bài',msg);
       SpreadsheetApp.flush();
       return {
