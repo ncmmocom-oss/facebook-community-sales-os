@@ -112,6 +112,12 @@ jobs:
           const gc=sandbox.__remoteApp.runGroupRegistryCleanupHarness();
           console.log(JSON.stringify(gc,null,2));
           if(!gc || gc.ok!==true) process.exit(1);
+          const gd=sandbox.__remoteApp.runGroupDisplayInvariantHarness();
+          console.log(JSON.stringify(gd,null,2));
+          if(!gd || gd.ok!==true) process.exit(1);
+          for(const k of ['DISPLAY_EMPTY_PLACEHOLDER','DISPLAY_NUMERIC_PLACEHOLDER','DISPLAY_SLUG_PLACEHOLDER','DISPLAY_REAL_TITLE_PRESERVED','ALIAS_SCIENTIFIC_REJECTED_BY_ID_RULE']){
+            if(gd.tests[k]!==true) throw new Error('group display acceptance failed: '+k);
+          }
           const groupCleanupRequired=[
             'REGISTRY_ONE_CANONICAL_ROW',
             'REGISTRY_DUPLICATE_DELETE_ONLY',
@@ -359,7 +365,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.5-verified-identity-retry'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.6-identity-display-cleanup'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -402,6 +408,11 @@ jobs:
           assert "function prepareOnboardingWorkerBatch_(" in runtime
           assert "function evaluateGroupDiscovery_(" in runtime
           assert "groupPlaceholderName_()==='CHƯA LẤY TÊN'" in runtime
+          assert "function normalizeGroupDisplayName_(" in runtime
+          assert "function rebuildGroupAliasRegistryFromEvidence_(" in runtime
+          assert "setNumberFormat('@')" in runtime
+          assert "name = 'Group ' + gid" not in runtime
+          assert "setValue('Group ' + key)" not in runtime
           assert "targetCount:10" in runtime
           assert "'ONBOARDING_DISCOVERY'" in runtime
           assert "offerInferred:false" in runtime
