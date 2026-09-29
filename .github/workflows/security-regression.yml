@@ -109,6 +109,19 @@ jobs:
           for(const k of groupSummaryRequired){
             if(g.tests[k]!==true) throw new Error('group summary acceptance failed: '+k);
           }
+          const gc=sandbox.__remoteApp.runGroupRegistryCleanupHarness();
+          console.log(JSON.stringify(gc,null,2));
+          if(!gc || gc.ok!==true) process.exit(1);
+          const groupCleanupRequired=[
+            'REGISTRY_ONE_CANONICAL_ROW',
+            'REGISTRY_DUPLICATE_DELETE_ONLY',
+            'REGISTRY_ACTIVE_REPRESENTATIVE',
+            'REGISTRY_NUMERIC_ALIAS_PRESERVED',
+            'REGISTRY_SLUG_ALIAS_PRESERVED'
+          ];
+          for(const k of groupCleanupRequired){
+            if(gc.tests[k]!==true) throw new Error('group registry cleanup acceptance failed: '+k);
+          }
           const policy=sandbox.__remoteApp.runAutoPolicyHarness();
           console.log(JSON.stringify(policy,null,2));
           if(!policy || policy.ok!==true) process.exit(1);
@@ -353,6 +366,11 @@ jobs:
           assert "function collectGroupSummaryOpportunities_(" in registry_block
           assert "seenSourceIds" in registry_block
           assert "function runGroupSummaryCardinalityHarness_(" in registry_block
+          assert "function buildGroupRegistryCleanupPlan_(" in registry_block
+          assert "GROUP_ALIAS_REGISTRY_SHEET" in runtime
+          assert "function cleanGroupRegistryCanonicalOnce_(" in runtime
+          assert "PHYSICAL_DUPLICATE_MERGE" in runtime
+          assert "sh.deleteRow(row)" in runtime
           assert "buildCanonicalGroupSummaryRegistry_(scanRows)" in summary_block
           assert "collectGroupSummaryOpportunities_(byGroupKey,group.aliases)" in summary_block
           assert "String(r[26]||'').trim()==='Đã bán'" in registry_block
