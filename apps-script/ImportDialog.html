@@ -234,7 +234,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
   <div id="group-task-data" class="groupTaskPanel">
     <div class="panel commandPanel">
       <div class="panelTitle">CẬP NHẬT & KIỂM TRA DỮ LIỆU</div>
-      <div class="muted">Hai lệnh này thao tác trực tiếp với dữ liệu hệ thống. Import JSON fallback vẫn nằm ở menu Dữ liệu.</div>
+      <div class="muted">Hai lệnh này thao tác trực tiếp với dữ liệu hệ thống. Production lấy dữ liệu qua FBAIO API; JSON chỉ giữ cho Legacy Debug/Recovery.</div>
       <div class="commandActions">
         <button class="primary" onclick="refreshData()">↻ CẬP NHẬT DỮ LIỆU</button>
         <button class="dark" onclick="auditConsistency()">✓ KIỂM TRA ĐỒNG NHẤT</button>
@@ -300,7 +300,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
   <div id="mount-ai"></div>
 </section>
 <section id="view-workers" class="view"><div class="viewHead"><div><div class="sectionLabel">INFRASTRUCTURE</div><h2>Worker Pool & API Diagnostic</h2><p>Worker Keeper giữ browser online; Control Center giữ registry, health và phân job.</p></div></div><div id="mount-workers"></div></section>
-<section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>Import / Sync / Consistency</h2><p>JSON là fallback; production ưu tiên API scan → import nội bộ → sync.</p></div></div><div id="mount-data"></div></section>
+<section id="view-data" class="view"><div class="viewHead"><div><div class="sectionLabel">DATA OPERATIONS</div><h2>API Data / Sync / Consistency</h2><p>Production primary path: FBAIO API → normalize → RAW POSTS → CƠ HỘI. Import JSON chỉ là Legacy Debug/Recovery.</p></div></div><div id="mount-data"></div></section>
 <section id="view-policy" class="view">
   <div class="viewHead"><div><div class="sectionLabel">POLICY-DRIVEN ORCHESTRATION</div><h2>AUTO POLICY</h2><p>1 IX Profile = 1 Community Sales Rep. Runtime và UI dùng cùng backend resolver; Group override → Profile default → Global default.</p></div></div>
 
@@ -474,14 +474,14 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     <summary>⚙️ CÀI ĐẶT / CÔNG CỤ NÂNG CAO</summary>
     <div>
   <div class="box">
-    <h3>Import JSON thủ công (fallback)</h3>
-    <p>Chọn file <b>posts*.json</b>, <b>comments*.json</b> hoặc posts JSON có comment lồng bên trong. Hệ thống tự đếm bản ghi quét, lọc trùng, lấy Media CDN và đưa dữ liệu mới lên đầu bảng.</p>
+    <h3>Legacy Debug / Recovery — Import JSON thủ công</h3>
+    <p>Chỉ dùng khi debug/recovery dữ liệu cũ. Production không yêu cầu Export JSON hay Import JSON. File legacy vẫn đi qua cùng normalization/dedupe để phục hồi an toàn.</p>
     <input id="files" type="file" accept=".json,application/json" multiple onchange="filesChanged()">
     <br>
-    <button id="run" onclick="runImport()">IMPORT JSON</button>
+    <button id="run" onclick="runImport()">LEGACY IMPORT JSON</button>
     <button id="refresh" class="secondary" onclick="refreshData()">ĐỒNG BỘ SHEET (không import file)</button>
     <button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button>
-    <div class="muted">Nếu đã chọn file JSON, phải bấm <b>IMPORT JSON</b>. Nút Đồng bộ Sheet không đọc file đã chọn.</div>
+    <div class="muted">Legacy only: nếu đã chọn file JSON, bấm <b>LEGACY IMPORT JSON</b>. Nút Đồng bộ Sheet không đọc file đã chọn.</div>
   </div>
 
   <div class="box" id="aiSettingsBox">
@@ -631,7 +631,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       const input = document.getElementById('files');
       const n = input && input.files ? input.files.length : 0;
       const btn = document.getElementById('run');
-      if (btn) btn.textContent = n ? ('IMPORT ' + n + ' FILE') : 'IMPORT JSON';
+      if (btn) btn.textContent = n ? ('LEGACY IMPORT ' + n + ' FILE') : 'LEGACY IMPORT JSON';
       if (n) setStatus('Đã chọn ' + n + ' file. Bấm IMPORT ' + n + ' FILE để nạp dữ liệu.');
     }
 
@@ -798,7 +798,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     function refreshData() {
       const input = document.getElementById('files');
       if (input && input.files && input.files.length) {
-        setStatus('⚠️ Bạn đang chọn ' + input.files.length + ' file JSON. Nút ĐỒNG BỘ SHEET không import file. Hãy bấm IMPORT JSON.');
+        setStatus('⚠️ Bạn đang chọn ' + input.files.length + ' file JSON. Nút ĐỒNG BỘ SHEET không import file. Hãy bấm LEGACY IMPORT JSON.');
         return;
       }
       const btn = document.getElementById('refresh');
