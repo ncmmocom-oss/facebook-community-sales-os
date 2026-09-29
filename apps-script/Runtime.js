@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF3-sales-state-guard',
+    VERSION: '1.9.8.7-HF4-auto-budget',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -29,7 +29,9 @@ const RemoteApp = (() => {
     WORKER_HEALTH_TTL_MS: 15 * 60 * 1000,
     PILOT_GROUP_LIMIT: 200,
     DUE_CYCLE_LIMIT: 30,
-    AUTO_AI_SOURCE_CHUNK: 150,
+    AUTO_AI_SOURCE_CHUNK: 12,
+    AUTO_MONITOR_JOB_START_RESERVE_MS: 120 * 1000,
+    AUTO_AI_START_RESERVE_MS: 160 * 1000,
     SIGNAL_FEED_DAYS: 7,
     SIGNAL_FEED_MAX_SOURCE_ROWS: 20000,
     OPS_DUE_SOON_MS: 60 * 60 * 1000,
@@ -98,6 +100,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF4 Auto Budget: AUTO chừa 120s trước khi start Group job mới; AI auto tối đa 12 source và chỉ start khi còn 160s reserve; cycle rảnh drain AI backlog; AUTO log ghi Runtime/budget/deferred evidence để tránh silent overrun.\n' +
       'V1.9.8.7-HF3 Sales State Guard: non-PASS chưa vào pipeline không thể nhận bất kỳ Sales Stage nào kể cả Lost; source đã ở pipeline vẫn được đóng Lost; terminal stage clear Next Follow-up; conversion state batch-read để bỏ per-row Sheet I/O.\n' +
       'V1.9.8.7-HF2 Group Identity Text: khóa Group ID/Group Key thành TEXT, cấm scientific display làm identity, backfill/repair AF từ Source ID evidence và canonical Group URL để tránh numeric coercion làm sai Group Key.\n' +
       'V1.9.8.7-HF1 Context Integrity: Context Ready chỉ khi đủ 7 field bắt buộc; Recovery/Gate map bằng Group Key canonical thay vì tên Group; global Business Context không được dùng thay Offer Context của Group; CƠ HỘI có Group Key riêng và tự backfill từ source-of-truth.\n' +
@@ -2021,7 +2024,9 @@ const RemoteApp = (() => {
         });
       });
 
-      const selected = candidates.slice(0, cfg.maxRows);
+      const requestedLimit=Number(options&&options.maxRowsOverride||cfg.maxRows);
+      const runLimit=Math.max(1,Math.min(200,Number.isFinite(requestedLimit)?Math.floor(requestedLimit):cfg.maxRows));
+      const selected = candidates.slice(0, runLimit);
       const total = selected.length;
       const batchSize = 25;
       const totalBatches = Math.ceil(total / batchSize);
@@ -5337,6 +5342,13 @@ const RemoteApp = (() => {
         sh=ss.getSheetByName(CFG.AUTO_LOG_SHEET);
       }
       const detail=[
+        'version='+String(summary.version||CFG.VERSION),
+        'budget='+Number(summary.durationMs||0)+'/'+Number(CFG.AUTO_MONITOR_BUDGET_MS||0)+'ms',
+        summary.budgetOverrunMs?('overrun='+Number(summary.budgetOverrunMs||0)+'ms'):'',
+        summary.budgetDeferredGroups?('deferredGroups='+Number(summary.budgetDeferredGroups||0)):'',
+        summary.aiDeferredSources?('aiDeferred='+Number(summary.aiDeferredSources||0)):'',
+        summary.aiBacklogDeferred?'aiBacklogDeferred=1':'',
+        summary.aiBacklogDrain?'aiBacklogDrain=1':'',
         summary.testMode?'TEST_1_CYCLE':'',
         summary.acceptance?('acceptance='+String(summary.acceptance)):'',
         summary.reason?('reason='+String(summary.reason)):'',
@@ -5391,6 +5403,7 @@ const RemoteApp = (() => {
         if(Number.isFinite(started)) summary.durationMs=Math.max(0,now-started);
       }
       summary.finishedAt=summary.finishedAt||new Date(now).toISOString();
+      summary.budgetOverrunMs=Math.max(0,Number(summary.durationMs||0)-Number(CFG.AUTO_MONITOR_BUDGET_MS||0));
       PropertiesService.getDocumentProperties()
         .setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
       logAutoMonitorRun_(summary);
@@ -5529,7 +5542,13 @@ const RemoteApp = (() => {
         const plan=prepareJobsForWorkers_(jobs,0,false,'auto_v2');
         const work=flattenWorkerPlanJobs_(plan).slice(0,maxJobs);
         for(let i=0;i<work.length;i++){
-          if(Date.now()-started>CFG.AUTO_MONITOR_BUDGET_MS) break;
+          const elapsed=Date.now()-started;
+          const remaining=Math.max(0,CFG.AUTO_MONITOR_BUDGET_MS-elapsed);
+          if(remaining<CFG.AUTO_MONITOR_JOB_START_RESERVE_MS){
+            summary.budgetDeferredGroups=work.length-i;
+            summary.budgetReason='GROUP_START_RESERVE';
+            break;
+          }
           if(!options.force && !isAutoMonitorEnabled_()) break;
           const job=work[i];
 
@@ -5601,18 +5620,42 @@ const RemoteApp = (() => {
       summary.newSourceIds=[...new Set(summary.newSourceIds.map(x=>String(x||'').trim()).filter(Boolean))];
 
       const aiCfg=getAiConfig_();
-      if(!options.skipAi && !testMode && aiCfg.autoAnalyze && summary.newSourceIds.length && Date.now()-started<150000){
-        heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
-        try{
-          const ar=analyzeNewPosts_({
-            silent:true,
-            scope:'source_ids',
-            sourceIds:summary.newSourceIds.slice(0,Math.min(100,CFG.AUTO_AI_SOURCE_CHUNK))
-          });
-          summary.aiAnalyzed=Number(ar&&ar.analyzed||0);
-          summary.aiResult={analyzed:summary.aiAnalyzed,errors:(ar&&ar.errors||[]).length};
-        }catch(err){
-          summary.aiError=String(err.message||err);
+      if(!options.skipAi && !testMode && aiCfg.autoAnalyze){
+        const remaining=Math.max(0,CFG.AUTO_MONITOR_BUDGET_MS-(Date.now()-started));
+        if(remaining>=CFG.AUTO_AI_START_RESERVE_MS){
+          heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
+          try{
+            const hasNew=summary.newSourceIds.length>0;
+            const aiOptions=hasNew
+              ? {
+                  silent:true,
+                  scope:'source_ids',
+                  sourceIds:summary.newSourceIds.slice(0,CFG.AUTO_AI_SOURCE_CHUNK),
+                  maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK
+                }
+              : {
+                  silent:true,
+                  scope:'all_waiting',
+                  maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK
+                };
+            const ar=analyzeNewPosts_(aiOptions);
+            summary.aiAnalyzed=Number(ar&&ar.analyzed||0);
+            summary.aiBacklogDrain=!hasNew && summary.aiAnalyzed>0;
+            summary.aiResult={
+              analyzed:summary.aiAnalyzed,
+              errors:(ar&&ar.errors||[]).length,
+              mode:hasNew?'NEW_SOURCE':'BACKLOG'
+            };
+            if(hasNew && summary.newSourceIds.length>CFG.AUTO_AI_SOURCE_CHUNK){
+              summary.aiDeferredSources=summary.newSourceIds.length-CFG.AUTO_AI_SOURCE_CHUNK;
+            }
+          }catch(err){
+            summary.aiError=String(err.message||err);
+          }
+        }else{
+          summary.aiDeferredSources=summary.newSourceIds.length;
+          summary.aiBacklogDeferred=summary.newSourceIds.length===0;
+          summary.budgetReason=summary.budgetReason||'AI_START_RESERVE';
         }
       }
 

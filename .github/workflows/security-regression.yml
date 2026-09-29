@@ -236,7 +236,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF3-sales-state-guard'" in runtime
+          assert "VERSION: '1.9.8.7-HF4-auto-budget'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -316,6 +316,25 @@ jobs:
           assert "không</b> được dùng thay" in ui
           assert "REQUALIFY CONTEXT-READY" in ui
           assert "AI_LEASE_KEY" in runtime and "AUTO_MONITOR_LEASE_KEY" in runtime
+          assert "AUTO_AI_SOURCE_CHUNK: 12" in runtime
+          assert "AUTO_MONITOR_JOB_START_RESERVE_MS: 120 * 1000" in runtime
+          assert "AUTO_AI_START_RESERVE_MS: 160 * 1000" in runtime
+          assert "maxRowsOverride" in runtime
+          auto_tick_start = runtime.index('function autoMonitorTick_(')
+          auto_tick_end = runtime.index('function runProductionSelfTest_', auto_tick_start)
+          auto_tick_block = runtime[auto_tick_start:auto_tick_end]
+          assert "remaining<CFG.AUTO_MONITOR_JOB_START_RESERVE_MS" in auto_tick_block
+          assert "remaining>=CFG.AUTO_AI_START_RESERVE_MS" in auto_tick_block
+          assert "scope:'all_waiting'" in auto_tick_block
+          assert "maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK" in auto_tick_block
+          assert "Date.now()-started<150000" not in auto_tick_block
+          assert "summary.aiBacklogDrain" in auto_tick_block
+          auto_log_start = runtime.index('function logAutoMonitorRun_(')
+          auto_log_end = runtime.index('function persistAutoMonitorSummary_', auto_log_start)
+          auto_log_block = runtime[auto_log_start:auto_log_end]
+          assert "'version='+String(summary.version||CFG.VERSION)" in auto_log_block
+          assert "'budget='+Number(summary.durationMs||0)" in auto_log_block
+          assert "deferredGroups=" in auto_log_block
           assert "LockService.getScriptLock" not in runtime, "AI/AUTO must not share a global ScriptLock"
           assert "source_id: { type: 'string' }" in runtime
           assert "row_number: { type: 'integer' }" not in runtime
