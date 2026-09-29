@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.6-identity-display-cleanup',
+    VERSION: '1.9.8.7-HF10.7-display-fallback-closure',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -757,6 +757,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.7 Display Fallback Closure: đóng hai đường legacy còn có thể phát sinh Group <key> trong Comment ingestion và Retry queue; mọi display name chưa xác minh đều CHƯA LẤY TÊN.\n' +
       'V1.9.8.7-HF10.6 Identity Display Cleanup: cấm placeholder Group <slug/id>; legacy generated names được chuẩn hóa thành CHƯA LẤY TÊN; Group Alias Registry và Group Intelligence khóa identity columns dạng TEXT để không scientific-coerce numeric IDs.\n' +
       'V1.9.8.7-HF10.5 Verified Identity Retry: Group đang LỖI GROUP_ID_RESOLVE chỉ được self-repair đúng 1 lần khi có numeric Group ID deterministic đã xác minh; nếu retry lại fail thì giữ quarantine, không loop.\n' +
       'V1.9.8.7-HF10.4 API-Native Cleanup: production FBAIO paths truyền parsed records trực tiếp vào normalization/write core; JSON file parsing giữ riêng cho Legacy Debug/Recovery; NHẬP JSON vẫn giữ làm RAW POSTS storage để tránh destructive migration.\n' +
@@ -1123,8 +1124,8 @@ const RemoteApp = (() => {
 
     let groupKey = String(n.groupKey || '').toLowerCase();
     if (groupKey && !ctx.groupMap[groupKey]) ctx.groupMap[groupKey] = ensureGroupRegistered_(ctx.groupSheet, groupKey);
-    const groupInfo = ctx.groupMap[groupKey] || { name:n.groupName || `Group ${groupKey || 'không rõ'}`, row:null };
-    const groupName = n.groupName || groupInfo.name;
+    const groupInfo = ctx.groupMap[groupKey] || { name:normalizeGroupDisplayName_(n.groupName), row:null };
+    const groupName = normalizeGroupDisplayName_(n.groupName || groupInfo.name);
     const stat = touchGroupStat_(ctx.groupStats, groupKey, groupInfo, fileName);
     stat.commentScanned += 1;
 
@@ -10208,7 +10209,7 @@ const RemoteApp = (() => {
       if(!url) return;
       out.push({
         row:i+2,
-        name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
+        name:normalizeGroupDisplayName_(r[2]),
         profile:String(r[1]||'').trim() || 'AUTO',
         url,
         groupKey:exactGroupKeyFromRow_(url,r[4]),
