@@ -4509,9 +4509,22 @@ const RemoteApp = (() => {
     const boundary7=now-7*dayMs;
     const seen=new Set();
     let cursor='',pages=0,post24=0,post7=0,oldestMs=0,crossed24=false,crossed7=false;
-    let nextCursor='',stoppedByCap=false;
+    let nextCursor='',stoppedByCap=false,activityUrl=groupUrl,fallbackUsed=false,fallbackGroupId='';
     while(pages<30&&seen.size<500&&Date.now()-started<100000&&!crossed7){
-      const page=fetchGroupPostsPageRaw_(worker.clientId,{url:groupUrl,sorting:'Newest Posts',cursor:cursor||''});
+      let page;
+      try{
+        page=fetchGroupPostsPageRaw_(worker.clientId,{url:activityUrl,sorting:'Newest Posts',cursor:cursor||''});
+      }catch(err){
+        if(pages===0&&!fallbackUsed&&isGroupIdentityResolveError_(err)){
+          const numericId=historicNumericGroupIdFromRow_(row,groupUrl);
+          if(numericId&&numericId!==extractGroupKey_(activityUrl)){
+            fallbackUsed=true;
+            fallbackGroupId=numericId;
+            activityUrl='https://www.facebook.com/groups/'+numericId+'/';
+            page=fetchGroupPostsPageRaw_(worker.clientId,{url:activityUrl,sorting:'Newest Posts',cursor:cursor||''});
+          }else throw err;
+        }else throw err;
+      }
       pages++;
       const posts=page.posts||[];
       if(!posts.length){nextCursor='';break;}
@@ -4542,6 +4555,7 @@ const RemoteApp = (() => {
       avgPostsDay7dObserved:crossed7?Math.round((post7/7)*100)/100:null,
       complete24h:crossed24,complete7d:crossed7,
       stoppedByCap,
+      fallbackUsed,fallbackGroupId,
       workerSlot:worker.slot||''
     };
     saveGroupActivityObservation_(groupKey,state);
