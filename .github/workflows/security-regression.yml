@@ -475,6 +475,11 @@ jobs:
           assert "openWorkspaceTab('api_log','NHẬT KÝ API')" in ui
           assert "Source COMMENT_UI" in ui
           assert 'class="sideNav"' in ui
+          assert 'data-view="policy"' in ui
+          assert 'id="view-policy"' in ui
+          assert 'id="policyEffective"' in ui
+          assert 'AUTO COMMENT = OFF' in ui
+          assert 'function saveAutoPolicy(' in ui
           assert 'class="groupTaskTabs"' in ui
           assert 'data-group-task="scan"' in ui
           assert 'data-group-task="comments"' in ui
