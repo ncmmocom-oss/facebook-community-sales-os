@@ -212,6 +212,154 @@ const RemoteApp = (() => {
     return (c.profiles||[]).find(p=>p.id===c.activeProfileId)||(c.profiles||[])[0]||null;
   }
 
+  function validateAutoPolicy_(raw) {
+    raw=raw&&typeof raw==='object'?raw:{};
+    const g=raw.global||{},a=g.auto||{},s=g.scan||{},c=g.comment||{},ai=g.ai||{},act=g.action||{};
+    const bounded=(v,min,max,label)=>{
+      if(v===undefined||v===null||v==='') return;
+      const n=Number(v);
+      if(!Number.isFinite(n)||n<min||n>max) throw new Error(label+' ngoài giới hạn '+min+'-'+max+'.');
+    };
+    if(a.triggerMinutes!==undefined && [5,10,15,30].indexOf(Number(a.triggerMinutes))<0){
+      throw new Error('Trigger interval chỉ hỗ trợ 5 / 10 / 15 / 30 phút.');
+    }
+    ['activeStart','activeEnd'].forEach(k=>{
+      if(a[k]!==undefined && !/^\d{2}:\d{2}$/.test(String(a[k]||''))) throw new Error(k+' phải theo HH:mm.');
+    });
+    bounded(a.maxGroupsPerCycle,1,12,'Max Group/cycle');
+    bounded(a.runtimeBudgetMs,60000,280000,'Runtime budget');
+    bounded(s.scansPerDay,1,24,'Scans/day');
+    bounded(s.postsPerScan,1,200,'Posts/scan');
+    bounded(s.maxPostsPerScan,1,200,'Max posts/scan');
+    bounded(s.dueToleranceMinutes,0,120,'Due tolerance');
+    bounded(s.retryAttempts,1,10,'Retry attempts');
+    bounded(c.maxPostsPerCycle,1,20,'Comment posts/cycle');
+    bounded(c.maxPagesPerPost,1,10,'Comment pages/post');
+    bounded(c.maxCommentsPerPost,10,1000,'Comments/post');
+    bounded(c.hotWatchHours,1,168,'Hot watch');
+    bounded(c.recheckMinutes,5,1440,'Comment recheck');
+    bounded(c.providerBreakerMinutes,1,120,'Provider breaker');
+    bounded(ai.chunkSize,1,50,'AI chunk size');
+    if(act.autoComment===true) throw new Error('AUTO_COMMENT_LOCKED_HF10');
+    (Array.isArray(raw.profiles)?raw.profiles:[]).forEach(p=>bounded(p&&p.maxGroupCapacity,1,100,'Profile capacity'));
+    return true;
+  }
+
+  function policyProfileForGroup_(config,groupKey) {
+    const c=config||getAutoPolicyConfig_();
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(key){
+      const assigned=(c.profiles||[]).find(p=>(p.groupKeys||[]).indexOf(key)>=0);
+      if(assigned) return assigned;
+    }
+    return activePolicyProfile_(c);
+  }
+
+  function resolveEffectiveScanPolicy_(profile,group,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.scan||{},p=profile&&profile.scan||{},row=group||{};
+    const choose=(groupValue,profileValue,globalValue)=>{
+      if(Number(groupValue)>0) return {value:Number(groupValue),source:'GROUP'};
+      if(Number(profileValue)>0) return {value:Number(profileValue),source:'PROFILE'};
+      return {value:Number(globalValue),source:'GLOBAL'};
+    };
+    const scans=choose(row.scansPerDay,p.scansPerDay,g.scansPerDay);
+    const posts=choose(row.postsPerScan,p.postsPerScan,g.postsPerScan);
+    const maxPosts=Number(p.maxPostsPerScan)>0?Number(p.maxPostsPerScan):Number(g.maxPostsPerScan);
+    const dueTolerance=p.dueToleranceMinutes!==undefined&&p.dueToleranceMinutes!==null&&p.dueToleranceMinutes!==''
+      ?Number(p.dueToleranceMinutes):Number(g.dueToleranceMinutes);
+    const retryAttempts=Number(p.retryAttempts)>0?Number(p.retryAttempts):Number(g.retryAttempts);
+    const retryBackoff=Array.isArray(p.retryBackoffMinutes)&&p.retryBackoffMinutes.length
+      ?p.retryBackoffMinutes:g.retryBackoffMinutes;
+    return {
+      scansPerDay:policyInt_(scans.value,1,1,24),
+      postsPerScan:policyInt_(posts.value,10,1,Math.max(1,Number(maxPosts||200))),
+      maxPostsPerScan:policyInt_(maxPosts,25,1,200),
+      dueToleranceMinutes:policyInt_(dueTolerance,0,0,120),
+      retryAttempts:policyInt_(retryAttempts,5,1,10),
+      retryBackoffMinutes:policyBackoff_(retryBackoff,g.retryBackoffMinutes),
+      sources:{scansPerDay:scans.source,postsPerScan:posts.source}
+    };
+  }
+
+  function resolveEffectiveCommentPolicy_(profile,post,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.comment||{},p=profile&&profile.comment||{};
+    const pick=(key)=>p[key]!==undefined&&p[key]!==null&&p[key]!==''?p[key]:g[key];
+    const own=!!(post&&post.ownPost);
+    const ownPriority=policyInt_(pick('ownPostPriority'),100,0,1000);
+    const externalPriority=policyInt_(pick('externalPostPriority'),50,0,1000);
+    return {
+      enabled:policyBool_(pick('enabled'),true),
+      maxPostsPerCycle:policyInt_(pick('maxPostsPerCycle'),4,1,20),
+      maxPagesPerPost:policyInt_(pick('maxPagesPerPost'),3,1,10),
+      maxCommentsPerPost:policyInt_(pick('maxCommentsPerPost'),100,10,1000),
+      hotWatchHours:policyInt_(pick('hotWatchHours'),24,1,168),
+      recheckMinutes:policyInt_(pick('recheckMinutes'),30,5,1440),
+      ownPostPriority:ownPriority,
+      externalPostPriority:externalPriority,
+      providerBreakerMinutes:policyInt_(pick('providerBreakerMinutes'),10,1,120),
+      ownPost:own,
+      priority:own?ownPriority:externalPriority
+    };
+  }
+
+  function resolveEffectiveAiPolicy_(profile,group,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.ai||{},p=profile&&profile.ai||{};
+    const pick=(key)=>p[key]!==undefined&&p[key]!==null&&p[key]!==''?p[key]:g[key];
+    return {
+      signalEnabled:policyBool_(pick('signalEnabled'),true),
+      qualificationEnabled:policyBool_(pick('qualificationEnabled'),true),
+      chunkSize:policyInt_(pick('chunkSize'),12,1,50)
+    };
+  }
+
+  function resolveEffectiveActionPolicy_(profile,config) {
+    const c=config||getAutoPolicyConfig_();
+    const g=c.global.action||{},p=profile&&profile.action||{};
+    return {
+      humanApproval:p.humanApproval!==undefined&&p.humanApproval!==null?!!p.humanApproval:!!g.humanApproval,
+      autoComment:false
+    };
+  }
+
+  function profileActiveWindow_(profile,config) {
+    const c=config||getAutoPolicyConfig_(),g=c.global.auto||{};
+    return {
+      start:String(profile&&profile.activeStart||g.activeStart||'07:00'),
+      end:String(profile&&profile.activeEnd||g.activeEnd||'23:00'),
+      timezone:String(profile&&profile.timezone||g.timezone||'Asia/Ho_Chi_Minh')
+    };
+  }
+
+  function policyMinute_(value) {
+    const p=policyTime_(value,'00:00').split(':').map(Number);
+    return p[0]*60+p[1];
+  }
+
+  function isWithinActiveWindowMinutes_(start,end,minuteOfDay) {
+    const s=policyMinute_(start),e=policyMinute_(end),n=Math.max(0,Math.min(1439,Number(minuteOfDay||0)));
+    if(s===e) return true;
+    return s<e?(n>=s&&n<e):(n>=s||n<e);
+  }
+
+  function isProfileActiveNow_(profile,config,now) {
+    if(!profile||profile.enabled===false) return false;
+    const w=profileActiveWindow_(profile,config),d=now instanceof Date?now:new Date();
+    let hhmm='';
+    try{hhmm=Utilities.formatDate(d,w.timezone,'HH:mm');}
+    catch(_){hhmm=Utilities.formatDate(d,Session.getScriptTimeZone(),'HH:mm');}
+    return isWithinActiveWindowMinutes_(w.start,w.end,policyMinute_(hhmm));
+  }
+
+  function autoPolicyLanePlan_(config,profile) {
+    const c=config||getAutoPolicyConfig_(),p=profile||activePolicyProfile_(c);
+    const cp=resolveEffectiveCommentPolicy_(p,null,c);
+    const ai=resolveEffectiveAiPolicy_(p,null,c);
+    return {group:!!p&&p.enabled!==false,comment:cp.enabled,ai:ai.signalEnabled,sales:true};
+  }
+
   function getVersion() { return CFG.VERSION; }
 
   function onOpen() {
