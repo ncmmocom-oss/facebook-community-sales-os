@@ -466,11 +466,15 @@ const RemoteApp = (() => {
 
   function saveAutoPolicyConfig_(command) {
     command=command||{};
-    const raw=command.policy&&typeof command.policy==='object'?command.policy:getAutoPolicyConfig_();
+    const current=getAutoPolicyConfig_();
+    const raw=command.policy&&typeof command.policy==='object'?command.policy:current;
     validateAutoPolicy_(raw);
     const next=normalizeAutoPolicy_(raw);
+    const intervalChanged=Number(current.global.auto.triggerMinutes)!==Number(next.global.auto.triggerMinutes);
     PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_POLICY_KEY,JSON.stringify(next));
-    return Object.assign(getAutoPolicyState_(),{ok:true});
+    let trigger=null;
+    if(isAutoMonitorEnabled_() && intervalChanged) trigger=ensureAutoMonitorTrigger_(true);
+    return Object.assign(getAutoPolicyState_(),{ok:true,trigger});
   }
 
   function runAutoPolicyHarness_() {
@@ -5994,7 +5998,9 @@ const RemoteApp = (() => {
     return getAutoMonitorTriggerAccess_().triggers;
   }
 
-  function ensureAutoMonitorTrigger_() {
+  function ensureAutoMonitorTrigger_(forceRecreate) {
+    const policy=getAutoPolicyConfig_();
+    const triggerMinutes=Number(policy.global.auto.triggerMinutes||CFG.AUTO_MONITOR_TRIGGER_MINUTES);
     let access=getAutoMonitorTriggerAccess_();
     if(!access.permissionOk){
       return {
@@ -6004,16 +6010,16 @@ const RemoteApp = (() => {
     }
 
     try{
-      if(access.triggers.length>1){
-        access.triggers.slice(1).forEach(t=>ScriptApp.deleteTrigger(t));
+      if(access.triggers.length>1 || (forceRecreate===true && access.triggers.length)){
+        access.triggers.forEach(t=>ScriptApp.deleteTrigger(t));
         access=getAutoMonitorTriggerAccess_();
       }
       if(access.triggers.length){
-        return {installed:true,count:1,permissionOk:true,authRequired:false,error:''};
+        return {installed:true,count:1,permissionOk:true,authRequired:false,error:'',intervalMinutes:triggerMinutes};
       }
       ScriptApp.newTrigger(CFG.AUTO_MONITOR_TRIGGER_HANDLER)
         .timeBased()
-        .everyMinutes(CFG.AUTO_MONITOR_TRIGGER_MINUTES)
+        .everyMinutes(triggerMinutes)
         .create();
       access=getAutoMonitorTriggerAccess_();
       return {
@@ -6021,6 +6027,7 @@ const RemoteApp = (() => {
         count:access.triggerCount,
         permissionOk:access.permissionOk,
         authRequired:access.authRequired,
+        intervalMinutes:triggerMinutes,
         error:access.error||''
       };
     }catch(err){
@@ -6053,6 +6060,8 @@ const RemoteApp = (() => {
 
   function getAutoMonitorV2State_(repairTrigger) {
     const props=PropertiesService.getDocumentProperties();
+    const policy=getAutoPolicyConfig_();
+    const triggerMinutes=Number(policy.global.auto.triggerMinutes||CFG.AUTO_MONITOR_TRIGGER_MINUTES);
     const requestedEnabled=isAutoMonitorEnabled_();
     let access=getAutoMonitorTriggerAccess_();
     let repair=null;
@@ -6073,7 +6082,7 @@ const RemoteApp = (() => {
       requestedEnabled,
       degraded:requestedEnabled&&!effectiveEnabled,
       backend:true,
-      intervalMinutes:CFG.AUTO_MONITOR_TRIGGER_MINUTES,
+      intervalMinutes:triggerMinutes,
       permissionOk:access.permissionOk,
       authRequired:access.authRequired,
       triggerInstalled:access.triggerInstalled,
