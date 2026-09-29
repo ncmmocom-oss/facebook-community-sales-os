@@ -61,6 +61,9 @@ const RemoteApp = (() => {
     COMMENT_RETRY_DELAYS_MS: [5*60*1000,15*60*1000,60*60*1000,3*60*60*1000,6*60*60*1000],
     COMMENT_PROVIDER_BREAKER_KEY: 'SOCIAL_AIO_COMMENT_PROVIDER_BREAKER_V1',
     COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000,
+    COMMENT_P0_TRACE_KEY: 'SOCIAL_AIO_COMMENT_P0_TRACE_V1',
+    COMMENT_P0_TRACE_POST_ID: '1451746643056271',
+    COMMENT_P0_TRACE_POST_URL: 'https://www.facebook.com/groups/204728197758128/permalink/1451746643056271/',
     COMMENT_HOT_WATCH_MS: 24 * 60 * 60 * 1000,
     COMMENT_HOT_RECHECK_MS: 30 * 60 * 1000,
     AI_LEASE_KEY: 'SOCIAL_AIO_AI_LEASE_V1',
@@ -5849,6 +5852,282 @@ const RemoteApp = (() => {
     }
   }
 
+  function findStrictPreferredArray_(value,preferredKeys) {
+    const preferred=new Set((preferredKeys||[]).map(x=>String(x).toLowerCase()));
+    const seen=[];
+    let found=null,foundPath='';
+    const walk=(v,path,depth)=>{
+      if(found||depth>9||v===null||v===undefined) return;
+      if(typeof v==='string'){
+        const s=v.trim();
+        if((s.startsWith('{')&&s.endsWith('}'))||(s.startsWith('[')&&s.endsWith(']'))){
+          try{walk(JSON.parse(s),path+'<json>',depth+1);}catch(_){}
+        }
+        return;
+      }
+      if(Array.isArray(v)){
+        for(let i=0;i<Math.min(v.length,2);i++) walk(v[i],path+'['+i+']',depth+1);
+        return;
+      }
+      if(typeof v!=='object'||seen.indexOf(v)>=0) return;
+      seen.push(v);
+      const keys=Object.keys(v);
+      for(const k of keys){
+        if(preferred.has(String(k).toLowerCase())&&Array.isArray(v[k])){
+          found=v[k];
+          foundPath=path+'.'+k;
+          return;
+        }
+      }
+      for(const k of keys) walk(v[k],path+'.'+k,depth+1);
+    };
+    walk(value,'$',0);
+    return {array:found||[],path:foundPath};
+  }
+
+  function apiDiagBestArrayFor_(shape,kind) {
+    const token=String(kind||'').toLowerCase();
+    const scored=(shape&&shape.arrays||[]).map(a=>{
+      const p=String(a.path||'').toLowerCase();
+      const keys=(a.keys||[]).map(x=>String(x).toLowerCase());
+      let score=0;
+      if(token && p.indexOf(token)>=0) score+=120;
+      if(/data|result|items|edges|nodes/.test(p)) score+=20;
+      if(token==='comment'){
+        ['comment_id','commentid','message','text','author','actor','created_time','url'].forEach(k=>{
+          if(keys.indexOf(k)>=0) score+=12;
+        });
+      }
+      return Object.assign({},a,{score});
+    });
+    scored.sort((a,b)=>b.score-a.score||Number(b.length||0)-Number(a.length||0));
+    return scored[0]||{path:'',length:0,score:-1,keys:[]};
+  }
+
+  function commentDiagRawOnce_(clientId,params) {
+    const url=CFG.BRIDGE_SERVER.replace(/\/$/,'')+'/call';
+    const started=Date.now();
+    const payload={
+      id:String(clientId||'').trim(),
+      apiname:'get_list_fb_comment',
+      apiparams:params||{}
+    };
+    const res=UrlFetchApp.fetch(url,{
+      method:'post',
+      contentType:'application/json',
+      payload:JSON.stringify(payload),
+      muteHttpExceptions:true,
+      followRedirects:true
+    });
+    const text=res.getContentText('UTF-8');
+    let parsed=text;
+    try{parsed=JSON.parse(text);}catch(_){}
+    return {
+      payload,
+      code:res.getResponseCode(),
+      text,
+      parsed,
+      durationMs:Date.now()-started,
+      bytes:Utilities.newBlob(text||'').getBytes().length,
+      error:findBridgeError_(parsed)||''
+    };
+  }
+
+  function logCommentP0TraceRow_(meta) {
+    meta=meta||{};
+    const sh=ensureApiDiagSheet_();
+    sh.insertRowsBefore(2,1);
+    sh.getRange(2,1,1,24).setValues([[
+      new Date(),
+      'comment-p0-'+Utilities.getUuid().slice(0,8),
+      meta.groupName||'P0 Comment Trace',
+      meta.groupKey||'',
+      meta.workerSlot||'',
+      meta.variant||'COMMENT_P0_TRACE',
+      meta.httpCode||'',
+      meta.durationMs||'',
+      meta.bytes||'',
+      meta.rawType||'',
+      (meta.topKeys||[]).join(','),
+      Number(meta.preferredCount||0),
+      meta.bestArrayPath||'',
+      Number(meta.bestArrayCount||0),
+      meta.arraySummary||'',
+      meta.cursorPath||'',
+      meta.cursorSummary||'',
+      meta.unwrappedType||'',
+      Number(meta.unwrappedPreferredCount||0),
+      meta.page2Count||'',
+      meta.title||'P0 Comment trace',
+      meta.code||'COMMENT_P0_TRACE',
+      CFG.VERSION,
+      [
+        'apiname=get_list_fb_comment',
+        'postId='+String(meta.postId||''),
+        'params='+JSON.stringify(meta.params||{}),
+        meta.strictPath?('strictCommentsPath='+meta.strictPath):'',
+        'strictCommentsCount='+Number(meta.strictCount||0),
+        meta.error?('error='+String(meta.error).slice(0,600)):'',
+        meta.rawPreview?('raw='+String(meta.rawPreview).slice(0,1800)):''
+      ].filter(Boolean).join(' | ')
+    ]]);
+  }
+
+  function traceCommentVariant_(clientId,workerSlot,job,name,params) {
+    let raw=null;
+    try{
+      raw=commentDiagRawOnce_(clientId,params);
+      const shape=apiDiagShape_(raw.parsed);
+      const unwrapped=unwrapBridgeResult_(raw.parsed);
+      const unShape=apiDiagShape_(unwrapped);
+      const strict=findStrictPreferredArray_(raw.parsed,['comments']);
+      const strictUnwrapped=findStrictPreferredArray_(unwrapped,['comments']);
+      const best=apiDiagBestArrayFor_(shape,'comment');
+      const cursor=findBridgeCursor_(raw.parsed)||'';
+      const cursorObj=cursor?{path:'findBridgeCursor_',value:cursor}:apiDiagCursor_(shape);
+      const arraySummary=(shape.arrays||[])
+        .slice()
+        .sort((a,b)=>Number(b.length||0)-Number(a.length||0))
+        .slice(0,12)
+        .map(a=>a.path+'['+a.length+'] keys='+(a.keys||[]).slice(0,8).join(','))
+        .join(' | ');
+      const result={
+        name,params,httpCode:raw.code,durationMs:raw.durationMs,bytes:raw.bytes,
+        error:raw.error||'',rawType:shape.rootType,topKeys:shape.topKeys||[],
+        strictComments:strict.array||[],strictPath:strict.path||'',
+        unwrappedStrictComments:strictUnwrapped.array||[],unwrappedStrictPath:strictUnwrapped.path||'',
+        bestArrayPath:best.path||'',bestArrayCount:Number(best.length||0),
+        arraySummary,cursor,cursorPath:cursorObj&&cursorObj.path||'',
+        cursorSummary:(shape.cursors||[]).slice(0,12).map(x=>x.path+'='+(x.value?('len:'+String(x.value).length):'<object>')).join(' | '),
+        unwrappedType:unShape.rootType,
+        rawPreview:compactBridgePreview_(raw.parsed,1800)
+      };
+      logCommentP0TraceRow_({
+        groupName:job.groupName,groupKey:job.groupKey,workerSlot,variant:name,
+        httpCode:raw.code,durationMs:raw.durationMs,bytes:raw.bytes,
+        rawType:shape.rootType,topKeys:shape.topKeys||[],
+        preferredCount:(strict.array||[]).length,
+        bestArrayPath:best.path||'',bestArrayCount:Number(best.length||0),
+        arraySummary,cursorPath:result.cursorPath,cursorSummary:result.cursorSummary,
+        unwrappedType:unShape.rootType,unwrappedPreferredCount:(strictUnwrapped.array||[]).length,
+        title:(strict.array||[]).length?'Comment trace returned comments':'Comment trace returned no strict comments',
+        code:(strict.array||[]).length?'P0_COMMENT_API_DATA':'P0_COMMENT_API_EMPTY',
+        postId:job.postId,params,strictPath:strict.path,strictCount:(strict.array||[]).length,
+        error:raw.error,rawPreview:result.rawPreview
+      });
+      return result;
+    }catch(err){
+      const e=String(err&&err.message||err||'');
+      logCommentP0TraceRow_({
+        groupName:job.groupName,groupKey:job.groupKey,workerSlot,variant:name,
+        title:'Comment trace request failed',code:'P0_COMMENT_REQUEST_ERROR',
+        postId:job.postId,params,error:e,rawPreview:raw&&raw.text||''
+      });
+      return {name,params,httpCode:raw&&raw.code||0,error:e,strictComments:[],bestArrayCount:0};
+    }
+  }
+
+  function findRawCommentTraceJob_(postId) {
+    const raw=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.RAW_SHEET);
+    if(raw.getLastRow()<5) return null;
+    const rows=raw.getRange(5,1,raw.getLastRow()-4,20).getValues();
+    for(let i=0;i<rows.length;i++){
+      const r=rows[i]||[];
+      if(String(r[4]||'').trim()!==String(postId||'').trim()) continue;
+      return {
+        rawRow:i+5,
+        postId:String(r[4]||'').trim(),
+        url:String(r[5]||'').trim(),
+        groupName:String(r[2]||'').trim(),
+        groupKey:String(r[3]||'').trim().toLowerCase(),
+        expected:Math.max(0,toNumber_(r[9])),
+        fetched:Math.max(0,toNumber_(r[16])),
+        cursor:String(r[17]||'').trim(),
+        status:String(r[19]||'').trim()
+      };
+    }
+    return null;
+  }
+
+  function runP0CommentTraceOnce_(clientId,workerSlot) {
+    const props=PropertiesService.getDocumentProperties();
+    const prior=String(props.getProperty(CFG.COMMENT_P0_TRACE_KEY)||'').trim();
+    if(prior) return {skipped:true,reason:'TRACE_ALREADY_RECORDED',state:prior};
+
+    const job=findRawCommentTraceJob_(CFG.COMMENT_P0_TRACE_POST_ID);
+    if(!job){
+      const state=JSON.stringify({status:'NO_TARGET',at:new Date().toISOString(),postId:CFG.COMMENT_P0_TRACE_POST_ID});
+      props.setProperty(CFG.COMMENT_P0_TRACE_KEY,state);
+      return {skipped:true,reason:'TRACE_TARGET_NOT_FOUND'};
+    }
+
+    props.setProperty(CFG.COMMENT_P0_TRACE_KEY,JSON.stringify({
+      status:'RUNNING',at:new Date().toISOString(),postId:job.postId,url:job.url,expected:job.expected
+    }));
+
+    const variants=[
+      {name:'COMMENT_URL_NEWEST',params:{url:job.url,type:'Newest',cursor:''}},
+      {name:'COMMENT_URL_DEFAULT',params:{url:job.url,cursor:''}},
+      {name:'COMMENT_URLFIELD_ID_NEWEST',params:{url:job.postId,type:'Newest',cursor:''}},
+      {name:'COMMENT_IDFIELD_NEWEST',params:{id:job.postId,type:'Newest',cursor:''}}
+    ];
+    const results=variants.map(v=>traceCommentVariant_(clientId,workerSlot,job,v.name,v.params));
+    const winner=results
+      .filter(x=>Array.isArray(x.strictComments)&&x.strictComments.length)
+      .sort((a,b)=>b.strictComments.length-a.strictComments.length)[0]||null;
+
+    let imported=null,newSourceIds=[];
+    if(winner){
+      const fileName='api_comments_'+job.postId+'_P0_'+Utilities.formatDate(new Date(),Session.getScriptTimeZone(),'yyyyMMdd_HHmmss')+'.json';
+      imported=importJsonFiles([{
+        name:fileName,
+        text:JSON.stringify(winner.strictComments),
+        __workerFast:true,
+        __sourcePostId:job.postId,
+        __sourcePostUrl:job.url,
+        __sourceGroupKey:job.groupKey||'',
+        __sourceGroupName:job.groupName||''
+      }]);
+      newSourceIds=(imported.newSourceIds||[]).filter(x=>String(x||'').startsWith('C:'));
+      const observed=Math.max(job.expected,job.fetched+Number(imported.commentImported||0));
+      updateRawCommentState_(job,{
+        fetched:job.fetched+Number(imported.commentImported||0),
+        cursor:winner.cursor||'',
+        lastScan:new Date(),
+        status:'P0_TRACE_IMPORTED '+Number(imported.commentImported||0)+'/'+observed,
+        commentsCount:observed
+      });
+      logCommentP0TraceRow_({
+        groupName:job.groupName,groupKey:job.groupKey,workerSlot,variant:'COMMENT_P0_IMPORT',
+        title:'P0 COMMENT FUNCTIONAL PATH PASS',code:'P0_COMMENT_IMPORT_PASS',
+        postId:job.postId,params:winner.params,strictPath:winner.strictPath,
+        strictCount:winner.strictComments.length,
+        rawPreview:'imported='+Number(imported.commentImported||0)+
+          ', duplicates='+Number(imported.duplicates||0)+
+          ', newSourceIds='+newSourceIds.slice(0,10).join(',')
+      });
+    }
+
+    const allHttpOk=results.length&&results.every(x=>Number(x.httpCode||0)>=200&&Number(x.httpCode||0)<300);
+    const bestCount=Math.max.apply(null,results.map(x=>Number(x.bestArrayCount||0)).concat([0]));
+    const status=winner
+      ? 'PASS'
+      : (allHttpOk?(bestCount>0?'PARSER_SHAPE_MISMATCH':'UPSTREAM_EMPTY'):'REQUEST_OR_PROVIDER_ERROR');
+    const state={
+      status,at:new Date().toISOString(),postId:job.postId,url:job.url,expected:job.expected,
+      variants:results.map(x=>({
+        name:x.name,httpCode:x.httpCode||0,error:x.error||'',
+        strictCount:Array.isArray(x.strictComments)?x.strictComments.length:0,
+        strictPath:x.strictPath||'',bestArrayPath:x.bestArrayPath||'',bestArrayCount:Number(x.bestArrayCount||0),
+        cursor:!!x.cursor
+      })),
+      imported:Number(imported&&imported.commentImported||0),
+      newSourceIds:newSourceIds.slice(0,20)
+    };
+    props.setProperty(CFG.COMMENT_P0_TRACE_KEY,JSON.stringify(state));
+    return state;
+  }
+
   function runCommentIntelligenceCycle_(options) {
     options=options||{};
     ensureV16Sheets_(false);
@@ -5895,6 +6174,10 @@ const RemoteApp = (() => {
       repairedProviderHard:Number(repaired.changed||0),stats:getCommentIntelligenceStats_(true)
     };
     const clientId=pool[0].clientId;
+    let p0Trace=null;
+    if(String(options.source||'AUTO')==='AUTO'){
+      p0Trace=runP0CommentTraceOnce_(clientId,pool[0].slot||'');
+    }
     const results=[],sourceIds=[];
     let imported=0,providerCircuitOpen=false,providerRetryAt=0,providerError='';
 
@@ -5945,6 +6228,7 @@ const RemoteApp = (() => {
       providerRetryAt,
       providerError,
       repairedProviderHard:Number(repaired.changed||0),
+      p0Trace,
       stats:getCommentIntelligenceStats_(true)
     };
   }

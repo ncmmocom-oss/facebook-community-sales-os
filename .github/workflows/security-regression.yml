@@ -480,6 +480,17 @@ jobs:
           finalize_block = runtime[finalize_start:finalize_end]
           assert "sortOpportunityNewestFirst_();" not in finalize_block, "hot finalize path must not reorder CƠ HỘI while AI may run"
           assert "COMMENT_PROVIDER_BREAKER_KEY" in runtime
+          assert "COMMENT_P0_TRACE_KEY" in runtime
+          assert "COMMENT_P0_TRACE_POST_ID: '1451746643056271'" in runtime
+          assert "function runP0CommentTraceOnce_(" in runtime
+          assert "apiname:'get_list_fb_comment'" in runtime
+          assert "COMMENT_URL_NEWEST" in runtime
+          assert "COMMENT_URL_DEFAULT" in runtime
+          assert "COMMENT_URLFIELD_ID_NEWEST" in runtime
+          assert "COMMENT_IDFIELD_NEWEST" in runtime
+          assert "status:'RUNNING'" in runtime
+          assert "TRACE_ALREADY_RECORDED" in runtime
+          assert "P0_COMMENT_IMPORT_PASS" in runtime
           assert "COMMENT_PROVIDER_BREAKER_MS: 10 * 60 * 1000" in runtime
           assert "COMMENT_RETRY_DELAYS_MS" in runtime
           assert "function isCommentProviderTransientError_(" in runtime
