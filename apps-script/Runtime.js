@@ -360,6 +360,168 @@ const RemoteApp = (() => {
     return {group:!!p&&p.enabled!==false,comment:cp.enabled,ai:ai.signalEnabled,sales:true};
   }
 
+  function groupPolicyInput_(row) {
+    row=row||[];
+    return {
+      groupKey:exactGroupKeyFromRow_(row[3],row[4]),
+      scansPerDay:Number(row[7]||0),
+      postsPerScan:Number(row[8]||0)
+    };
+  }
+
+  function effectiveNextDueMs_(lastAtMs,scanPolicy) {
+    if(!lastAtMs) return 0;
+    const p=scanPolicy||{scansPerDay:1,dueToleranceMinutes:0};
+    const interval=24*60*60*1000/Math.max(1,Number(p.scansPerDay||1));
+    return Number(lastAtMs)+interval-Math.max(0,Number(p.dueToleranceMinutes||0))*60000;
+  }
+
+  function shouldAutoScanProfile_(profile,config,force,minuteOfDay) {
+    if(!profile||profile.enabled===false) return false;
+    if(force===true) return true;
+    const w=profileActiveWindow_(profile,config);
+    if(minuteOfDay!==undefined&&minuteOfDay!==null){
+      return isWithinActiveWindowMinutes_(w.start,w.end,Number(minuteOfDay));
+    }
+    return isProfileActiveNow_(profile,config,new Date());
+  }
+
+  function productFitUnderAiPolicy_(productFit,contextValid,aiPolicy) {
+    if(!contextValid || (aiPolicy&&aiPolicy.qualificationEnabled===false)) return 'Chưa rõ';
+    return ['Có','Không','Chưa rõ'].indexOf(String(productFit||''))>=0?String(productFit):'Chưa rõ';
+  }
+
+  function leadGateUnderAiPolicy_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext,aiPolicy) {
+    if(aiPolicy&&aiPolicy.qualificationEnabled===false){
+      if(buyerRole==='Không') return 'FAIL';
+      return String(effectiveContext||'').trim()?'WATCH':'CONTEXT_REQUIRED';
+    }
+    return decideLeadGate_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext);
+  }
+
+  function resolveActionPolicyDecision_(signal,actionPolicy) {
+    signal=signal||{};
+    const gate=String(signal.gate||'');
+    const intent=String(signal.intent||'');
+    const nextAction=String(signal.nextAction||'');
+    const classification=String(signal.classification||'');
+    let action='WATCH';
+    if(gate==='FAIL') action=classification==='Nguồn hội thoại'?'NO_ACTION_RELEVANT':'IGNORE';
+    else if(gate==='PASS') action=['Muốn mua','Cần mua gấp'].indexOf(intent)>=0?'OUTREACH_CANDIDATE':'LEAD';
+    else if(gate==='REVIEW_REQUIRED') action='HUMAN_REVIEW';
+    else if(['Comment giá trị','Hỏi chẩn đoán','Gợi ý giải pháp','Nối tiếp hội thoại'].indexOf(nextAction)>=0) action='VALUE_COMMENT';
+    else if(classification==='Nguồn hội thoại'||classification==='Theo dõi') action='NO_ACTION_RELEVANT';
+    return {
+      action,
+      requiresHumanApproval:!actionPolicy||actionPolicy.humanApproval!==false,
+      autoComment:false,
+      externalExecutionAllowed:false
+    };
+  }
+
+  function getAutoPolicyState_() {
+    const config=getAutoPolicyConfig_();
+    const profile=activePolicyProfile_(config);
+    const sh=SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.GROUP_SCAN_SHEET);
+    let activeGroups=0,assignedGroups=0;
+    const examples=[];
+    if(sh&&sh.getLastRow()>=2){
+      sh.getRange(2,1,sh.getLastRow()-1,27).getValues().forEach((r,i)=>{
+        if(String(r[0]||'').trim()!=='Có') return;
+        activeGroups++;
+        const group=groupPolicyInput_(r);
+        const owner=policyProfileForGroup_(config,group.groupKey);
+        if(owner&&profile&&owner.id===profile.id) assignedGroups++;
+        if(examples.length<8){
+          const effective=resolveEffectiveScanPolicy_(owner,group,config);
+          examples.push({
+            row:i+2,name:String(r[2]||'').trim(),groupKey:group.groupKey,
+            profileId:owner&&owner.id||'',
+            scansPerDay:effective.scansPerDay,postsPerScan:effective.postsPerScan,
+            sources:effective.sources
+          });
+        }
+      });
+    }
+    return {
+      version:CFG.VERSION,
+      config,
+      enabled:isAutoMonitorEnabled_(),
+      activeProfile:profile,
+      activeGroups,
+      assignedGroups,
+      capacity:Number(profile&&profile.maxGroupCapacity||0),
+      overCapacity:!!profile&&assignedGroups>Number(profile.maxGroupCapacity||0),
+      activeNow:!!profile&&isProfileActiveNow_(profile,config,new Date()),
+      effective:{
+        window:profileActiveWindow_(profile,config),
+        scan:resolveEffectiveScanPolicy_(profile,{},config),
+        comment:resolveEffectiveCommentPolicy_(profile,null,config),
+        ai:resolveEffectiveAiPolicy_(profile,null,config),
+        action:resolveEffectiveActionPolicy_(profile,config)
+      },
+      examples
+    };
+  }
+
+  function saveAutoPolicyConfig_(command) {
+    command=command||{};
+    const raw=command.policy&&typeof command.policy==='object'?command.policy:getAutoPolicyConfig_();
+    validateAutoPolicy_(raw);
+    const next=normalizeAutoPolicy_(raw);
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_POLICY_KEY,JSON.stringify(next));
+    return Object.assign(getAutoPolicyState_(),{ok:true});
+  }
+
+  function runAutoPolicyHarness_() {
+    const config=normalizeAutoPolicy_({
+      activeProfileId:'IX01',
+      global:{
+        auto:{triggerMinutes:5,activeStart:'08:00',activeEnd:'20:00',timezone:'Asia/Ho_Chi_Minh',maxGroupsPerCycle:4,runtimeBudgetMs:230000},
+        scan:{scansPerDay:2,postsPerScan:10,maxPostsPerScan:50,dueToleranceMinutes:5,retryAttempts:5,retryBackoffMinutes:[2,10,30]},
+        comment:{enabled:true,maxPostsPerCycle:4,maxPagesPerPost:3,maxCommentsPerPost:100,hotWatchHours:24,recheckMinutes:30,ownPostPriority:100,externalPostPriority:50,providerBreakerMinutes:10},
+        ai:{signalEnabled:true,qualificationEnabled:true,chunkSize:12},
+        action:{humanApproval:true,autoComment:false}
+      },
+      profiles:[{id:'IX01',displayName:'Pilot',enabled:true,maxGroupCapacity:30,scan:{postsPerScan:15},comment:{},ai:{},action:{}}]
+    });
+    const profile=activePolicyProfile_(config);
+    const globalProfile=Object.assign({},profile,{scan:{}});
+    const t01=resolveEffectiveScanPolicy_(globalProfile,{},config);
+    const t02=resolveEffectiveScanPolicy_(profile,{},config);
+    const t03=resolveEffectiveScanPolicy_(profile,{scansPerDay:3,postsPerScan:25},config);
+    let invalid=false;
+    try{validateAutoPolicy_({global:{auto:{triggerMinutes:2},action:{autoComment:true}}});}catch(_){invalid=true;}
+    const noContextFit=productFitUnderAiPolicy_('Có',false,{qualificationEnabled:true});
+    const noContextGate=leadGateUnderAiPolicy_('Có',noContextFit,true,true,'',{qualificationEnabled:true});
+    const passGate=leadGateUnderAiPolicy_('Có','Có',true,true,'VALID',{qualificationEnabled:true});
+    const signalOnly=leadGateUnderAiPolicy_('Có','Chưa rõ',true,true,'VALID',{qualificationEnabled:false});
+    const commentOff=normalizeAutoPolicy_({global:{comment:{enabled:false}},profiles:[{id:'IX01',enabled:true}]});
+    const lanes=autoPolicyLanePlan_(commentOff,activePolicyProfile_(commentOff));
+    const action=resolveActionPolicyDecision_(
+      {gate:'PASS',intent:'Cần mua gấp',classification:'Rất tiềm năng',nextAction:'Mời inbox'},
+      {humanApproval:true,autoComment:false}
+    );
+    const hf9=runGroupSummaryCardinalityHarness_();
+    const tests={
+      POLICY_T01_GLOBAL_DEFAULT:t01.postsPerScan===10&&t01.sources.postsPerScan==='GLOBAL',
+      POLICY_T02_PROFILE_OVERRIDE:t02.postsPerScan===15&&t02.sources.postsPerScan==='PROFILE',
+      POLICY_T03_GROUP_OVERRIDE:t03.postsPerScan===25&&t03.scansPerDay===3&&t03.sources.postsPerScan==='GROUP',
+      POLICY_T04_INVALID_REJECTED:invalid,
+      POLICY_T05_OUTSIDE_ACTIVE_HOURS:shouldAutoScanProfile_(profile,config,false,7*60+30)===false,
+      POLICY_T06_MANUAL_RUN_OUTSIDE_WINDOW:shouldAutoScanProfile_(profile,config,true,7*60+30)===true,
+      POLICY_T07_COMMENT_OFF_OTHER_LANES_RUN:lanes.comment===false&&lanes.group===true&&lanes.ai===true&&lanes.sales===true,
+      POLICY_T08_SIGNAL_CONTEXT_MISSING:noContextFit==='Chưa rõ'&&noContextGate==='CONTEXT_REQUIRED',
+      POLICY_T09_QUALIFICATION_REQUIRES_POLICY:passGate==='PASS'&&signalOnly!=='PASS',
+      POLICY_T10_HUMAN_APPROVAL_NO_EXTERNAL_ACTION:
+        action.action==='OUTREACH_CANDIDATE'&&action.requiresHumanApproval===true&&action.externalExecutionAllowed===false&&action.autoComment===false,
+      POLICY_T11_HF9_CARDINALITY:!!hf9.ok,
+      POLICY_T12_LEASE_ISOLATION:CFG.AI_LEASE_KEY!==CFG.AUTO_MONITOR_LEASE_KEY&&CFG.COMMENT_POST_LEASE_PREFIX!==CFG.GROUP_LEASE_PREFIX
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function getVersion() { return CFG.VERSION; }
 
   function onOpen() {
@@ -2012,6 +2174,9 @@ const RemoteApp = (() => {
     if (name === 'SAVE_BRIDGE_CONFIG') return saveApiBridgeConfig_(command);
     if (name === 'TEST_BRIDGE') return testApiBridge_();
     if (name === 'GET_MONITORING_OVERVIEW') return getMonitoringOverview_();
+    if (name === 'GET_AUTO_POLICY') return getAutoPolicyState_();
+    if (name === 'SAVE_AUTO_POLICY') return saveAutoPolicyConfig_(command);
+    if (name === 'RUN_AUTO_POLICY_HARNESS') return runAutoPolicyHarness_();
     if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_(false);
     if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2_(command.enabled !== false);
     if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
@@ -9032,5 +9197,6 @@ const RemoteApp = (() => {
     runContextIntegrityHarness: runContextIntegrityHarness_,
     runProviderResilienceHarness: runProviderResilienceHarness_,
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
+    runAutoPolicyHarness: runAutoPolicyHarness_,
   };
 })();
