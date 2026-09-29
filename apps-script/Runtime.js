@@ -7299,12 +7299,47 @@ const RemoteApp = (() => {
     };
   }
 
+  function schedulerGroupTruth_(row,config,nowMs) {
+    row=row||[];
+    const now=Number(nowMs||Date.now());
+    const active=String(row[0]||'').trim();
+    const lifecycle=String(row[6]||'').trim();
+    const runtimeStatus=String(row[23]||'').trim();
+    const note=String(row[25]||'').trim();
+    const group=groupPolicyInput_(row);
+    if(!group.groupKey) return {state:'IDENTITY_ERROR',reason:'MISSING_GROUP_KEY',group,profile:null,scan:null,nextAtMs:0,due:false};
+    const profile=policyProfileForGroup_(config,group.groupKey);
+    if(active!=='Có'||lifecycle==='Loại'||!profile||profile.enabled===false){
+      return {state:'BLOCKED',reason:active!=='Có'?'INACTIVE':'PROFILE_OR_LIFECYCLE_BLOCK',group,profile,scan:null,nextAtMs:0,due:false};
+    }
+    if(runtimeStatus==='ĐANG QUÉT') return {state:'BLOCKED',reason:'RUNNING',group,profile,scan:null,nextAtMs:0,due:false};
+    if(/Wrong ID|FB account not found|GROUP_ID_RESOLVE|only supports group/i.test(note)){
+      return {state:'IDENTITY_ERROR',reason:'GROUP_ID_RESOLVE',group,profile,scan:null,nextAtMs:0,due:false};
+    }
+    if(runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'){
+      const cls=classifyAutoSheetException_(runtimeStatus,note);
+      const retryState=getAutoRetryState_(group.groupKey);
+      const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)>=0;
+      if(retryState.hard) return {state:'QUARANTINED',reason:cls||'HARD_RETRY',group,profile,scan:null,nextAtMs:Number(retryState.nextAt||0),due:false};
+      if(!retryable) return {state:'BLOCKED',reason:cls||'STRUCTURAL',group,profile,scan:null,nextAtMs:0,due:false};
+      return {state:'RETRY',reason:retryState.nextAt&&retryState.nextAt>now?'BACKOFF':'READY',group,profile,scan:null,nextAtMs:Number(retryState.nextAt||0),due:!retryState.nextAt||retryState.nextAt<=now};
+    }
+    if(/^DỪNG/.test(runtimeStatus)) return {state:'BLOCKED',reason:'STOPPED',group,profile,scan:null,nextAtMs:0,due:false};
+    const scan=resolveEffectiveScanPolicy_(profile,group,config);
+    const lastAt=opsDateMs_(row[9]);
+    const nextAt=effectiveNextDueMs_(lastAt,scan);
+    const due=!lastAt||!nextAt||nextAt<=now;
+    return {state:due?'DUE':'WAIT',reason:due?'DUE':'NOT_DUE',group,profile,scan,nextAtMs:nextAt,due};
+  }
+
   function getMonitoringOverview_() {
     ensureV16Sheets_(false);
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
     const last=sh.getLastRow();
     const now=Date.now();
+    const policyConfig=getAutoPolicyConfig_();
+    const activePolicyProfile=activePolicyProfile_(policyConfig);
     const counts={
       active:0,running:0,error:0,incomplete:0,stopped:0,
       newPostsToday:0,scanUpdatesToday:0,withContext:0,
@@ -7326,15 +7361,12 @@ const RemoteApp = (() => {
         const lifecycle=String(r[6]||'').trim();
         const runtimeStatus=String(r[23]||'').trim();
         const lastAt=opsDateMs_(r[9]);
-        const nextAtRaw=opsDateMs_(r[10]);
-        const scansPerDay=Math.max(1,Number(r[7]||1));
-        const expectedIntervalMs=24*60*60*1000/scansPerDay;
-        const nextAt=nextAtRaw || (lastAt ? lastAt+expectedIntervalMs : 0);
-        const dueText=String(r[11]||'').trim();
-        const due=!lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=now;
+        const truth=schedulerGroupTruth_(r,policyConfig,now);
+        const nextAt=Number(truth.nextAtMs||0);
+        const due=truth.state==='DUE';
         const overdueMs=!lastAt
-          ? CFG.OPS_OVERDUE_SEVERE_MS+1
-          : (due ? Math.max(0,now-nextAt) : 0);
+          ? (due?CFG.OPS_OVERDUE_SEVERE_MS+1:0)
+          : (due&&nextAt ? Math.max(0,now-nextAt) : 0);
 
         if(!lastAt) counts.neverScanned++;
         else if(now-lastAt<=CFG.OPS_COVERAGE_WINDOW_MS) counts.scanned24h++;
@@ -7350,11 +7382,13 @@ const RemoteApp = (() => {
           overduePreview.push({
             row,name,lifecycle,
             status:runtimeStatus||'CHỜ',
-            targetCount:normalizeGroupTarget_(r[8]||25),
+            schedulerState:truth.state,
+            schedulerReason:truth.reason,
+            targetCount:truth.scan?truth.scan.postsPerScan:normalizeGroupTarget_(r[8]||25),
             overdueMs,
             nextAtMs:nextAt,
             lastAtMs:lastAt,
-            exception:runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)
+            exception:false
           });
         }
 
@@ -7366,6 +7400,8 @@ const RemoteApp = (() => {
         if(runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)){
           exceptionPreview.push({
             row,name,status:runtimeStatus,lifecycle,
+            schedulerState:truth.state,
+            schedulerReason:truth.reason,
             lastAtMs:lastAt,
             ageMs:lastAt?Math.max(0,now-lastAt):0,
             progress:String(r[24]||'').trim(),
@@ -7392,7 +7428,7 @@ const RemoteApp = (() => {
       return (b.ageMs||0)-(a.ageMs||0);
     });
 
-    const dueAll=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT);
+    const dueAll=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT,{policyConfig});
     const ai=getAiOperationsStats_(now);
     const workers=getWorkerPoolPublic_();
     const coverage24hPct=counts.active
@@ -7428,7 +7464,15 @@ const RemoteApp = (() => {
       version:CFG.VERSION,
       generatedAt:new Date().toISOString(),
       pilotGroupLimit:CFG.PILOT_GROUP_LIMIT,
-      dueCycleLimit:CFG.DUE_CYCLE_LIMIT,
+      dueCycleLimit:Number(policyConfig.global.auto.maxGroupsPerCycle||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK),
+      policySummary:{
+        profileId:activePolicyProfile&&activePolicyProfile.id||'',
+        activeNow:!!activePolicyProfile&&isProfileActiveNow_(activePolicyProfile,policyConfig,new Date()),
+        window:profileActiveWindow_(activePolicyProfile,policyConfig),
+        scan:resolveEffectiveScanPolicy_(activePolicyProfile,{},policyConfig),
+        comment:resolveEffectiveCommentPolicy_(activePolicyProfile,null,policyConfig),
+        ai:resolveEffectiveAiPolicy_(activePolicyProfile,null,policyConfig)
+      },
       activeGroups:counts.active,
       dueNow:dueAll.length,
       running:counts.running,
@@ -7452,6 +7496,7 @@ const RemoteApp = (() => {
       operationalHealth,
       duePreview:dueAll.slice(0,12).map(x=>({
         row:x.row,name:x.name,profile:x.profile,targetCount:x.targetCount,lifecycle:x.lifecycle,
+        schedulerState:'DUE',policyProfileId:x.policyProfileId||'',
         overdueMs:x.nextAtMs?Math.max(0,now-x.nextAtMs):0
       })),
       overduePreview:overduePreview.slice(0,10),
