@@ -469,7 +469,7 @@ const RemoteApp = (() => {
       const recommendation=recommendedScanPolicy_(metric,policy);
       out.push({
         row:i+2,
-        name:String(r[2]||'').trim()||('Group '+group.groupKey),
+        name:normalizeGroupDisplayName_(r[2]),
         groupKey:group.groupKey,
         scans:Number(metric.totalScans||0),
         successfulScans:Number(metric.successfulScans||0),
@@ -1081,7 +1081,7 @@ const RemoteApp = (() => {
     if (!stats[key]) {
       stats[key] = {
         key,
-        name: groupInfo && groupInfo.name ? groupInfo.name : (groupKey ? 'Group ' + groupKey : 'Group không rõ'),
+        name: normalizeGroupDisplayName_(groupInfo && groupInfo.name ? groupInfo.name : ''),
         row: groupInfo && groupInfo.row ? groupInfo.row : null,
         files: {},
         fileName: '',
@@ -1991,7 +1991,7 @@ const RemoteApp = (() => {
       const validation=validateOfferContext_(r[26]);
       const item={
         row,
-        name:String(r[2]||'').trim()||('Group '+String(primary||row)),
+        name:normalizeGroupDisplayName_(r[2]),
         groupKey:primary,
         aliases,
         valid:validation.valid,
@@ -4862,6 +4862,45 @@ const RemoteApp = (() => {
   }
 
 
+  function rebuildGroupAliasRegistryFromEvidence_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const alias=ensureGroupAliasRegistry_();
+    const scanRows=scan.getLastRow()>=2?scan.getRange(2,1,scan.getLastRow()-1,27).getDisplayValues():[];
+    const plan=buildGroupRegistryCleanupPlan_(scanRows);
+    const merged=new Map();
+
+    if(alias.getLastRow()>=2){
+      alias.getRange(2,1,alias.getLastRow()-1,7).getDisplayValues().forEach(r=>{
+        const canonical=String(r[0]||'').trim().toLowerCase();
+        const a=String(r[1]||'').trim().toLowerCase();
+        const numeric=String(r[2]||'').trim();
+        const scientific=/[eE]\+|\d,\d+E\+/i;
+        if(!canonical||!a||scientific.test(canonical)||scientific.test(a)||scientific.test(numeric)) return;
+        merged.set(canonical+'|'+a,[
+          canonical,a,numeric,String(r[3]||'QUÉT NHÓM'),
+          r[4]||'',r[5]||'',String(r[6]||'CANONICAL_IDENTITY_OBSERVED')
+        ]);
+      });
+    }
+
+    plan.aliases.forEach(rec=>{
+      const canonical=String(rec.canonicalKey||'').trim().toLowerCase();
+      const a=String(rec.alias||'').trim().toLowerCase();
+      if(!canonical||!a) return;
+      merged.set(canonical+'|'+a,[
+        canonical,a,String(rec.numericId||''),String(rec.source||'QUÉT NHÓM'),
+        rec.firstSeen||new Date(),rec.lastSeen||new Date(),String(rec.reason||'CANONICAL_IDENTITY_OBSERVED')
+      ]);
+    });
+
+    if(alias.getLastRow()>=2) alias.getRange(2,1,alias.getLastRow()-1,7).clearContent();
+    alias.getRange(2,1,Math.max(1,alias.getMaxRows()-1),3).setNumberFormat('@');
+    const rows=[...merged.values()];
+    if(rows.length) alias.getRange(2,1,rows.length,7).setValues(rows);
+    return {rows:rows.length,evidenceRows:plan.aliases.length};
+  }
+
   function repairLegacyGroupDisplayNames_() {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
@@ -4875,12 +4914,11 @@ const RemoteApp = (() => {
       });
       if(changed) scan.getRange(2,3,out.length,1).setValues(out);
     }
-    const alias=ensureGroupAliasRegistry_();
-    alias.getRange(2,1,Math.max(1,alias.getMaxRows()-1),3).setNumberFormat('@');
+    const aliasRepair=rebuildGroupAliasRegistryFromEvidence_();
     const summary=ss.getSheetByName(CFG.GROUP_SUMMARY_SHEET);
     if(summary) summary.getRange(2,4,Math.max(1,summary.getMaxRows()-1),1).setNumberFormat('@');
     refreshGroupSummary_();
-    return {ok:true,changed,version:CFG.VERSION};
+    return {ok:true,changed,aliasRepair,version:CFG.VERSION};
   }
 
   function repairScanRegistry_() {
@@ -6789,7 +6827,7 @@ const RemoteApp = (() => {
       const key=exactGroupKeyFromRow_(url,r[4]);
       if(!key) return;
       (buckets[key]||(buckets[key]=[])).push({
-        row:i+2,key,name:String(r[2]||'').trim()||('Group '+key),
+        row:i+2,key,name:normalizeGroupDisplayName_(r[2]),
         lastAt:opsDateMs_(r[9]),status:String(r[23]||'').trim()
       });
     });
@@ -6840,7 +6878,7 @@ const RemoteApp = (() => {
       const item={
         row,key,
         active:String(r[0]||'').trim()==='Có',
-        name:String(r[2]||'').trim()||('Group '+key),
+        name:normalizeGroupDisplayName_(r[2]),
         status:String(r[23]||'').trim(),
         lastAt:opsDateMs_(r[9])
       };
@@ -7125,7 +7163,7 @@ const RemoteApp = (() => {
       const policy=resolveEffectiveScanPolicy_(profile,group,config);
       out.push({
         row,
-        name:String(r[2]||'').trim()||('Group '+group.groupKey),
+        name:normalizeGroupDisplayName_(r[2]),
         profile:String(r[1]||'').trim()||'AUTO',
         policyProfileId:profile.id,
         url,
@@ -8150,7 +8188,7 @@ const RemoteApp = (() => {
       if(!byCanonicalRow[row]){
         byCanonicalRow[row]={
           row,
-          name:String(cr[2]||'').trim() || ('Group '+String(cr[4]||'')),
+          name:normalizeGroupDisplayName_(cr[2]),
           profile:String(cr[1]||'').trim() || 'AUTO',
           url,
           groupKey:exactGroupKeyFromRow_(url,cr[4]),
@@ -8229,7 +8267,7 @@ const RemoteApp = (() => {
 
       jobs.push({
         row:i+2,
-        name:String(r[2]||'').trim()||('Group '+String(r[4]||'')),
+        name:normalizeGroupDisplayName_(r[2]),
         profile:String(r[1]||'').trim()||'AUTO',
         policyProfileId:profile.id,
         url,
@@ -8479,7 +8517,7 @@ const RemoteApp = (() => {
         counts.active++;
 
         const row=i+2;
-        const name=String(r[2]||'').trim() || ('Group '+String(r[4]||row));
+        const name=normalizeGroupDisplayName_(r[2]);
         const lifecycle=String(r[6]||'').trim();
         const runtimeStatus=String(r[23]||'').trim();
         const lastAt=opsDateMs_(r[9]);
@@ -8706,7 +8744,7 @@ const RemoteApp = (() => {
       };
     }
 
-    const name=String(sheet.getRange(row,3).getDisplayValue()||'').trim() || ('Group '+row);
+    const name=normalizeGroupDisplayName_(sheet.getRange(row,3).getDisplayValue());
     const groupUrl=String(sheet.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=exactGroupKeyFromRow_(groupUrl,sheet.getRange(row,5).getDisplayValue());
     if(!/facebook\.com\/groups\//i.test(groupUrl)) throw new Error('Dòng '+row+' không có URL Group hợp lệ.');
@@ -9450,7 +9488,7 @@ const RemoteApp = (() => {
       throw new Error('Chọn một dòng Group hợp lệ trong QUÉT NHÓM để chẩn đoán.');
     }
 
-    const groupName=String(sh.getRange(row,3).getDisplayValue()||'').trim()||('Group '+row);
+    const groupName=normalizeGroupDisplayName_(sh.getRange(row,3).getDisplayValue());
     const groupUrl=String(sh.getRange(row,4).getDisplayValue()||'').trim();
     const groupKey=exactGroupKeyFromRow_(groupUrl,sh.getRange(row,5).getDisplayValue());
 
