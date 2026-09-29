@@ -421,7 +421,7 @@ jobs:
           assert "remaining<CFG.AUTO_MONITOR_JOB_START_RESERVE_MS" in auto_tick_block
           assert "remaining>=CFG.AUTO_AI_START_RESERVE_MS" in auto_tick_block
           assert "scope:'all_waiting'" in auto_tick_block
-          assert "maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK" in auto_tick_block
+          assert "maxRowsOverride:aiPolicy.chunkSize" in auto_tick_block
           assert "Date.now()-started<150000" not in auto_tick_block
           assert "summary.aiBacklogDrain" in auto_tick_block
           auto_log_start = runtime.index('function logAutoMonitorRun_(')
