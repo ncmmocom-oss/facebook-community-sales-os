@@ -42,6 +42,7 @@ const RemoteApp = (() => {
     OPS_FRESH_SIGNAL_MS: 2 * 60 * 60 * 1000,
     OPS_AI_STALE_MS: 2 * 60 * 60 * 1000,
     AUTO_POLICY_KEY: 'SOCIAL_AIO_AUTO_POLICY_V1',
+    GROUP_EFFICIENCY_PREFIX: 'SOCIAL_AIO_GROUP_EFF_V1_',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
     AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
@@ -367,6 +368,38 @@ const RemoteApp = (() => {
     const cp=resolveEffectiveCommentPolicy_(p,null,c);
     const ai=resolveEffectiveAiPolicy_(p,null,c);
     return {group:!!p&&p.enabled!==false,comment:cp.enabled,ai:ai.signalEnabled,sales:true};
+  }
+
+  function groupEfficiencyKey_(groupKey) {
+    return CFG.GROUP_EFFICIENCY_PREFIX+encodeURIComponent(String(groupKey||'').trim().toLowerCase());
+  }
+
+  function getGroupEfficiencyMetric_(groupKey) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    const base={groupKey:key,totalScans:0,successfulScans:0,scannedPosts:0,newPosts:0,duplicates:0,totalDurationMs:0,errors:0,updatedAt:''};
+    if(!key) return base;
+    try{
+      return Object.assign(base,JSON.parse(PropertiesService.getDocumentProperties().getProperty(groupEfficiencyKey_(key))||'{}'));
+    }catch(_){
+      return base;
+    }
+  }
+
+  function recordGroupEfficiency_(groupKey,data) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!key) return null;
+    data=data||{};
+    const m=getGroupEfficiencyMetric_(key);
+    m.totalScans=Number(m.totalScans||0)+1;
+    if(data.success) m.successfulScans=Number(m.successfulScans||0)+1;
+    else m.errors=Number(m.errors||0)+1;
+    m.scannedPosts+=Math.max(0,Number(data.scannedPosts||0));
+    m.newPosts+=Math.max(0,Number(data.newPosts||0));
+    m.duplicates+=Math.max(0,Number(data.duplicates||0));
+    m.totalDurationMs+=Math.max(0,Number(data.durationMs||0));
+    m.updatedAt=new Date().toISOString();
+    PropertiesService.getDocumentProperties().setProperty(groupEfficiencyKey_(key),JSON.stringify(m));
+    return m;
   }
 
   function groupPolicyInput_(row) {
