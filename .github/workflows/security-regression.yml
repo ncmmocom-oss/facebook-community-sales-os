@@ -279,8 +279,8 @@ jobs:
           assert 'value="25"' in ui
           assert 'min="1"' in ui and 'max="200"' in ui
           assert '<select id="groupTarget">' not in ui
-          for fixed in ['10 bài','15 bài','20 bài','25 bài</option>']:
-              assert fixed not in ui, f'fixed scan target option must be removed: {fixed}'
+          # Manual scan target must remain free numeric input; discovery copy may legitimately say "10 bài".
+          assert not re.search(r'<option[^>]*>\s*(10|15|20|25)\s*bài\s*</option>', ui), 'manual fixed scan target options must remain removed'
 
           assert "requireNumberBetween(1,200)" in runtime
           assert "requireValueInList(['10','15','20','25']" not in runtime
