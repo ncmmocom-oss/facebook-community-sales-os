@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.5-verified-identity-retry',
+    VERSION: '1.9.8.7-HF10.6-identity-display-cleanup',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -757,6 +757,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.6 Identity Display Cleanup: cấm placeholder Group <slug/id>; legacy generated names được chuẩn hóa thành CHƯA LẤY TÊN; Group Alias Registry và Group Intelligence khóa identity columns dạng TEXT để không scientific-coerce numeric IDs.\n' +
       'V1.9.8.7-HF10.5 Verified Identity Retry: Group đang LỖI GROUP_ID_RESOLVE chỉ được self-repair đúng 1 lần khi có numeric Group ID deterministic đã xác minh; nếu retry lại fail thì giữ quarantine, không loop.\n' +
       'V1.9.8.7-HF10.4 API-Native Cleanup: production FBAIO paths truyền parsed records trực tiếp vào normalization/write core; JSON file parsing giữ riêng cho Legacy Debug/Recovery; NHẬP JSON vẫn giữ làm RAW POSTS storage để tránh destructive migration.\n' +
       'V1.9.8.7-HF10.3 Group Intelligence: NHÓM trở thành canonical Group Intelligence; tách FB REPORTED/OBSERVED, archive schema cũ, activity-window measurement chỉ ghi Posts/24h và Avg 7d khi đã paginate qua boundary tương ứng.\n' +
@@ -2436,6 +2437,7 @@ const RemoteApp = (() => {
     if (name === 'RUN_AUTO_POLICY_HARNESS') return runAutoPolicyHarness_();
     if (name === 'GET_GROUP_EFFICIENCY') return getGroupEfficiencyReport_(command.limit);
     if (name === 'APPLY_SELECTED_SCAN_RECOMMENDATION') return applySelectedScanRecommendation_();
+    if (name === 'REPAIR_GROUP_DISPLAY_NAMES') return repairLegacyGroupDisplayNames_();
     if (name === 'ONBOARD_GROUP_URL') return prepareOnboardingWorkerBatch_(command);
     if (name === 'EVALUATE_GROUP_DISCOVERY') return evaluateGroupDiscovery_(command);
     if (name === 'GET_GROUP_DISCOVERY') return getGroupDiscovery_(command.groupKey);
@@ -4279,6 +4281,7 @@ const RemoteApp = (() => {
     sh.getRange(1,1,1,7).setValues([[
       'Canonical Key','Alias','Numeric ID','Source','First Seen','Last Seen','Reason'
     ]]);
+    sh.getRange(2,1,Math.max(1,sh.getMaxRows()-1),3).setNumberFormat('@');
     sh.setFrozenRows(1);
     try{sh.hideSheet();}catch(_){}
     return sh;
@@ -4288,7 +4291,7 @@ const RemoteApp = (() => {
     const sh=ensureGroupAliasRegistry_();
     const existing=new Map();
     if(sh.getLastRow()>=2){
-      sh.getRange(2,1,sh.getLastRow()-1,7).getValues().forEach((r,i)=>{
+      sh.getRange(2,1,sh.getLastRow()-1,7).getDisplayValues().forEach((r,i)=>{
         const canonical=String(r[0]||'').trim().toLowerCase();
         const alias=String(r[1]||'').trim().toLowerCase();
         if(canonical&&alias) existing.set(canonical+'|'+alias,{row:i+2,data:r});
@@ -4388,6 +4391,18 @@ const RemoteApp = (() => {
     } finally {
       lock.releaseLock();
     }
+  }
+
+  function runGroupDisplayInvariantHarness_() {
+    const tests={
+      DISPLAY_EMPTY_PLACEHOLDER:normalizeGroupDisplayName_('')==='CHƯA LẤY TÊN',
+      DISPLAY_NUMERIC_PLACEHOLDER:normalizeGroupDisplayName_('Group 1246286956929415')==='CHƯA LẤY TÊN',
+      DISPLAY_SLUG_PLACEHOLDER:normalizeGroupDisplayName_('Group j2team.community')==='CHƯA LẤY TÊN',
+      DISPLAY_REAL_TITLE_PRESERVED:normalizeGroupDisplayName_('Hội VinFast Việt Nam')==='Hội VinFast Việt Nam',
+      ALIAS_SCIENTIFIC_REJECTED_BY_ID_RULE:/^\d+$/.test('2.44464E+15')===false
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
   }
 
   function runGroupRegistryCleanupHarness_() {
@@ -4759,7 +4774,7 @@ const RemoteApp = (() => {
       const url=String(s[3]||'').trim();
       const canonicalKey=String(group.canonicalKey||extractGroupKey_(url)||'').trim().toLowerCase();
       if(!canonicalKey) return;
-      const name=String(s[2]||'').trim()||groupPlaceholderName_();
+      const name=normalizeGroupDisplayName_(s[2]);
       const profile=policyProfileForGroup_(policyConfig,canonicalKey);
       const list=collectGroupSummaryOpportunities_(byGroupKey,group.aliases);
       const contextValid=validateOfferContext_(s[26]).valid;
@@ -4797,6 +4812,7 @@ const RemoteApp = (() => {
 
     const oldLast=summarySheet.getLastRow();
     if(oldLast>=2) summarySheet.getRange(2,1,oldLast-1,17).clearContent();
+    summarySheet.getRange(2,4,Math.max(1,summarySheet.getMaxRows()-1),1).setNumberFormat('@');
     if(output.length) summarySheet.getRange(2,1,output.length,17).setValues(output);
     if(output.length) summarySheet.setRowHeights(2,output.length,CFG.SHEET_ROW_HEIGHT_PX);
     summarySheet.setFrozenRows(1);
@@ -4846,6 +4862,27 @@ const RemoteApp = (() => {
   }
 
 
+  function repairLegacyGroupDisplayNames_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    let changed=0;
+    if(scan.getLastRow()>=2){
+      const names=scan.getRange(2,3,scan.getLastRow()-1,1).getDisplayValues();
+      const out=names.map(r=>{
+        const next=normalizeGroupDisplayName_(r[0]);
+        if(next!==String(r[0]||'')) changed++;
+        return [next];
+      });
+      if(changed) scan.getRange(2,3,out.length,1).setValues(out);
+    }
+    const alias=ensureGroupAliasRegistry_();
+    alias.getRange(2,1,Math.max(1,alias.getMaxRows()-1),3).setNumberFormat('@');
+    const summary=ss.getSheetByName(CFG.GROUP_SUMMARY_SHEET);
+    if(summary) summary.getRange(2,4,Math.max(1,summary.getMaxRows()-1),1).setNumberFormat('@');
+    refreshGroupSummary_();
+    return {ok:true,changed,version:CFG.VERSION};
+  }
+
   function repairScanRegistry_() {
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const sheet = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
@@ -4863,7 +4900,7 @@ const RemoteApp = (() => {
       if (!key) return;
 
       if (!r[0]) sheet.getRange(rowNum, 1).setValue('Có');
-      if (!r[2]) sheet.getRange(rowNum, 3).setValue('Group ' + key);
+      if (isGroupPlaceholderName_(r[2])) sheet.getRange(rowNum, 3).setValue(groupPlaceholderName_());
       if (!r[4]) sheet.getRange(rowNum, 5).setValue(key);
       if (!r[6]) sheet.getRange(rowNum, 7).setValue('Thử nghiệm');
       if (!r[7]) sheet.getRange(rowNum, 8).setValue(3);
@@ -4912,8 +4949,8 @@ const RemoteApp = (() => {
       if (!gid && fileSingle[file]) gid = fileSingle[file];
 
       let name = String(r[2] || '').trim();
-      if (gid && map[gid]) name = map[gid].name;
-      else if (gid && (!name || name === 'Group không rõ' || name === 'Group 3')) name = 'Group ' + gid;
+      if (gid && map[gid]) name = normalizeGroupDisplayName_(map[gid].name);
+      else if (gid && (isGroupPlaceholderName_(name) || name === 'Group không rõ')) name = groupPlaceholderName_();
 
       if (String(r[3] || '').trim().toLowerCase() !== gid || String(r[2] || '') !== name) {
         r[3] = gid;
@@ -5128,6 +5165,11 @@ const RemoteApp = (() => {
     const s=String(name||'').trim();
     if(!s || s===groupPlaceholderName_()) return true;
     return /^Group\s+[^\s]+$/i.test(s);
+  }
+
+  function normalizeGroupDisplayName_(name) {
+    const s=String(name||'').trim();
+    return isGroupPlaceholderName_(s)?groupPlaceholderName_():s;
   }
 
   function normalizeFacebookGroupInput_(input) {
@@ -10488,6 +10530,7 @@ const RemoteApp = (() => {
     runContextIntegrityHarness: runContextIntegrityHarness_,
     runProviderResilienceHarness: runProviderResilienceHarness_,
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
+    runGroupDisplayInvariantHarness: runGroupDisplayInvariantHarness_,
     runGroupRegistryCleanupHarness: runGroupRegistryCleanupHarness_,
     runGroupOnboardingHarness: runGroupOnboardingHarness_,
     runGroupIntelligenceHarness: runGroupIntelligenceHarness_,
