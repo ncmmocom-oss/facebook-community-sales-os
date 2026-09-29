@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF4-auto-budget',
+    VERSION: '1.9.8.7-HF5-provider-resilience',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -100,6 +100,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF5 Provider Resilience: centralize transient failover decision, log fallback success/failure với actual provider/model, và thêm executable provider harness cho 408/429/5xx/high-demand hai chiều.\n' +
       'V1.9.8.7-HF4 Auto Budget: AUTO chừa 120s trước khi start Group job mới; AI auto tối đa 12 source và chỉ start khi còn 160s reserve; cycle rảnh drain AI backlog; AUTO log ghi Runtime/budget/deferred evidence để tránh silent overrun.\n' +
       'V1.9.8.7-HF3 Sales State Guard: non-PASS chưa vào pipeline không thể nhận bất kỳ Sales Stage nào kể cả Lost; source đã ở pipeline vẫn được đóng Lost; terminal stage clear Next Follow-up; conversion state batch-read để bỏ per-row Sheet I/O.\n' +
       'V1.9.8.7-HF2 Group Identity Text: khóa Group ID/Group Key thành TEXT, cấm scientific display làm identity, backfill/repair AF từ Source ID evidence và canonical Group URL để tránh numeric coercion làm sai Group Key.\n' +
@@ -1508,6 +1509,26 @@ const RemoteApp = (() => {
     return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
   }
 
+  function runProviderResilienceHarness_() {
+    const codes=[408,429,500,502,503,504];
+    const geminiCfg={provider:'gemini',openaiConfigured:true,geminiConfigured:true};
+    const openaiCfg={provider:'openai',openaiConfigured:true,geminiConfigured:true};
+    const tests={
+      TRANSIENT_HTTP_CODES: codes.every(code=>{
+        const t=getAiFailoverTarget_(geminiCfg,new Error('Gemini HTTP '+code+': synthetic transient'));
+        return !!t && t.provider==='openai' && t.model==='gpt-5.6-luna';
+      }),
+      TRANSIENT_TEXT_HIGH_DEMAND: getAiFailoverTarget_(geminiCfg,new Error('high demand'))?.provider==='openai',
+      TRANSIENT_TEXT_RATE_LIMIT: getAiFailoverTarget_(openaiCfg,new Error('rate limit exceeded'))?.provider==='gemini',
+      GEMINI_TO_OPENAI: getAiFailoverTarget_(geminiCfg,new Error('HTTP 503 unavailable'))?.provider==='openai',
+      OPENAI_TO_GEMINI: getAiFailoverTarget_(openaiCfg,new Error('HTTP 429 rate limit'))?.provider==='gemini',
+      NO_SECOND_PROVIDER_FAIL_CLOSED: getAiFailoverTarget_({provider:'gemini',openaiConfigured:false},new Error('HTTP 503 unavailable'))===null,
+      NON_TRANSIENT_NO_FAILOVER: getAiFailoverTarget_(geminiCfg,new Error('HTTP 400 invalid request'))===null
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function normalizeSalesStage_(stage) {
     const raw=String(stage||'').trim();
     const match=CFG.SALES_STAGE_OPTIONS.find(x=>x.toLowerCase()===raw.toLowerCase());
@@ -1618,6 +1639,7 @@ const RemoteApp = (() => {
     if (name === 'GET_AI_PROGRESS') return getAiProgress_();
     if (name === 'GET_CONTEXT_READINESS') return getContextReadiness_();
     if (name === 'RUN_CONTEXT_INTEGRITY_HARNESS') return runContextIntegrityHarness_();
+    if (name === 'RUN_PROVIDER_RESILIENCE_HARNESS') return runProviderResilienceHarness_();
     if (name === 'SAVE_ACTIVE_GROUP_CONTEXT') return saveActiveGroupContext_(command);
     if (name === 'GET_SALES_RECOVERY_QUEUE') return getSalesRecoveryQueue_();
     if (name === 'GET_SALES_PIPELINE') return getSalesPipelineStats_();
@@ -2168,10 +2190,39 @@ const RemoteApp = (() => {
       .test(String(err&&err.message||err||''));
   }
 
+  function getAiFailoverTarget_(cfg,err) {
+    cfg=cfg||{};
+    if(!isTransientAiProviderError_(err)) return null;
+    if(cfg.provider==='gemini' && cfg.openaiConfigured){
+      return {from:'gemini',provider:'openai',model:'gpt-5.6-luna'};
+    }
+    if(cfg.provider==='openai' && cfg.geminiConfigured){
+      return {from:'openai',provider:'gemini',model:'gemini-auto'};
+    }
+    return null;
+  }
+
   function setLastEffectiveAiProvider_(provider,model) {
     const p=PropertiesService.getScriptProperties();
     p.setProperty('AI_LAST_EFFECTIVE_PROVIDER',String(provider||''));
     p.setProperty('AI_LAST_EFFECTIVE_MODEL',String(model||''));
+  }
+
+  function logAiFailover_(meta,target,primaryErr,status,detail) {
+    meta=meta||{}; target=target||{};
+    logAi_({
+      runId:meta.runId||'',
+      event:status==='OK'?'PROVIDER_FAILOVER':'PROVIDER_FAILOVER_FAILED',
+      provider:target.provider||'',
+      model:target.model||'',
+      batch:meta.batch||0,totalBatches:meta.totalBatches||0,
+      analyzed:meta.analyzed||0,total:meta.total||0,
+      remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),
+      status,
+      message:String(target.from||'primary')+' transient -> '+String(target.provider||'fallback')+
+        ' '+String(status||'')+'. Primary: '+String(primaryErr&&primaryErr.message||primaryErr||'').slice(0,400)+
+        (detail?(' | Fallback: '+String(detail).slice(0,400)):'')
+    });
   }
 
   function analyzeBatchWithProviderFailover_(batch,cfg,meta) {
@@ -2187,35 +2238,26 @@ const RemoteApp = (() => {
       setLastEffectiveAiProvider_('openai',cfg.model);
       return out;
     }catch(primaryErr){
-      if(!isTransientAiProviderError_(primaryErr)) throw primaryErr;
-
-      if(cfg.provider==='gemini' && cfg.openaiConfigured){
-        const fallbackCfg=Object.assign({},cfg,{provider:'openai',model:'gpt-5.6-luna'});
-        const out=analyzeBatchWithOpenAi_(batch,fallbackCfg);
-        setLastEffectiveAiProvider_('openai',fallbackCfg.model);
-        logAi_({
-          runId:meta.runId||'',event:'PROVIDER_FAILOVER',provider:'openai',model:fallbackCfg.model,
-          batch:meta.batch||0,totalBatches:meta.totalBatches||0,analyzed:meta.analyzed||0,total:meta.total||0,
-          remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),status:'OK',
-          message:'Gemini transient -> OpenAI fallback. '+String(primaryErr.message||primaryErr).slice(0,600)
-        });
-        return out;
-      }
-
-      if(cfg.provider==='openai' && cfg.geminiConfigured){
-        const fallbackCfg=Object.assign({},cfg,{provider:'gemini',model:'gemini-auto'});
+      const target=getAiFailoverTarget_(cfg,primaryErr);
+      if(!target) throw primaryErr;
+      const fallbackCfg=Object.assign({},cfg,{provider:target.provider,model:target.model});
+      try{
+        if(target.provider==='openai'){
+          const out=analyzeBatchWithOpenAi_(batch,fallbackCfg);
+          setLastEffectiveAiProvider_('openai',fallbackCfg.model);
+          logAiFailover_(meta,target,primaryErr,'OK','');
+          return out;
+        }
         const result=callGeminiStructured_(aiSystemPrompt_(fallbackCfg),JSON.stringify(batch),analysisSchema_(),fallbackCfg);
         if(!result.data || !Array.isArray(result.data.analyses)) throw new Error('Gemini fallback không trả analyses hợp lệ.');
-        setLastEffectiveAiProvider_('gemini',result.model||fallbackCfg.model);
-        logAi_({
-          runId:meta.runId||'',event:'PROVIDER_FAILOVER',provider:'gemini',model:result.model||fallbackCfg.model,
-          batch:meta.batch||0,totalBatches:meta.totalBatches||0,analyzed:meta.analyzed||0,total:meta.total||0,
-          remaining:Math.max(0,Number(meta.total||0)-Number(meta.analyzed||0)),status:'OK',
-          message:'OpenAI transient -> Gemini fallback. '+String(primaryErr.message||primaryErr).slice(0,600)
-        });
+        target.model=result.model||fallbackCfg.model;
+        setLastEffectiveAiProvider_('gemini',target.model);
+        logAiFailover_(meta,target,primaryErr,'OK','');
         return result.data.analyses;
+      }catch(fallbackErr){
+        logAiFailover_(meta,target,primaryErr,'ERROR',fallbackErr&&fallbackErr.message||fallbackErr);
+        throw fallbackErr;
       }
-      throw primaryErr;
     }
   }
 
@@ -8400,5 +8442,6 @@ const RemoteApp = (() => {
     runCommentIntelligenceCycle: runCommentIntelligenceCycle_,
     runProductionSelfTest: runProductionSelfTest_,
     runContextIntegrityHarness: runContextIntegrityHarness_,
+    runProviderResilienceHarness: runProviderResilienceHarness_,
   };
 })();
