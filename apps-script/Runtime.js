@@ -547,6 +547,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10 Auto Policy & Profile Settings: structured IX Profile policy; Scan/Comment/AI/Action dùng backend resolver chung; active window + trigger/budget/retry configurable; Auto Comment khóa OFF; AUTO log ghi effective policy.\n' +
       'V1.9.8.7-HF9 Group Summary Cardinality: NHÓM được collapse theo connected canonical Group aliases thành tối đa 1 row/canonical identity; active registry row thắng metadata, inactive-only identity vẫn giữ một representative; KPI source được dedupe theo Source ID.\n' +
       'V1.9.8.7-HF8 Group Summary Identity: NHÓM/Group Summary join CƠ HỘI bằng canonical Group Key aliases thay vì display name; sold KPI chỉ dùng Sales Stage=Đã bán, không fallback Chuyển đổi legacy.\n' +
       'V1.9.8.7-HF7 Sales Transition Guard: Sales Stage là state machine thật; nguồn mới chỉ được vào Qualified khi Lead Gate=PASS; chỉ cho transition tuần tự Qualified→Outreach→Đang hội thoại→Chờ phản hồi→Follow-up→Đã bán/Lost; same-stage update idempotent và terminal stage không tự mở lại.\n' +
@@ -6158,7 +6159,22 @@ const RemoteApp = (() => {
       }
       const detail=[
         'version='+String(summary.version||CFG.VERSION),
-        'budget='+Number(summary.durationMs||0)+'/'+Number(CFG.AUTO_MONITOR_BUDGET_MS||0)+'ms',
+        summary.policy&&summary.policy.profileId?('profile='+String(summary.policy.profileId)):'',
+        summary.policy?('policy.trigger='+Number(summary.policy.triggerMinutes||0)+'m'):'',
+        summary.policy&&summary.policy.activeWindow
+          ?('policy.window='+String(summary.policy.activeWindow.start||'')+'-'+String(summary.policy.activeWindow.end||'')+'@'+String(summary.policy.activeWindow.timezone||''))
+          :'',
+        summary.policy?('policy.maxGroups='+Number(summary.policy.maxGroups||0)):'',
+        summary.policy&&summary.policy.scan
+          ?('policy.scan='+Number(summary.policy.scan.scansPerDay||0)+'/day, posts='+Number(summary.policy.scan.postsPerScan||0))
+          :'',
+        summary.policy&&summary.policy.comment
+          ?('policy.comment='+(summary.policy.comment.enabled?'ON':'OFF')+', posts='+Number(summary.policy.comment.maxPostsPerCycle||0))
+          :'',
+        summary.policy&&summary.policy.ai
+          ?('policy.ai='+(summary.policy.ai.signalEnabled?'SIGNAL_ON':'SIGNAL_OFF')+'/'+(summary.policy.ai.qualificationEnabled?'QUAL_ON':'QUAL_OFF')+', chunk='+Number(summary.policy.ai.chunkSize||0))
+          :'',
+        'budget='+Number(summary.durationMs||0)+'/'+Number(summary.policy&&summary.policy.runtimeBudgetMs||CFG.AUTO_MONITOR_BUDGET_MS||0)+'ms',
         summary.budgetOverrunMs?('overrun='+Number(summary.budgetOverrunMs||0)+'ms'):'',
         summary.budgetDeferredGroups?('deferredGroups='+Number(summary.budgetDeferredGroups||0)):'',
         summary.aiDeferredSources?('aiDeferred='+Number(summary.aiDeferredSources||0)):'',
@@ -6219,7 +6235,7 @@ const RemoteApp = (() => {
         if(Number.isFinite(started)) summary.durationMs=Math.max(0,now-started);
       }
       summary.finishedAt=summary.finishedAt||new Date(now).toISOString();
-      summary.budgetOverrunMs=Math.max(0,Number(summary.durationMs||0)-Number(CFG.AUTO_MONITOR_BUDGET_MS||0));
+      summary.budgetOverrunMs=Math.max(0,Number(summary.durationMs||0)-Number(summary.policy&&summary.policy.runtimeBudgetMs||CFG.AUTO_MONITOR_BUDGET_MS||0));
       PropertiesService.getDocumentProperties()
         .setProperty(CFG.AUTO_MONITOR_LAST_RUN_KEY,JSON.stringify(summary));
       logAutoMonitorRun_(summary);
