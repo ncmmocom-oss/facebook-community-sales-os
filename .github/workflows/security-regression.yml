@@ -41,7 +41,24 @@ jobs:
           const vm=require('vm');
           let src=fs.readFileSync('apps-script/Runtime.js','utf8');
           src += '\n;globalThis.__remoteApp = RemoteApp;';
-          const sandbox={console};
+          const propsStore={};
+          const props={
+            getProperty:k=>Object.prototype.hasOwnProperty.call(propsStore,k)?propsStore[k]:null,
+            setProperty:(k,v)=>{propsStore[k]=String(v);},
+            deleteProperty:k=>{delete propsStore[k];},
+            getProperties:()=>Object.assign({},propsStore)
+          };
+          let uuidSeq=0;
+          const sandbox={
+            console,
+            PropertiesService:{getDocumentProperties:()=>props},
+            LockService:{getDocumentLock:()=>({tryLock:()=>true,releaseLock:()=>{}})},
+            Utilities:{
+              getUuid:()=>('ci-uuid-'+(++uuidSeq)),
+              base64EncodeWebSafe:v=>Buffer.from(String(v),'utf8').toString('base64url'),
+              Charset:{UTF_8:'UTF-8'}
+            }
+          };
           vm.createContext(sandbox);
           vm.runInContext(src,sandbox,{timeout:5000});
           const r=sandbox.__remoteApp.runContextIntegrityHarness();
@@ -111,6 +128,12 @@ jobs:
           ];
           for(const k of policyRequired){
             if(policy.tests[k]!==true) throw new Error('policy acceptance failed: '+k);
+          }
+          const leases=sandbox.__remoteApp.runConcurrencyLeaseHarness();
+          console.log(JSON.stringify(leases,null,2));
+          if(!leases || leases.ok!==true) process.exit(1);
+          for(const k of ['AI_SINGLE_LEASE','AUTO_SINGLE_LEASE','COMMENT_SAME_POST_BLOCKED','COMMENT_DIFFERENT_POST_PARALLEL']){
+            if(leases.tests[k]!==true) throw new Error('lease acceptance failed: '+k);
           }
           NODE
 
@@ -307,6 +330,9 @@ jobs:
           assert "function resolveEffectiveAiPolicy_(" in runtime
           assert "function resolveEffectiveActionPolicy_(" in runtime
           assert "function runAutoPolicyHarness_(" in runtime
+          assert "function runConcurrencyLeaseHarness_(" in runtime
+          assert "HH:mm hợp lệ" in runtime
+          assert "p@" in runtime
           assert "AUTO_COMMENT_LOCKED_HF10" in runtime
           assert "externalExecutionAllowed:false" in runtime
           assert "policy.trigger=" in runtime
