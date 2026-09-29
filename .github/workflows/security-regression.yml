@@ -263,8 +263,11 @@ jobs:
           save_ctx_block = runtime[save_ctx_start:save_ctx_end]
           assert "validateOfferContext_(command.context)" in save_ctx_block
           assert "validation.missing.join" in save_ctx_block
-          assert "PRODUCT:'PRODUCT-SERVICE'" not in runtime
-          assert "SERVICE:'PRODUCT-SERVICE'" not in runtime
+          alias_start = runtime.index('function offerContextCanonicalField_(')
+          alias_end = runtime.index('function isMeaningfulOfferContextValue_', alias_start)
+          alias_block = runtime[alias_start:alias_end]
+          assert not re.search(r'^\s*PRODUCT\s*:', alias_block, re.M)
+          assert not re.search(r'^\s*SERVICE\s*:', alias_block, re.M)
 
           recovery_start = runtime.index('function getSalesRecoveryQueue_(')
           recovery_end = runtime.index('function normalizeSalesStage_', recovery_start)
