@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.1-comment-acquisition',
+    VERSION: '1.9.8.7-HF10.2-group-onboarding',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -45,6 +45,7 @@ const RemoteApp = (() => {
     OPS_AI_STALE_MS: 2 * 60 * 60 * 1000,
     AUTO_POLICY_KEY: 'SOCIAL_AIO_AUTO_POLICY_V1',
     GROUP_EFFICIENCY_PREFIX: 'SOCIAL_AIO_GROUP_EFF_V1_',
+    GROUP_DISCOVERY_PREFIX: 'SOCIAL_AIO_GROUP_DISCOVERY_V1_',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
     AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
@@ -753,6 +754,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.2 Group Onboarding: operator chỉ dán Facebook Group URL; canonical duplicate check, registry append với CHƯA LẤY TÊN, discovery scan 10 bài và AI Group evaluation không infer Offer/Posts-day.\n' +
       'V1.9.8.7-HF10 Auto Policy & Profile Settings: structured IX Profile policy; Scan/Comment/AI/Action dùng backend resolver chung; active window + trigger/budget/retry configurable; Auto Comment khóa OFF; AUTO log ghi effective policy.\n' +
       'V1.9.8.7-HF9 Group Summary Cardinality: NHÓM được collapse theo connected canonical Group aliases thành tối đa 1 row/canonical identity; active registry row thắng metadata, inactive-only identity vẫn giữ một representative; KPI source được dedupe theo Source ID.\n' +
       'V1.9.8.7-HF8 Group Summary Identity: NHÓM/Group Summary join CƠ HỘI bằng canonical Group Key aliases thay vì display name; sold KPI chỉ dùng Sales Stage=Đã bán, không fallback Chuyển đổi legacy.\n' +
@@ -915,6 +917,26 @@ const RemoteApp = (() => {
           if (!bound) {
             throw new Error('SCAN_SOURCE_ROW_MISMATCH: source row đã thay đổi trong lúc quét; fail-closed để tránh tạo Group rác.');
           }
+          const discoveredTitle=extractGroupTitleFromPosts_(posts);
+          if(discoveredTitle){
+            groupSheet.getRange(sourceGroupRow,3).setValue(discoveredTitle);
+            bound.name=discoveredTitle;
+          }else if(isGroupPlaceholderName_(bound.name)){
+            groupSheet.getRange(sourceGroupRow,3).setValue(groupPlaceholderName_());
+            bound.name=groupPlaceholderName_();
+          }
+          mergeGroupAliasRegistry_([
+            {
+              canonicalKey:sourceResolvedKey,alias:sourceResolvedKey,
+              numericId:/^\d{6,}$/.test(sourceResolvedKey)?sourceResolvedKey:'',
+              source:'API_SCAN',firstSeen:new Date(),lastSeen:new Date(),reason:'CANONICAL_SCAN_IDENTITY'
+            },
+            {
+              canonicalKey:sourceResolvedKey,alias:sourceGroupKey,
+              numericId:/^\d{6,}$/.test(sourceGroupKey)?sourceGroupKey:'',
+              source:'API_SCAN',firstSeen:new Date(),lastSeen:new Date(),reason:'SOURCE_URL_ALIAS'
+            }
+          ]);
           sourceBoundInfo=bound;
           groupMap[sourceResolvedKey] = bound;
           if (fileGroupKey) groupMap[fileGroupKey] = bound;
@@ -939,7 +961,7 @@ const RemoteApp = (() => {
           } else {
             groupKey=extractGroupKey_(url) || String(post.group_id || post.groupId || '').trim().toLowerCase() || fileGroupKey;
             if (groupKey && !groupMap[groupKey]) groupMap[groupKey] = ensureGroupRegistered_(groupSheet, groupKey);
-            groupInfo=groupMap[groupKey] || { name:`Group ${groupKey || 'không rõ'}`, row:null };
+            groupInfo=groupMap[groupKey] || { name:groupPlaceholderName_(), row:null };
           }
           const stat = touchGroupStat_(groupStats, groupKey, groupInfo, file.name || '');
           stat.postScanned += 1;
@@ -2390,6 +2412,9 @@ const RemoteApp = (() => {
     if (name === 'RUN_AUTO_POLICY_HARNESS') return runAutoPolicyHarness_();
     if (name === 'GET_GROUP_EFFICIENCY') return getGroupEfficiencyReport_(command.limit);
     if (name === 'APPLY_SELECTED_SCAN_RECOMMENDATION') return applySelectedScanRecommendation_();
+    if (name === 'ONBOARD_GROUP_URL') return prepareOnboardingWorkerBatch_(command);
+    if (name === 'EVALUATE_GROUP_DISCOVERY') return evaluateGroupDiscovery_(command);
+    if (name === 'GET_GROUP_DISCOVERY') return getGroupDiscovery_(command.groupKey);
     if (name === 'GET_AUTO_MONITOR_V2') return getAutoMonitorV2State_(false);
     if (name === 'SET_AUTO_MONITOR_V2') return setAutoMonitorV2_(command.enabled !== false);
     if (name === 'RUN_AUTO_MONITOR_NOW') return autoMonitorTick_({force:true,source:'UI'});
@@ -4523,7 +4548,7 @@ const RemoteApp = (() => {
     registry.forEach(group => {
       const s=group.rowData||[];
       const url = String(s[3] || '').trim();
-      const name = String(s[2] || '').trim() || ('Group ' + String(group.canonicalKey||extractGroupKey_(url)));
+      const name = String(s[2] || '').trim() || groupPlaceholderName_();
       const prevByKey=(group.aliases||[]).map(alias=>old['KEY|'+alias]).find(Boolean);
       const prev =
         prevByKey ||
@@ -4874,6 +4899,294 @@ const RemoteApp = (() => {
     return m ? m[1] : '';
   }
 
+  function groupPlaceholderName_() {
+    return 'CHƯA LẤY TÊN';
+  }
+
+  function isGroupPlaceholderName_(name) {
+    const s=String(name||'').trim();
+    if(!s || s===groupPlaceholderName_()) return true;
+    return /^Group\s+[^\s]+$/i.test(s);
+  }
+
+  function normalizeFacebookGroupInput_(input) {
+    let s=String(input||'').trim();
+    if(!s) throw new Error('Hãy dán Facebook Group URL.');
+    if(/^facebook\.com\//i.test(s)||/^www\.facebook\.com\//i.test(s)) s='https://'+s;
+    if(/^fb\.com\//i.test(s)||/^www\.fb\.com\//i.test(s)) s='https://'+s.replace(/^www\./i,'');
+    const m=s.match(/^https?:\/\/(?:www\.)?(?:facebook\.com|fb\.com)\/groups\/([^\/?#]+)/i);
+    if(!m) throw new Error('URL phải có dạng https://www.facebook.com/groups/<group>/');
+    const key=decodeURIComponent(String(m[1]||'')).trim().toLowerCase();
+    if(!key || ['feed','discover','groups'].indexOf(key)>=0) throw new Error('Không xác định được Group key từ URL.');
+    return {input:String(input||'').trim(),groupKey:key,url:'https://www.facebook.com/groups/'+encodeURIComponent(key)+'/'};
+  }
+
+  function aliasCanonicalMap_() {
+    const map=new Map();
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const alias=ss.getSheetByName(CFG.GROUP_ALIAS_REGISTRY_SHEET);
+    if(alias&&alias.getLastRow()>=2){
+      alias.getRange(2,1,alias.getLastRow()-1,2).getDisplayValues().forEach(r=>{
+        const canonical=String(r[0]||'').trim().toLowerCase();
+        const a=String(r[1]||'').trim().toLowerCase();
+        if(canonical&&a) map.set(a,canonical);
+      });
+    }
+    return map;
+  }
+
+  function findExistingCanonicalGroup_(groupKey) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!key) return null;
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const aliasMap=aliasCanonicalMap_();
+    const wanted=aliasMap.get(key)||key;
+    if(sh.getLastRow()<2) return null;
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
+    for(let i=0;i<rows.length;i++){
+      const aliases=canonicalGroupKeyAliasesFromScanRow_(rows[i],i+2);
+      if(aliases.indexOf(key)>=0 || aliases.indexOf(wanted)>=0){
+        return {
+          row:i+2,
+          name:String(rows[i][2]||'').trim()||groupPlaceholderName_(),
+          url:String(rows[i][3]||'').trim(),
+          canonicalKey:String(aliases[0]||wanted||key).trim().toLowerCase(),
+          active:String(rows[i][0]||'').trim()==='Có'
+        };
+      }
+    }
+    return null;
+  }
+
+  function safeGroupTitleCandidate_(value) {
+    const s=String(value||'').replace(/\s+/g,' ').trim();
+    if(!s || s.length<2 || s.length>180) return '';
+    if(/^https?:\/\//i.test(s) || /^\d{6,}$/.test(s) || /^Group\s+[^\s]+$/i.test(s)) return '';
+    return s;
+  }
+
+  function extractGroupTitleFromPosts_(posts) {
+    for(const p of (posts||[])){
+      if(!p||typeof p!=='object') continue;
+      const direct=[
+        p.group_name,p.groupName,p.group_title,p.groupTitle,
+        p.group&&p.group.name,p.group&&p.group.title,
+        p.group_info&&p.group_info.name,p.groupInfo&&p.groupInfo.name
+      ];
+      for(const v of direct){
+        const title=safeGroupTitleCandidate_(v);
+        if(title) return title;
+      }
+    }
+    return '';
+  }
+
+  function groupDiscoveryKey_(groupKey) {
+    return CFG.GROUP_DISCOVERY_PREFIX+encodeURIComponent(String(groupKey||'').trim().toLowerCase());
+  }
+
+  function saveGroupDiscovery_(groupKey,state) {
+    if(!groupKey) return;
+    PropertiesService.getDocumentProperties().setProperty(groupDiscoveryKey_(groupKey),JSON.stringify(state||{}));
+  }
+
+  function getGroupDiscovery_(groupKey) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!key) return null;
+    const raw=PropertiesService.getDocumentProperties().getProperty(groupDiscoveryKey_(key))||'';
+    if(!raw) return null;
+    try{return JSON.parse(raw);}catch(_){return null;}
+  }
+
+  function loadGroupDiscoveryPosts_(groupKey,limit) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.RAW_SHEET);
+    if(!key||sh.getLastRow()<5) return [];
+    const rows=sh.getRange(5,1,sh.getLastRow()-4,20).getValues();
+    const out=[];
+    for(let i=rows.length-1;i>=0&&out.length<Math.max(1,Math.min(20,Number(limit||10)));i--){
+      const r=rows[i]||[];
+      if(String(r[3]||'').trim().toLowerCase()!==key) continue;
+      out.push({
+        post_id:String(r[4]||'').trim(),
+        content:String(r[8]||'').trim().slice(0,4000),
+        comments:Math.max(0,Number(r[9]||0)),
+        reactions:Math.max(0,Number(r[10]||0)),
+        shares:Math.max(0,Number(r[11]||0))
+      });
+    }
+    return out.reverse();
+  }
+
+  function groupDiscoverySchema_() {
+    return {
+      type:'object',
+      properties:{
+        topic_summary:{type:'string'},
+        audience_summary:{type:'string'},
+        pain_summary:{type:'string'},
+        buyer_signal_summary:{type:'string'},
+        content_types:{type:'array',items:{type:'string'}},
+        buyer_signal_level:{type:'string'},
+        recommended_scans_per_day:{type:'integer'},
+        recommended_posts_per_scan:{type:'integer'},
+        confidence:{type:'integer'},
+        caveats:{type:'string'}
+      },
+      required:[
+        'topic_summary','audience_summary','pain_summary','buyer_signal_summary','content_types',
+        'buyer_signal_level','recommended_scans_per_day','recommended_posts_per_scan','confidence','caveats'
+      ],
+      additionalProperties:false
+    };
+  }
+
+  function groupDiscoverySystemPrompt_() {
+    return [
+      'Bạn đánh giá một Facebook Group từ đúng 10 bài discovery gần nhất.',
+      'Chỉ mô tả topic, audience, pain và buyer signals nhìn thấy trong sample.',
+      'TUYỆT ĐỐI KHÔNG suy ra Offer/Product/Service của Owner từ tên Group hoặc nội dung.',
+      'TUYỆT ĐỐI KHÔNG suy ra Posts/day hay tần suất đăng từ sample 10 bài.',
+      'recommended_scans_per_day và recommended_posts_per_scan chỉ là operational sampling proposal, không phải ước lượng posting frequency.',
+      'Giới hạn scans/day 1-6; posts/scan 5-50. Nếu thiếu evidence, ưu tiên 3/day và 10 posts/scan.',
+      'buyer_signal_level chỉ LOW/MEDIUM/HIGH. confidence 0-100.',
+      'Trả JSON đúng schema.'
+    ].join('\n');
+  }
+
+  function callGroupDiscoveryAi_(posts) {
+    const cfg=getAiConfig_();
+    if(!cfg.configured) throw new Error('AI provider chưa được cấu hình để Group evaluation.');
+    const schema=groupDiscoverySchema_();
+    const user=JSON.stringify({sample_size:posts.length,posts});
+    const invoke=provider=>{
+      if(provider==='gemini'){
+        const c=Object.assign({},cfg,{provider:'gemini',model:cfg.provider==='gemini'?cfg.model:'gemini-auto'});
+        const r=callGeminiStructured_(groupDiscoverySystemPrompt_(),user,schema,c);
+        return {data:r.data,provider:'gemini',model:r.model||c.model};
+      }
+      const c=Object.assign({},cfg,{provider:'openai',model:cfg.provider==='openai'?cfg.model:'gpt-5.6-luna'});
+      const payload={
+        model:c.model,
+        input:[
+          {role:'system',content:groupDiscoverySystemPrompt_()},
+          {role:'user',content:user}
+        ],
+        max_output_tokens:2500,
+        text:{format:{type:'json_schema',name:'group_discovery',strict:true,schema}}
+      };
+      const data=parseStructuredResponse_(callOpenAi_(payload));
+      return {data,provider:'openai',model:c.model};
+    };
+    try{return invoke(cfg.provider);}
+    catch(primaryErr){
+      const target=getAiFailoverTarget_(cfg,primaryErr);
+      if(!target) throw primaryErr;
+      return invoke(target.provider);
+    }
+  }
+
+  function evaluateGroupDiscovery_(command) {
+    command=command||{};
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    let row=Number(command.row||0);
+    if(!row){
+      const ar=sh.getActiveRange();
+      row=ar?ar.getRow():0;
+    }
+    if(row<2||row>sh.getLastRow()) throw new Error('Không xác định được Group row để evaluation.');
+    const vals=sh.getRange(row,1,1,27).getDisplayValues()[0]||[];
+    const url=String(vals[3]||'').trim();
+    const groupKey=exactGroupKeyFromRow_(url,vals[4]);
+    if(!groupKey) throw new Error('Group chưa có canonical key.');
+    const posts=loadGroupDiscoveryPosts_(groupKey,10);
+    if(!posts.length) return {ok:false,row,groupKey,reason:'NO_DISCOVERY_POSTS',sampleSize:0};
+    const ai=callGroupDiscoveryAi_(posts);
+    const d=ai.data||{};
+    const state={
+      version:CFG.VERSION,
+      row,groupKey,
+      sampleSize:posts.length,
+      evaluatedAt:new Date().toISOString(),
+      topicSummary:String(d.topic_summary||'').trim(),
+      audienceSummary:String(d.audience_summary||'').trim(),
+      painSummary:String(d.pain_summary||'').trim(),
+      buyerSignalSummary:String(d.buyer_signal_summary||'').trim(),
+      contentTypes:Array.isArray(d.content_types)?d.content_types.map(x=>String(x||'').trim()).filter(Boolean).slice(0,10):[],
+      buyerSignalLevel:['LOW','MEDIUM','HIGH'].indexOf(String(d.buyer_signal_level||'').toUpperCase())>=0
+        ?String(d.buyer_signal_level).toUpperCase():'LOW',
+      recommendedScansPerDay:policyInt_(d.recommended_scans_per_day,3,1,6),
+      recommendedPostsPerScan:policyInt_(d.recommended_posts_per_scan,10,5,50),
+      confidence:policyInt_(d.confidence,0,0,100),
+      caveats:String(d.caveats||'').trim(),
+      provider:ai.provider,model:ai.model,
+      offerInferred:false,
+      postsPerDayInferred:false
+    };
+    saveGroupDiscovery_(groupKey,state);
+    logAi_({
+      runId:'group-discovery-'+Utilities.getUuid().slice(0,8),
+      event:'GROUP_DISCOVERY_EVAL',provider:ai.provider,model:ai.model,
+      batch:1,totalBatches:1,analyzed:posts.length,total:posts.length,remaining:0,status:'DONE',
+      message:'Group '+groupKey+' sample='+posts.length+' offerInferred=NO postsPerDayInferred=NO'
+    });
+    return Object.assign({ok:true},state);
+  }
+
+  function appendOnboardedGroup_(input) {
+    const info=normalizeFacebookGroupInput_(input);
+    const existing=findExistingCanonicalGroup_(info.groupKey);
+    if(existing) return {ok:true,duplicate:true,existing,input:info};
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const row=sh.getLastRow()+1;
+    ensureSheetRowCapacity_(sh,row);
+    sh.getRange(row,5).setNumberFormat('@');
+    sh.getRange(row,1,1,9).setValues([[
+      'Có','',groupPlaceholderName_(),info.url,info.groupKey,'','Thử nghiệm',3,10
+    ]]);
+    sh.getRange(row,11).setFormula(`=IF(OR(H${row}="";J${row}="");"";J${row}+1/H${row})`);
+    sh.getRange(row,12).setFormula(`=IF(A${row}<>"Có";"TẮT";IF(K${row}="";"CẦN QUÉT";IF(K${row}<=NOW();"CẦN QUÉT";"CHỜ")))`);
+    sh.getRange(row,16).setValue('URL-only onboarding • discovery pending');
+    mergeGroupAliasRegistry_([{
+      canonicalKey:info.groupKey,alias:info.groupKey,
+      numericId:/^\d{6,}$/.test(info.groupKey)?info.groupKey:'',
+      source:'URL_ONBOARDING',firstSeen:new Date(),lastSeen:new Date(),reason:'OPERATOR_GROUP_URL'
+    }]);
+    return {ok:true,duplicate:false,row,name:groupPlaceholderName_(),url:info.url,groupKey:info.groupKey};
+  }
+
+  function prepareOnboardingWorkerBatch_(command) {
+    command=command||{};
+    const added=appendOnboardedGroup_(command.groupUrl);
+    if(added.duplicate) return Object.assign({},added,{plan:null});
+    const job={
+      row:added.row,name:added.name,profile:'AUTO',url:added.url,groupKey:added.groupKey,
+      targetCount:10,status:'CHỜ',lifecycle:'Thử nghiệm',priorityRank:0
+    };
+    const plan=prepareJobsForWorkers_([job],10,false,'onboarding');
+    return Object.assign({},added,{plan});
+  }
+
+  function runGroupOnboardingHarness_() {
+    const good=normalizeFacebookGroupInput_('https://www.facebook.com/groups/Test.Group/?ref=share');
+    let bad=false;
+    try{normalizeFacebookGroupInput_('https://www.facebook.com/profile.php?id=123');}catch(_){bad=true;}
+    const title=extractGroupTitleFromPosts_([{group_name:'Tên Group Thật',message:'x'}]);
+    const noTitle=extractGroupTitleFromPosts_([{author_name:'Không được nhầm Author thành Group'}]);
+    const prompt=groupDiscoverySystemPrompt_();
+    const tests={
+      ONBOARD_URL_NORMALIZED:good.groupKey==='test.group'&&good.url==='https://www.facebook.com/groups/test.group/',
+      ONBOARD_NON_GROUP_REJECTED:bad,
+      ONBOARD_REAL_TITLE_ONLY:title==='Tên Group Thật'&&noTitle==='',
+      ONBOARD_PLACEHOLDER:groupPlaceholderName_()==='CHƯA LẤY TÊN',
+      DISCOVERY_NO_OFFER_INFERENCE:prompt.indexOf('KHÔNG suy ra Offer/Product/Service')>=0,
+      DISCOVERY_NO_POSTS_DAY_INFERENCE:prompt.indexOf('KHÔNG suy ra Posts/day')>=0
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function loadGroupMap_(sheet) {
     const map = {};
     const last = sheet.getLastRow();
@@ -4883,7 +5196,7 @@ const RemoteApp = (() => {
       const active = r[0], name = r[2], url = r[3];
       const explicitId = identityKeyFromCell_(r[4]);
       const urlKey = extractGroupKey_(url);
-      const info = { name: name || `Group ${explicitId || urlKey}`, row: i + 2, active };
+      const info = { name: name || groupPlaceholderName_(), row: i + 2, active };
       if (explicitId) map[explicitId] = info;
       if (urlKey) map[urlKey] = info;
     });
@@ -4917,10 +5230,10 @@ const RemoteApp = (() => {
     const placeholderKeys = [sourceKey, currentExplicitId, currentUrlKey]
       .map(x => String(x || '').trim().toLowerCase())
       .filter(Boolean);
-    const isPlaceholderName = !existingName || placeholderKeys.some(k =>
+    const isPlaceholderName = isGroupPlaceholderName_(existingName) || placeholderKeys.some(k =>
       existingName.toLowerCase() === ('group ' + k).toLowerCase()
     );
-    const name = isPlaceholderName ? ('Group ' + canonicalKey) : existingName;
+    const name = isPlaceholderName ? groupPlaceholderName_() : existingName;
 
     if (!String(values[0] || '').trim()) sheet.getRange(row, 1).setValue('Có');
     sheet.getRange(row, 3).setValue(name);
@@ -4954,7 +5267,7 @@ const RemoteApp = (() => {
     if (!key) return { name: 'Group không rõ', row: null };
 
     const row = sheet.getLastRow() + 1;
-    const name = 'Group ' + key;
+    const name = groupPlaceholderName_();
     const url = 'https://www.facebook.com/groups/' + key + '/';
     sheet.getRange(row, 5).setNumberFormat('@');
     sheet.getRange(row, 1, 1, 9).setValues([[
@@ -8025,7 +8338,7 @@ const RemoteApp = (() => {
     const row=Number(command.row||0);
     const runId=String(command.runId||'').trim();
     const jobMode=String(command.jobMode||'selected').trim().toLowerCase();
-    if(['selected','due','retry','auto_v2'].indexOf(jobMode)<0){
+    if(['selected','due','retry','auto_v2','onboarding'].indexOf(jobMode)<0){
       throw new Error('SCAN_SCOPE_INVALID: jobMode không hợp lệ: '+jobMode);
     }
     const target=normalizeGroupTarget_(command.targetCount||25);
@@ -9588,7 +9901,9 @@ const RemoteApp = (() => {
       mode:mode||'selected',
       scope:(String(mode||'selected').toLowerCase()==='due'
         ? 'SCHEDULER_DUE'
-        : (String(mode||'selected').toLowerCase()==='retry' ? 'EXCEPTION_RETRY' : 'CHECKBOX_SELECTION')),
+        : (String(mode||'selected').toLowerCase()==='retry'
+          ? 'EXCEPTION_RETRY'
+          : (String(mode||'selected').toLowerCase()==='onboarding' ? 'ONBOARDING_DISCOVERY' : 'CHECKBOX_SELECTION'))),
       retryMode:!!retryMode,
       selected:list.length,
       assigned:workers.reduce((n,w)=>n+w.jobs.length,0),
@@ -9864,6 +10179,7 @@ const RemoteApp = (() => {
     runProviderResilienceHarness: runProviderResilienceHarness_,
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
     runGroupRegistryCleanupHarness: runGroupRegistryCleanupHarness_,
+    runGroupOnboardingHarness: runGroupOnboardingHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,
     runConcurrencyLeaseHarness: runConcurrencyLeaseHarness_,
   };
