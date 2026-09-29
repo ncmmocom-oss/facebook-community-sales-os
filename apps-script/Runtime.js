@@ -1495,7 +1495,11 @@ const RemoteApp = (() => {
       T04_GLOBAL_CONTEXT_ISOLATION: isolated==='' && t04Gate==='CONTEXT_REQUIRED',
       ID_NUMERIC_SAFE_INTEGER: identityKeyFromCell_(2444637922355640)==='2444637922355640',
       ID_SCIENTIFIC_DISPLAY_REJECTED: identityKeyFromCell_('2,44464E+15')==='',
-      ID_PRODUCT_SERVICE_EXACT: offerContextCanonicalField_('PRODUCT-SERVICE')==='PRODUCT-SERVICE' && offerContextCanonicalField_('PRODUCT')==='' && offerContextCanonicalField_('SERVICE')===''
+      ID_PRODUCT_SERVICE_EXACT: offerContextCanonicalField_('PRODUCT-SERVICE')==='PRODUCT-SERVICE' && offerContextCanonicalField_('PRODUCT')==='' && offerContextCanonicalField_('SERVICE')==='',
+      SALES_NONPASS_NEW_BLOCKED: canSetSalesStage_('REVIEW_REQUIRED','')===false && canSetSalesStage_('FAIL','')===false,
+      SALES_PASS_NEW_ALLOWED: canSetSalesStage_('PASS','')===true,
+      SALES_EXISTING_CAN_CLOSE: canSetSalesStage_('REVIEW_REQUIRED','Follow-up')===true,
+      SALES_TERMINAL_CLEARS_FOLLOWUP: nextFollowUpForSalesStage_('Đã bán',new Date(),'2026-09-30')==='' && nextFollowUpForSalesStage_('Lost',new Date(),'2026-09-30')===''
     };
     const failed=Object.keys(tests).filter(k=>!tests[k]);
     return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
