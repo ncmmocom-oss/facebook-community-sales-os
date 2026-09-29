@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF1-context-integrity',
+    VERSION: '1.9.8.7-HF2-group-identity-text',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -98,6 +98,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF2 Group Identity Text: khóa Group ID/Group Key thành TEXT, cấm scientific display làm identity, backfill/repair AF từ Source ID evidence và canonical Group URL để tránh numeric coercion làm sai Group Key.\n' +
       'V1.9.8.7-HF1 Context Integrity: Context Ready chỉ khi đủ 7 field bắt buộc; Recovery/Gate map bằng Group Key canonical thay vì tên Group; global Business Context không được dùng thay Offer Context của Group; CƠ HỘI có Group Key riêng và tự backfill từ source-of-truth.\n' +
       'V1.9.8.7 Sales Readiness Recovery: repair schema NHÓM, archive Lead LEGACY khỏi production inbox, Offer Context workflow, requalification queue, Sales Stage AA:AE và AI cross-provider failover khi provider tạm 5xx/429.\n' +
       'V1.9.8.6 Concurrency Foundation: tách AI/AUTO lane lease, Source-ID AI writeback, Comment Post Lease, Worker role GROUP/COMMENT/BOTH và bỏ physical sort khỏi hot path để chuẩn bị Parallel Pipeline an toàn.\n' +
@@ -334,8 +335,8 @@ const RemoteApp = (() => {
     });
 
     applyPostMetadataUpdates_(rawSheet, oppSheet, postRowMap, postUpdates);
-    writeRowsForImport_(rawSheet, 5, rawRows, 16, [5], workerFast);
-    writeRowsForImport_(commentSheet, 2, commentRows, 27, [5,7], workerFast);
+    writeRowsForImport_(rawSheet, 5, rawRows, 16, [4,5], workerFast);
+    writeRowsForImport_(commentSheet, 2, commentRows, 27, [4,5,7], workerFast);
     writeRowsForImport_(oppSheet, 2, oppRows, CFG.OPPORTUNITY_TOTAL_COLS, [2,CFG.OPPORTUNITY_GROUP_KEY_COL], workerFast);
 
     finalizeGroupStats_(groupStats);
@@ -946,6 +947,62 @@ const RemoteApp = (() => {
     return isNaN(d.getTime()) ? null : d;
   }
 
+  function identityKeyFromCell_(value) {
+    if(value===null || value===undefined || value==='') return '';
+    if(typeof value==='number'){
+      if(!Number.isFinite(value) || !Number.isSafeInteger(value)) return '';
+      return String(Math.trunc(value)).toLowerCase();
+    }
+    const s=String(value||'').trim().toLowerCase();
+    if(!s) return '';
+    // Formatted scientific notation is display text, not authoritative identity.
+    // Never expand it because significant digits may already be lost.
+    if(/^[+-]?[0-9]+(?:[.,][0-9]+)?e[+-]?[0-9]+$/i.test(s)) return '';
+    return s;
+  }
+
+  function normalizeIdentityColumnToText_(sheet,startRow,col) {
+    if(!sheet || sheet.getLastRow()<startRow) return {rows:0,converted:0,unresolved:0};
+    const n=sheet.getLastRow()-startRow+1;
+    const range=sheet.getRange(startRow,col,n,1);
+    const values=range.getValues();
+    let converted=0,unresolved=0;
+    const out=values.map(r=>{
+      const raw=r[0];
+      const key=identityKeyFromCell_(raw);
+      if(key){
+        if(typeof raw!=='string' || String(raw)!==key) converted++;
+        return [key];
+      }
+      if(raw!=='' && raw!==null && raw!==undefined) unresolved++;
+      return [raw];
+    });
+    range.setNumberFormat('@');
+    if(converted) range.setValues(out);
+    return {rows:n,converted,unresolved};
+  }
+
+  function normalizeGroupRegistryIdentityText_(sheet) {
+    if(!sheet || sheet.getLastRow()<2) return {rows:0,repaired:0,unresolved:0};
+    const n=sheet.getLastRow()-1;
+    const rows=sheet.getRange(2,4,n,2).getValues();
+    const out=[];
+    let repaired=0,unresolved=0;
+    rows.forEach(r=>{
+      const url=String(r[0]||'').trim();
+      const fromUrl=extractGroupKey_(url);
+      const fromCell=identityKeyFromCell_(r[1]);
+      const key=String(fromUrl||fromCell||'').trim().toLowerCase();
+      if(!key && (url||r[1])) unresolved++;
+      if(key && (typeof r[1]!=='string' || String(r[1]).trim().toLowerCase()!==key)) repaired++;
+      out.push([key||r[1]||'']);
+    });
+    const range=sheet.getRange(2,5,n,1);
+    range.setNumberFormat('@');
+    if(repaired) range.setValues(out);
+    return {rows:n,repaired,unresolved};
+  }
+
   function ensureV16Sheets_(force) {
     const props = PropertiesService.getDocumentProperties();
     const schemaKey = 'SOCIAL_AIO_SCHEMA_VERSION';
@@ -961,6 +1018,7 @@ const RemoteApp = (() => {
       'Phân loại KH','Reply gợi ý','Hành động tiếp theo','Trạng thái xử lý','Media URL',
       'Vai trò mua','Product Fit','Bằng chứng nhu cầu','Lead Gate'
     ]]);
+    normalizeIdentityColumnToText_(cs,2,4);
 
     let ts = ss.getSheetByName(CFG.PERSON_TIMELINE_SHEET);
     if (!ts) ts = ss.insertSheet(CFG.PERSON_TIMELINE_SHEET);
@@ -1006,6 +1064,7 @@ const RemoteApp = (() => {
     const raw = ss.getSheetByName(CFG.RAW_SHEET);
     if (raw) {
       if (raw.getMaxColumns() < 20) raw.insertColumnsAfter(raw.getMaxColumns(),20-raw.getMaxColumns());
+      normalizeIdentityColumnToText_(raw,5,4);
       raw.getRange(4,15,1,6).setValues([[
         'Media URL','Media count','Comment đã lấy','Comment cursor','Comment scan cuối','Comment sync trạng thái'
       ]]);
@@ -1025,7 +1084,10 @@ const RemoteApp = (() => {
         .requireValueInList(CFG.SALES_STAGE_OPTIONS,true)
         .setAllowInvalid(false)
         .build();
-      if(opp.getMaxRows()>=2) opp.getRange(2,27,opp.getMaxRows()-1,1).setDataValidation(stageRule);
+      if(opp.getMaxRows()>=2) {
+        opp.getRange(2,27,opp.getMaxRows()-1,1).setDataValidation(stageRule);
+        opp.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,opp.getMaxRows()-1,1).setNumberFormat('@');
+      }
       backfillOpportunityGroupKeys_(opp);
     }
 
@@ -1054,6 +1116,7 @@ const RemoteApp = (() => {
         'Bài mới hôm nay','Comment mới hôm nay','KH mới hôm nay'
       ]]);
       scan.getRange(1,27).setValue('AI Context / Offer');
+      normalizeGroupRegistryIdentityText_(scan);
       setupBridgeControlColumns_(scan);
     }
     props.setProperty(schemaKey, CFG.VERSION);
@@ -1122,8 +1185,6 @@ const RemoteApp = (() => {
       BUYER:'BUYER',
       PROBLEM:'PROBLEM',
       PRODUCTSERVICE:'PRODUCT-SERVICE',
-      PRODUCT:'PRODUCT-SERVICE',
-      SERVICE:'PRODUCT-SERVICE',
       VALUE:'VALUE',
       QUALIFICATION:'QUALIFICATION',
       CTA:'CTA'
@@ -1198,7 +1259,7 @@ const RemoteApp = (() => {
     const map={};
     const groups=[];
     if(!sh || sh.getLastRow()<2) return {map,groups,validCount:0,invalidCount:0};
-    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getDisplayValues();
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
     let validCount=0,invalidCount=0;
     rows.forEach((r,i)=>{
       if(String(r[0]||'').trim()!=='Có') return;
@@ -1281,49 +1342,65 @@ const RemoteApp = (() => {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const out=new Map();
 
+    const add=(sourceId,rawKey)=>{
+      const sid=String(sourceId||'').trim();
+      const key=identityKeyFromCell_(rawKey);
+      if(sid&&key&&!out.has(sid)) out.set(sid,key);
+    };
+
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
     if(raw && raw.getLastRow()>=5){
-      raw.getRange(5,4,raw.getLastRow()-4,2).getDisplayValues().forEach(r=>{
-        const key=String(r[0]||'').trim().toLowerCase();
-        const sourceId=String(r[1]||'').trim();
-        if(sourceId&&key&&!out.has(sourceId)) out.set(sourceId,key);
-      });
+      raw.getRange(5,4,raw.getLastRow()-4,2).getValues().forEach(r=>add(r[1],r[0]));
     }
 
     const comments=ss.getSheetByName(CFG.COMMENT_SHEET);
     if(comments && comments.getLastRow()>=2){
-      comments.getRange(2,4,comments.getLastRow()-1,4).getDisplayValues().forEach(r=>{
-        const key=String(r[0]||'').trim().toLowerCase();
+      comments.getRange(2,4,comments.getLastRow()-1,4).getValues().forEach(r=>{
         const commentId=String(r[3]||'').trim();
-        const sourceId=commentId?'C:'+commentId:'';
-        if(sourceId&&key&&!out.has(sourceId)) out.set(sourceId,key);
+        if(commentId) add('C:'+commentId,r[0]);
       });
     }
     return out;
   }
 
+
   function backfillOpportunityGroupKeys_(oppSheet) {
     const sh=oppSheet||SpreadsheetApp.getActiveSpreadsheet().getSheetByName(CFG.OPPORTUNITY_SHEET);
     if(!sh || sh.getLastRow()<2 || sh.getMaxColumns()<CFG.OPPORTUNITY_GROUP_KEY_COL){
-      return {rows:0,filled:0,missing:0};
+      return {rows:0,filled:0,repaired:0,missing:0,unresolvedScientific:0};
     }
     const n=sh.getLastRow()-1;
     const ids=sh.getRange(2,2,n,1).getDisplayValues();
-    const keys=sh.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,n,1).getDisplayValues();
+    const keyRange=sh.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,n,1);
+    const keys=keyRange.getValues();
     const sourceMap=buildSourceGroupKeyMap_();
     const out=[];
-    let filled=0,missing=0;
+    let filled=0,repaired=0,missing=0,unresolvedScientific=0;
+
     for(let i=0;i<n;i++){
-      const current=String(keys[i][0]||'').trim().toLowerCase();
-      if(current){out.push([current]);continue;}
       const sourceId=String(ids[i][0]||'').trim();
-      const key=String(sourceMap.get(sourceId)||'').trim().toLowerCase();
-      out.push([key]);
-      if(key) filled++; else if(sourceId) missing++;
+      const rawCurrent=keys[i][0];
+      const current=identityKeyFromCell_(rawCurrent);
+      const evidence=String(sourceMap.get(sourceId)||'').trim().toLowerCase();
+      let key=current;
+
+      if(evidence){
+        key=evidence;
+        if(!current) filled++;
+        else if(current!==evidence || typeof rawCurrent!=='string') repaired++;
+      }else if(sourceId && !current){
+        missing++;
+        if(typeof rawCurrent==='string' && /e[+-]?[0-9]+$/i.test(String(rawCurrent).trim())) unresolvedScientific++;
+      }
+
+      out.push([key||'']);
     }
-    if(filled) sh.getRange(2,CFG.OPPORTUNITY_GROUP_KEY_COL,n,1).setValues(out);
-    return {rows:n,filled,missing};
+
+    keyRange.setNumberFormat('@');
+    if(filled||repaired) keyRange.setValues(out);
+    return {rows:n,filled,repaired,missing,unresolvedScientific};
   }
+
 
   function getSalesRecoveryQueue_() {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
@@ -3521,10 +3598,10 @@ const RemoteApp = (() => {
     const map = {};
     const last = sheet.getLastRow();
     if (last < 2) return map;
-    const values = sheet.getRange(2, 1, last - 1, 16).getDisplayValues();
+    const values = sheet.getRange(2, 1, last - 1, 16).getValues();
     values.forEach((r, i) => {
       const active = r[0], name = r[2], url = r[3];
-      const explicitId = String(r[4] || '').trim().toLowerCase();
+      const explicitId = identityKeyFromCell_(r[4]);
       const urlKey = extractGroupKey_(url);
       const info = { name: name || `Group ${explicitId || urlKey}`, row: i + 2, active };
       if (explicitId) map[explicitId] = info;
@@ -3543,9 +3620,9 @@ const RemoteApp = (() => {
 
     if (!canonicalKey || row < 2 || row > sheet.getLastRow()) return null;
 
-    const values = sheet.getRange(row, 1, 1, 16).getDisplayValues()[0] || [];
+    const values = sheet.getRange(row, 1, 1, 16).getValues()[0] || [];
     const currentUrl = String(values[3] || '').trim();
-    const currentExplicitId = String(values[4] || '').trim().toLowerCase();
+    const currentExplicitId = identityKeyFromCell_(values[4]);
     const currentUrlKey = extractGroupKey_(currentUrl);
 
     const sourceMatches =
@@ -3568,7 +3645,7 @@ const RemoteApp = (() => {
     if (!String(values[0] || '').trim()) sheet.getRange(row, 1).setValue('Có');
     sheet.getRange(row, 3).setValue(name);
     sheet.getRange(row, 4).setValue(canonicalUrl);
-    sheet.getRange(row, 5).setValue(canonicalKey);
+    sheet.getRange(row, 5).setNumberFormat('@').setValue(canonicalKey);
     if (!String(values[6] || '').trim()) sheet.getRange(row, 7).setValue('Thử nghiệm');
     if (!String(values[7] || '').trim()) sheet.getRange(row, 8).setValue(3);
 
@@ -3599,6 +3676,7 @@ const RemoteApp = (() => {
     const row = sheet.getLastRow() + 1;
     const name = 'Group ' + key;
     const url = 'https://www.facebook.com/groups/' + key + '/';
+    sheet.getRange(row, 5).setNumberFormat('@');
     sheet.getRange(row, 1, 1, 9).setValues([[
       'Có', '', name, url, key, '', 'Thử nghiệm', 3, 100
     ]]);
