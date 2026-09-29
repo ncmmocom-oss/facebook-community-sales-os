@@ -255,7 +255,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       <div><label>Outcome / Value</label><input id="salesOutcome" placeholder="VD: đã inbox, chờ báo giá, 5.000.000đ"></div>
     </div>
     <button class="primary" onclick="setSelectedSalesStage()">CẬP NHẬT SALES STAGE</button>
-    <div class="muted" style="margin-top:8px">Mặc định chỉ nguồn <b>Lead Gate PASS</b> mới được vào Sales Pipeline. Dòng đã ở pipeline có thể chuyển sang Lost để đóng.</div>
+    <div class="muted" style="margin-top:8px"><b>State machine:</b> nguồn mới chỉ vào <b>Qualified</b> khi Lead Gate=PASS, sau đó đi tuần tự Qualified → Outreach → Đang hội thoại → Chờ phản hồi → Follow-up → Đã bán / Lost. Cập nhật cùng stage được phép để sửa Owner/Outcome/Follow-up; stage terminal không tự mở lại.</div>
   </div>
   <div class="panel" style="margin-top:12px"><div class="panelTitle">Snapshot acquisition</div><div class="kpiGrid" style="margin-bottom:0"><div class="kpi"><span>Post mới hôm nay</span><b id="sigNew">0</b></div><div class="kpi"><span>AI backlog</span><b id="sigBacklog">0</b></div><div class="kpi"><span>Lead PASS</span><b id="sigPass">0</b></div><div class="kpi"><span>Exception</span><b id="sigExceptions">0</b></div></div></div>
 </section>
@@ -1212,11 +1212,14 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       setStatus('Đang cập nhật Sales Stage cho dòng đang chọn ở CƠ HỘI...');
       command({__command:'SET_SELECTED_SALES_STAGE',stage,followUpDays,owner,outcome},r=>{
         renderSalesPipeline(r.pipeline||{});
+        const reasons=r.skipReasons||{};
+        const reasonText=Object.keys(reasons).map(k=>k+'='+Number(reasons[k]||0)).join(', ');
         setStatus('✅ SALES STAGE: '+r.stage+
           '\nĐã cập nhật: '+Number(r.updated||0)+
           '\nBỏ qua: '+Number(r.skipped||0)+
           '\nDòng: '+r.startRow+'–'+r.endRow+
-          (r.skipped?'\nLưu ý: nguồn chưa PASS và chưa ở pipeline sẽ bị chặn.':''));
+          (reasonText?'\nBlocked: '+reasonText:'')+
+          (r.skipped?'\nSales Stage phải tuân state machine; nguồn mới bắt buộc PASS → Qualified.':''));
         pollMonitoring();
       },e=>setStatus('Sales Stage lỗi: '+(e.message||e)));
     }
