@@ -122,6 +122,20 @@ jobs:
           for(const k of groupCleanupRequired){
             if(gc.tests[k]!==true) throw new Error('group registry cleanup acceptance failed: '+k);
           }
+          const onboarding=sandbox.__remoteApp.runGroupOnboardingHarness();
+          console.log(JSON.stringify(onboarding,null,2));
+          if(!onboarding || onboarding.ok!==true) process.exit(1);
+          const onboardingRequired=[
+            'ONBOARD_URL_NORMALIZED',
+            'ONBOARD_NON_GROUP_REJECTED',
+            'ONBOARD_REAL_TITLE_ONLY',
+            'ONBOARD_PLACEHOLDER',
+            'DISCOVERY_NO_OFFER_INFERENCE',
+            'DISCOVERY_NO_POSTS_DAY_INFERENCE'
+          ];
+          for(const k of onboardingRequired){
+            if(onboarding.tests[k]!==true) throw new Error('group onboarding acceptance failed: '+k);
+          }
           const policy=sandbox.__remoteApp.runAutoPolicyHarness();
           console.log(JSON.stringify(policy,null,2));
           if(!policy || policy.ok!==true) process.exit(1);
@@ -324,7 +338,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.1-comment-acquisition'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.2-group-onboarding'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -342,6 +356,15 @@ jobs:
           assert "function resolveEffectiveCommentPolicy_(" in runtime
           assert "function resolveEffectiveAiPolicy_(" in runtime
           assert "function resolveEffectiveActionPolicy_(" in runtime
+          assert "function runGroupOnboardingHarness_(" in runtime
+          assert "function normalizeFacebookGroupInput_(" in runtime
+          assert "function prepareOnboardingWorkerBatch_(" in runtime
+          assert "function evaluateGroupDiscovery_(" in runtime
+          assert "groupPlaceholderName_()==='CHƯA LẤY TÊN'" in runtime
+          assert "targetCount:10" in runtime
+          assert "'ONBOARDING_DISCOVERY'" in runtime
+          assert "offerInferred:false" in runtime
+          assert "postsPerDayInferred:false" in runtime
           assert "function runAutoPolicyHarness_(" in runtime
           assert "function runConcurrencyLeaseHarness_(" in runtime
           assert "HH:mm hợp lệ" in runtime
@@ -542,6 +565,11 @@ jobs:
           assert 'id="policyEffective"' in ui
           assert 'AUTO COMMENT = OFF' in ui
           assert 'function saveAutoPolicy(' in ui
+          assert 'id="groupOnboardUrl"' in ui
+          assert 'onclick="onboardGroupUrl()"' in ui
+          assert "ONBOARD_GROUP_URL" in ui
+          assert "EVALUATE_GROUP_DISCOVERY" in ui
+          assert "ONBOARDING_DISCOVERY" in ui
           assert 'class="groupTaskTabs"' in ui
           assert 'data-group-task="scan"' in ui
           assert 'data-group-task="comments"' in ui
