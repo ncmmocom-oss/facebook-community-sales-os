@@ -5653,16 +5653,21 @@ const RemoteApp = (() => {
     const cls=String(errorClass||'UNKNOWN').toUpperCase();
     const retryable=['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)>=0;
     const attempts=Number(prev.attempts||0)+1;
-    const hard=!retryable || attempts>=CFG.AUTO_RETRY_MAX_ATTEMPTS;
-    const delays=CFG.AUTO_RETRY_DELAYS_MS||[];
-    const delay=hard?0:Number(delays[Math.min(attempts-1,delays.length-1)]||30*60*1000);
+    const config=getAutoPolicyConfig_();
+    const profile=policyProfileForGroup_(config,groupKey);
+    const policy=resolveEffectiveScanPolicy_(profile,{},config);
+    const hard=!retryable||attempts>=Number(policy.retryAttempts||CFG.AUTO_RETRY_MAX_ATTEMPTS);
+    const minutes=policy.retryBackoffMinutes||[];
+    const delay=hard?0:Number(minutes[Math.min(attempts-1,Math.max(0,minutes.length-1))]||30)*60000;
     const state={
       attempts,
       nextAt:hard?0:Date.now()+delay,
       hard,
       lastClass:cls,
       lastError:String(error||'').slice(0,500),
-      updatedAt:new Date().toISOString()
+      updatedAt:new Date().toISOString(),
+      policyProfileId:profile&&profile.id||'',
+      policyRetryAttempts:Number(policy.retryAttempts||0)
     };
     props.setProperty(autoRetryKey_(groupKey),JSON.stringify(state));
     return state;
@@ -5930,32 +5935,39 @@ const RemoteApp = (() => {
     return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates,rowCapacityRepairs};
   }
 
-  function getAutoRetryJobs_(limit) {
+  function getAutoRetryJobs_(limit,policyConfig) {
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     if(sh.getLastRow()<2) return [];
+    const config=policyConfig||getAutoPolicyConfig_();
     const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>x.row));
-    const rows=sh.getRange(2,1,sh.getLastRow()-1,26).getValues();
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
     const out=[];
     rows.forEach((r,i)=>{
       const row=i+2;
       if(duplicateRows.has(row)) return;
       if(String(r[0]||'').trim()!=='Có') return;
       const status=String(r[23]||'').trim();
-      if(status!=='LỖI' && status!=='THIẾU') return;
+      if(status!=='LỖI'&&status!=='THIẾU') return;
       const url=String(r[3]||'').trim();
       if(!url) return;
-      const key=exactGroupKeyFromRow_(url,r[4]);
+      const group=groupPolicyInput_(r);
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      if(!profile||profile.enabled===false) return;
       const cls=classifyAutoSheetException_(status,r[25]);
       if(['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)<0) return;
-      const state=getAutoRetryState_(key);
-      if(state.hard || (state.nextAt && state.nextAt>Date.now())) return;
+      const state=getAutoRetryState_(group.groupKey);
+      if(state.hard||(state.nextAt&&state.nextAt>Date.now())) return;
+      const policy=resolveEffectiveScanPolicy_(profile,group,config);
       out.push({
         row,
-        name:String(r[2]||'').trim()||('Group '+key),
+        name:String(r[2]||'').trim()||('Group '+group.groupKey),
         profile:String(r[1]||'').trim()||'AUTO',
+        policyProfileId:profile.id,
         url,
-        groupKey:key,
-        targetCount:normalizeGroupTarget_(r[8]||25),
+        groupKey:group.groupKey,
+        targetCount:policy.postsPerScan,
+        scansPerDay:policy.scansPerDay,
+        effectivePolicy:policy,
         status,
         lifecycle:String(r[6]||'').trim(),
         priorityRank:groupPriorityRank_(r[6]),
@@ -5964,8 +5976,9 @@ const RemoteApp = (() => {
         errorClass:cls
       });
     });
-    out.sort((a,b)=>a.priorityRank-b.priorityRank || Number(a.retryState.attempts||0)-Number(b.retryState.attempts||0) || a.row-b.row);
-    return out.slice(0,Math.max(1,Number(limit||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK)));
+    out.sort((a,b)=>a.priorityRank-b.priorityRank||Number(a.retryState.attempts||0)-Number(b.retryState.attempts||0)||a.row-b.row);
+    const cap=Math.max(1,Number(limit||config.global.auto.maxGroupsPerCycle||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK));
+    return out.slice(0,cap);
   }
 
   function isAutoMonitorEnabled_() {
