@@ -5284,7 +5284,11 @@ const RemoteApp = (() => {
     const ss=SpreadsheetApp.getActiveSpreadsheet();
     const raw=ss.getSheetByName(CFG.RAW_SHEET);
     const comment=ss.getSheetByName(CFG.COMMENT_SHEET);
-    const enabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    const legacyEnabled=(PropertiesService.getDocumentProperties().getProperty(CFG.COMMENT_INTEL_ENABLED_KEY)||'true')!=='false';
+    const policyConfig=getAutoPolicyConfig_();
+    const activeProfile=activePolicyProfile_(policyConfig);
+    const defaultPolicy=resolveEffectiveCommentPolicy_(activeProfile,null,policyConfig);
+    const enabled=legacyEnabled&&defaultPolicy.enabled;
     let postsWithComments=0,backlogPosts=0,expectedComments=0,fetchedComments=0,hard=0,retry=0,retryDeferred=0,providerWait=0,hotWatchDue=0;
     if(raw && raw.getLastRow()>=5){
       const existing=loadExistingCommentCountByPost_();
@@ -5297,8 +5301,13 @@ const RemoteApp = (() => {
         const expected=Math.max(0,toNumber_(r[9]));
         const importedAtMs=opsDateMs_(r[0]);
         const lastScanMs=opsDateMs_(r[18]);
-        const hotRecent=!!importedAtMs && now-importedAtMs<=CFG.COMMENT_HOT_WATCH_MS;
-        if(hotRecent && watchMap[postId] && (!lastScanMs || now-lastScanMs>=CFG.COMMENT_HOT_RECHECK_MS)) hotWatchDue++;
+        const groupKey=String(r[3]||'').trim().toLowerCase();
+        const profile=policyProfileForGroup_(policyConfig,groupKey);
+        const ownPost=isProfileOwnPost_(profile,r[7]);
+        const rowPolicy=resolveEffectiveCommentPolicy_(profile,{ownPost},policyConfig);
+        const hotRecent=!!importedAtMs && now-importedAtMs<=Number(rowPolicy.hotWatchHours||24)*60*60*1000;
+        if(rowPolicy.enabled && hotRecent && watchMap[postId] &&
+          (!lastScanMs || now-lastScanMs>=Number(rowPolicy.recheckMinutes||30)*60*1000)) hotWatchDue++;
         if(expected<=0) return;
         postsWithComments++;
         expectedComments+=expected;
@@ -5329,7 +5338,8 @@ const RemoteApp = (() => {
       retryDeferred,
       providerWaitPosts:providerWait,
       hotWatchDue,
-      provider:getCommentProviderBreaker_()
+      provider:getCommentProviderBreaker_(),
+      effectivePolicy:defaultPolicy
     };
     try{cache.put(cacheKey,JSON.stringify(result),30);}catch(_){}
     return result;
@@ -5522,9 +5532,14 @@ const RemoteApp = (() => {
     const runId='comment-'+Utilities.getUuid().slice(0,10);
     let result=null;
     try{
+      const policyConfig=getAutoPolicyConfig_();
+      const profile=activePolicyProfile_(policyConfig);
+      const policy=resolveEffectiveCommentPolicy_(profile,null,policyConfig);
       result=runCommentIntelligenceCycle_({
-        limit:Math.max(1,Math.min(20,Number(limit||CFG.COMMENT_MAX_POSTS_PER_TICK))),
-        source:'UI'
+        limit:Math.max(1,Math.min(20,Number(limit||policy.maxPostsPerCycle))),
+        source:'UI',
+        policyConfig,
+        policyProfileId:profile&&profile.id||''
       });
       const ci={
         processed:Number(result&&result.processed||0),
@@ -6489,6 +6504,9 @@ const RemoteApp = (() => {
             workerSlot:job.workerSlot,
             targetCount:job.targetCount,
             postsRead:Number(result&&result.postsRead||0),
+            newPosts:Number(result&&result.imported&&result.imported.postImported||0),
+            duplicates:Number(result&&result.imported&&result.imported.duplicates||0),
+            durationMs:Number(result&&result.durationMs||0),
             errorClass:String(result&&result.errorClass||''),
             note:String(result&&(result.error||result.note)||'').slice(0,240)
           });
@@ -7610,6 +7628,7 @@ const RemoteApp = (() => {
         workerSlot:worker.slot,workerProfile:worker.profile||'',workerLabel:worker.label||'',
         workerHealth:health&&health.health?health.health:'ONLINE',
         runId,stopped,stopScope:result.stopScope||'',incomplete:status==='THIẾU',progress,note,
+        durationMs:Date.now()-started,
         errorClass:result.transientError?'TRANSIENT':(result.timeBudgetExceeded?'TIME_BUDGET':'')
       });
     }catch(err){
