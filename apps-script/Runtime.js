@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.4-api-native-cleanup',
+    VERSION: '1.9.8.7-HF10.5-verified-identity-retry',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -47,6 +47,7 @@ const RemoteApp = (() => {
     GROUP_EFFICIENCY_PREFIX: 'SOCIAL_AIO_GROUP_EFF_V1_',
     GROUP_DISCOVERY_PREFIX: 'SOCIAL_AIO_GROUP_DISCOVERY_V1_',
     GROUP_ACTIVITY_PREFIX: 'SOCIAL_AIO_GROUP_ACTIVITY_V1_',
+    GROUP_IDENTITY_RETRY_PREFIX: 'SOCIAL_AIO_GROUP_ID_RETRY_V1_',
     GROUP_SUMMARY_LEGACY_ARCHIVE_SHEET: 'NHÓM LEGACY ARCHIVE',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
     AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
@@ -756,6 +757,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.5 Verified Identity Retry: Group đang LỖI GROUP_ID_RESOLVE chỉ được self-repair đúng 1 lần khi có numeric Group ID deterministic đã xác minh; nếu retry lại fail thì giữ quarantine, không loop.\n' +
       'V1.9.8.7-HF10.4 API-Native Cleanup: production FBAIO paths truyền parsed records trực tiếp vào normalization/write core; JSON file parsing giữ riêng cho Legacy Debug/Recovery; NHẬP JSON vẫn giữ làm RAW POSTS storage để tránh destructive migration.\n' +
       'V1.9.8.7-HF10.3 Group Intelligence: NHÓM trở thành canonical Group Intelligence; tách FB REPORTED/OBSERVED, archive schema cũ, activity-window measurement chỉ ghi Posts/24h và Avg 7d khi đã paginate qua boundary tương ứng.\n' +
       'V1.9.8.7-HF10.2 Group Onboarding: operator chỉ dán Facebook Group URL; canonical duplicate check, registry append với CHƯA LẤY TÊN, discovery scan 10 bài và AI Group evaluation không infer Offer/Posts-day.\n' +
@@ -6889,6 +6891,75 @@ const RemoteApp = (() => {
     return out;
   }
 
+  function verifiedIdentityRetryKey_(groupKey) {
+    return CFG.GROUP_IDENTITY_RETRY_PREFIX+encodeURIComponent(String(groupKey||'').trim().toLowerCase());
+  }
+
+  function isVerifiedIdentityRetryCandidate_(status,note,numericId,canonicalKey) {
+    const st=String(status||'').trim();
+    const msg=String(note||'');
+    const num=String(numericId||'').trim();
+    const key=String(canonicalKey||'').trim().toLowerCase();
+    return st==='LỖI' &&
+      /Wrong ID|FB account not found|GROUP_ID_RESOLVE|only supports group/i.test(msg) &&
+      /^\d{6,}$/.test(num) &&
+      num!==key;
+  }
+
+  function repairVerifiedIdentityQuarantineOnce_(sheet,repair) {
+    if(!sheet||sheet.getLastRow()<2) return {eligible:0,repaired:0,skippedAttempted:0};
+    const props=PropertiesService.getDocumentProperties();
+    const rows=sheet.getRange(2,1,sheet.getLastRow()-1,27).getDisplayValues();
+    let eligible=0,repaired=0,skippedAttempted=0;
+    rows.forEach((r,i)=>{
+      if(String(r[0]||'').trim()!=='Có') return;
+      const row=i+2;
+      const url=String(r[3]||'').trim();
+      const canonical=exactGroupKeyFromRow_(url,r[4]);
+      if(!canonical) return;
+      const numeric=historicNumericGroupIdFromRow_(row,url);
+      if(!isVerifiedIdentityRetryCandidate_(r[23],r[25],numeric,canonical)) return;
+      eligible++;
+      const retryKey=verifiedIdentityRetryKey_(canonical);
+      if(props.getProperty(retryKey)){
+        skippedAttempted++;
+        return;
+      }
+      if(!repair) return;
+      props.setProperty(retryKey,JSON.stringify({
+        at:Date.now(),canonicalKey:canonical,numericId:numeric,
+        priorError:String(r[25]||'').slice(0,500)
+      }));
+      clearAutoRetryState_(canonical);
+      setGroupRowStatus_(
+        sheet,row,'CHỜ',
+        'Verified numeric identity '+numeric+' • retry armed',
+        'AUTO IDENTITY REPAIR: numeric Group ID '+numeric+' đã có deterministic evidence; cho phép đúng 1 retry.'
+      );
+      repaired++;
+    });
+    return {eligible,repaired,skippedAttempted};
+  }
+
+  function runVerifiedIdentityRetryHarness_() {
+    const tests={
+      ID_RETRY_VERIFIED_NUMERIC:isVerifiedIdentityRetryCandidate_(
+        'LỖI','This api only supports group','533833410127672','eagleamazonvietnam'
+      )===true,
+      ID_RETRY_NO_NUMERIC_BLOCKED:isVerifiedIdentityRetryCandidate_(
+        'LỖI','This api only supports group','','eagleamazonvietnam'
+      )===false,
+      ID_RETRY_NON_IDENTITY_BLOCKED:isVerifiedIdentityRetryCandidate_(
+        'LỖI','HTTP 503','533833410127672','eagleamazonvietnam'
+      )===false,
+      ID_RETRY_SAME_CANONICAL_BLOCKED:isVerifiedIdentityRetryCandidate_(
+        'LỖI','GROUP_ID_RESOLVE','533833410127672','533833410127672'
+      )===false
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function repairRowCapacityQuarantine_(sheet,repair) {
     if(!sheet || sheet.getLastRow()<2) return 0;
     const rows=sheet.getRange(2,1,sheet.getLastRow()-1,26).getValues();
@@ -6972,6 +7043,7 @@ const RemoteApp = (() => {
     }
 
     const rowCapacityRepairs=repairRowCapacityQuarantine_(sh,repair!==false);
+    const identityRetryRepairs=repairVerifiedIdentityQuarantineOnce_(sh,repair!==false);
 
     const duplicates=getDuplicateGroupIdentityRows_();
     if(repair && duplicates.length){
@@ -6983,7 +7055,7 @@ const RemoteApp = (() => {
     }
 
     SpreadsheetApp.flush();
-    return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates,rowCapacityRepairs};
+    return {expiredLeases,expiredRunStops,staleRunning,spillovers,duplicates,rowCapacityRepairs,identityRetryRepairs};
   }
 
   function getAutoRetryJobs_(limit,policyConfig) {
@@ -7260,7 +7332,8 @@ const RemoteApp = (() => {
           ', stale='+Number(summary.repairs.staleRunning||0)+
           ', spill='+Number((summary.repairs.spillovers||[]).length)+
           ', dup='+Number((summary.repairs.duplicates||[]).length)+
-          ', capacity='+Number(summary.repairs.rowCapacityRepairs||0)):'',
+          ', capacity='+Number(summary.repairs.rowCapacityRepairs||0)+
+          ', idRetry='+Number(summary.repairs.identityRetryRepairs&&summary.repairs.identityRetryRepairs.repaired||0)):'',
         summary.newSourceIds&&summary.newSourceIds.length?('sources='+summary.newSourceIds.length):''
       ].filter(Boolean).join(' | ');
       sh.appendRow([
@@ -10419,6 +10492,7 @@ const RemoteApp = (() => {
     runGroupOnboardingHarness: runGroupOnboardingHarness_,
     runGroupIntelligenceHarness: runGroupIntelligenceHarness_,
     runApiNativeCleanupHarness: runApiNativeCleanupHarness_,
+    runVerifiedIdentityRetryHarness: runVerifiedIdentityRetryHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,
     runConcurrencyLeaseHarness: runConcurrencyLeaseHarness_,
   };
