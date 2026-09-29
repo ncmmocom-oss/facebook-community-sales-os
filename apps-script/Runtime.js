@@ -4993,9 +4993,15 @@ const RemoteApp = (() => {
     try{
       info=info||{};
       const sh=ensureApiDiagSheet_();
+      const safeJson=value=>{
+        if(value===undefined||value===null||value==='') return '';
+        try{return JSON.stringify(value).slice(0,1200);}catch(_){return String(value).slice(0,1200);}
+      };
       const note=[
         info.attemptedUrl?('url='+info.attemptedUrl):'',
         info.fallbackUrl?('fallback='+info.fallbackUrl):'',
+        info.apiParams?('apiParams='+safeJson(info.apiParams)):'',
+        info.fallbackParams?('fallbackParams='+safeJson(info.fallbackParams)):'',
         info.error?('error='+String(info.error).slice(0,1200)):'',
         info.raw?('raw='+String(info.raw).slice(0,1800)):''
       ].filter(Boolean).join(' | ');
@@ -5093,7 +5099,8 @@ const RemoteApp = (() => {
           logRuntimeApiEvent_({
             groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
             variant:'PRIMARY_GROUP_ID_FAIL',title:'FBAIO Group identity parse failed',code:'D_GROUP_ID_RESOLVE',
-            attemptedUrl:apiGroupUrl,error:fallbackCause,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||''
+            attemptedUrl:apiGroupUrl,apiParams:err.apiParams||{url:apiGroupUrl,sorting:'Newest Posts',cursor:cursor||''},
+            error:fallbackCause,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||''
           });
           if(numericId && numericId!==extractGroupKey_(apiGroupUrl)){
             fallbackUsed=true;
@@ -5110,13 +5117,19 @@ const RemoteApp = (() => {
               logRuntimeApiEvent_({
                 groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
                 variant:'NUMERIC_GROUP_ID_FALLBACK',title:'Numeric Group ID fallback PASS',code:'R_NUMERIC_FALLBACK_PASS',
-                attemptedUrl:primaryUrl,fallbackUrl:apiGroupUrl,error:fallbackCause
+                attemptedUrl:primaryUrl,fallbackUrl:apiGroupUrl,
+                apiParams:err.apiParams||{url:primaryUrl,sorting:'Newest Posts',cursor:cursor||''},
+                fallbackParams:{url:apiGroupUrl,sorting:'Newest Posts',cursor:cursor||''},
+                error:fallbackCause
               });
             }catch(fallbackErr){
               logRuntimeApiEvent_({
                 groupName:sourceGroupName,groupKey:String(groupKey||extractGroupKey_(groupUrl)||''),workerSlot,
                 variant:'NUMERIC_GROUP_ID_FALLBACK_FAIL',title:'Numeric Group ID fallback failed',code:'E_NUMERIC_FALLBACK_FAIL',
-                attemptedUrl:primaryUrl,fallbackUrl:apiGroupUrl,error:String(fallbackErr.message||fallbackErr),
+                attemptedUrl:primaryUrl,fallbackUrl:apiGroupUrl,
+                apiParams:err.apiParams||{url:primaryUrl,sorting:'Newest Posts',cursor:cursor||''},
+                fallbackParams:fallbackErr.apiParams||{url:apiGroupUrl,sorting:'Newest Posts',cursor:cursor||''},
+                error:String(fallbackErr.message||fallbackErr),
                 httpCode:Number(fallbackErr.httpCode||0),raw:fallbackErr.socialAioRaw||''
               });
               throw fallbackErr;
@@ -5125,6 +5138,7 @@ const RemoteApp = (() => {
             const e=new Error('FBAIO_GROUP_ID_RESOLVE: FBAIO parse sai Group URL/slug và không có numeric Group ID đã xác minh để fallback. Gốc: '+fallbackCause);
             e.httpCode=Number(err.httpCode||0);
             e.socialAioRaw=err.socialAioRaw||'';
+            e.apiParams=err.apiParams||{url:apiGroupUrl,sorting:'Newest Posts',cursor:cursor||''};
             throw e;
           }
         } else if(isTransientSocialAioError_(err) && posts.length>0){
@@ -7202,7 +7216,8 @@ const RemoteApp = (() => {
       logRuntimeApiEvent_({
         groupName:name,groupKey,workerSlot:healthWorkerSlot||'',variant:'DIRECT_GROUP_SCAN_FAIL',
         title:'Direct Group scan failed',code:errorClass||'UNKNOWN',attemptedUrl:groupUrl,
-        error:msg,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||'',durationMs:Date.now()-started
+        error:msg,httpCode:Number(err.httpCode||0),raw:err.socialAioRaw||'',
+        apiParams:err.apiParams||'',durationMs:Date.now()-started
       });
       const health=healthWorkerSlot?recordWorkerJobHealth_(healthWorkerSlot,false,Date.now()-started,msg):null;
       setGroupRowStatus_(sheet,row,'LỖI','0/'+target+' bài',msg);
