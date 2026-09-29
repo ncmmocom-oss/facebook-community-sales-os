@@ -3098,6 +3098,7 @@ const RemoteApp = (() => {
     const allowedAction = new Set(['Bỏ qua','Theo dõi','Comment giá trị','Hỏi chẩn đoán','Tạo nhu cầu','Nối tiếp hội thoại','Xử lý phản đối','Gợi ý giải pháp','Mời inbox','Kết bạn','CTA']);
     const allowedBinary = new Set(['Có','Không','Chưa rõ']);
     const cfg=getAiConfig_();
+    const policyConfig=getAutoPolicyConfig_();
     const groupContextMap=loadGroupAiContextMap_();
     const now = new Date();
 
@@ -3158,7 +3159,10 @@ const RemoteApp = (() => {
         const rowGroup=String(r[4]||'').trim();
         const rowGroupKey=String(groupKeys[idx]&&groupKeys[idx][0]||'').trim().toLowerCase();
         const effectiveContext=resolveAiContextForGroup_(rowGroup,rowGroupKey,cfg,groupContextMap);
-        if(!effectiveContext) productFit='Chưa rõ';
+        const policyProfile=policyProfileForGroup_(policyConfig,rowGroupKey);
+        const aiPolicy=resolveEffectiveAiPolicy_(policyProfile,{groupKey:rowGroupKey},policyConfig);
+        const actionPolicy=resolveEffectiveActionPolicy_(policyProfile,policyConfig);
+        productFit=productFitUnderAiPolicy_(productFit,!!effectiveContext,aiPolicy);
 
         const needScore=clampScore_(a.need_score,0,25);
         const fitScore=clampScore_(a.fit_score,0,25);
@@ -3185,7 +3189,7 @@ const RemoteApp = (() => {
           actionableIntents.has(intent) &&
           !passiveActions.has(action);
 
-        const gate=decideLeadGate_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext);
+        const gate=leadGateUnderAiPolicy_(buyerRole,productFit,needEvidencePass,actionIntentPass,effectiveContext,aiPolicy);
 
         let classification=suggestedClass;
         if(gate==='PASS') classification=score>=80?'Rất tiềm năng':'Tiềm năng';
@@ -3198,10 +3202,17 @@ const RemoteApp = (() => {
         if(gate==='PASS') status='Đang xử lý';
         if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
 
+        const policyDecision=resolveActionPolicyDecision_({
+          gate,intent,classification:suggestedClass,nextAction:action
+        },actionPolicy);
         const gateReason=[
           'Buyer='+buyerRole,
           'Fit='+productFit,
           'Context='+(effectiveContext?'VALID_GROUP_CONTEXT':'MISSING_OR_INVALID'),
+          'AIStage='+(aiPolicy.qualificationEnabled?'SIGNAL+QUALIFICATION':'SIGNAL_ONLY'),
+          'PolicyAction='+policyDecision.action,
+          'HumanApproval='+(policyDecision.requiresHumanApproval?'YES':'NO'),
+          'AutoComment=OFF',
           'NeedEvidence='+(needEvidencePass?'PASS':'NO'),
           'ActionIntent='+(actionIntentPass?'PASS':'NO'),
           'Intent='+intent,
