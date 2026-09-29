@@ -368,6 +368,11 @@ jobs:
           assert "existingConversions=sh.getRange(start,18,n,1).getValues()" in sales_block
           assert "sh.getRange(start+i,18).getValue()" not in sales_block
           assert "nextFollowUpForSalesStage_(stage,nextFollow,prev[2])" in sales_block
+          apply_ai_start = runtime.index('function applyAiAnalysis_(')
+          apply_ai_end = runtime.index('function normalizeAndDedupeCommentSheet_', apply_ai_start)
+          apply_ai_block = runtime[apply_ai_start:apply_ai_end]
+          assert "const sourceId=x.sourceId;" in apply_ai_block
+          assert "ownPostSourceMap[sourceId]" in apply_ai_block
           assert "function validateOfferContext_(" in runtime
           assert "function loadValidatedGroupContexts_(" in runtime
           assert "function buildSourceGroupKeyMap_(" in runtime
