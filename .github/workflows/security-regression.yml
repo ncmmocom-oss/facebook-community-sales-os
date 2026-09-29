@@ -203,6 +203,9 @@ jobs:
           ]
           for token in required_fbaio:
               assert token in runtime, f'missing FBAIO fallback token: {token}'
+          assert "apiParams=" in runtime
+          assert "fallbackParams=" in runtime
+          assert "apiParams:err.apiParams" in runtime
 
           keeper = Path('worker-keeper/content.js').read_text(encoding='utf-8')
           manifest = Path('worker-keeper/manifest.json').read_text(encoding='utf-8')
