@@ -539,7 +539,13 @@ const RemoteApp = (() => {
     const classification=String(signal.classification||'');
     let action='WATCH';
     if(gate==='FAIL') action=classification==='Nguồn hội thoại'?'NO_ACTION_RELEVANT':'IGNORE';
-    else if(gate==='PASS') action=['Muốn mua','Cần mua gấp'].indexOf(intent)>=0?'OUTREACH_CANDIDATE':'LEAD';
+    else if(gate==='PASS'){
+      const ownPost=signal.ownPost===true;
+      const strongIntent=ownPost
+        ?['Muốn mua','Cần mua gấp'].indexOf(intent)>=0
+        :intent==='Cần mua gấp';
+      action=strongIntent?'OUTREACH_CANDIDATE':'LEAD';
+    }
     else if(gate==='REVIEW_REQUIRED') action='HUMAN_REVIEW';
     else if(['Comment giá trị','Hỏi chẩn đoán','Gợi ý giải pháp','Nối tiếp hội thoại'].indexOf(nextAction)>=0) action='VALUE_COMMENT';
     else if(classification==='Nguồn hội thoại'||classification==='Theo dõi') action='NO_ACTION_RELEVANT';
@@ -3229,6 +3235,37 @@ const RemoteApp = (() => {
     return Math.max(min,Math.min(max,isFinite(n)?n:0));
   }
 
+  function buildOwnPostSourceMap_(policyConfig) {
+    const config=policyConfig||getAutoPolicyConfig_();
+    const hasIdentity=(config.profiles||[]).some(p=>(p.facebookIdentities||[]).length>0);
+    const out={};
+    if(!hasIdentity) return out;
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const raw=ss.getSheetByName(CFG.RAW_SHEET);
+    const postOwn={};
+    if(raw&&raw.getLastRow()>=5){
+      raw.getRange(5,4,raw.getLastRow()-4,5).getDisplayValues().forEach(r=>{
+        const groupKey=String(r[0]||'').trim().toLowerCase();
+        const postId=String(r[1]||'').trim();
+        const authorUrl=String(r[4]||'').trim();
+        if(!postId) return;
+        const profile=policyProfileForGroup_(config,groupKey);
+        const own=isProfileOwnPost_(profile,authorUrl);
+        postOwn[postId]=own;
+        out[postId]=own;
+      });
+    }
+    const comments=ss.getSheetByName(CFG.COMMENT_SHEET);
+    if(comments&&comments.getLastRow()>=2){
+      comments.getRange(2,4,comments.getLastRow()-1,4).getDisplayValues().forEach(r=>{
+        const postId=String(r[1]||'').trim();
+        const commentId=String(r[3]||'').trim();
+        if(commentId) out['C:'+commentId]=!!postOwn[postId];
+      });
+    }
+    return out;
+  }
+
   function applyAiAnalysis_(sheet, analyses) {
     const allowedIntent = new Set(['Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối','Muốn đổi','Muốn mua','Cần mua gấp','Chia sẻ','Thảo luận','Không ưu tiên']);
     const allowedClass = new Set(['Rất tiềm năng','Tiềm năng','Theo dõi','Nguồn hội thoại','Không phải KH']);
@@ -3236,6 +3273,7 @@ const RemoteApp = (() => {
     const allowedBinary = new Set(['Có','Không','Chưa rõ']);
     const cfg=getAiConfig_();
     const policyConfig=getAutoPolicyConfig_();
+    const ownPostSourceMap=buildOwnPostSourceMap_(policyConfig);
     const groupContextMap=loadGroupAiContextMap_();
     const now = new Date();
 
@@ -3339,14 +3377,16 @@ const RemoteApp = (() => {
         if(gate==='PASS') status='Đang xử lý';
         if(gate==='FAIL'&&classification==='Không phải KH') status='Đóng';
 
+        const ownPostSource=ownPostSourceMap[sourceId]===true;
         const policyDecision=resolveActionPolicyDecision_({
-          gate,intent,classification:suggestedClass,nextAction:action
+          gate,intent,classification:suggestedClass,nextAction:action,ownPost:ownPostSource
         },actionPolicy);
         const gateReason=[
           'Buyer='+buyerRole,
           'Fit='+productFit,
           'Context='+(effectiveContext?'VALID_GROUP_CONTEXT':'MISSING_OR_INVALID'),
           'AIStage='+(aiPolicy.qualificationEnabled?'SIGNAL+QUALIFICATION':'SIGNAL_ONLY'),
+          'SourceKind='+(ownPostSource?(sourceId.startsWith('C:')?'OWN_POST_COMMENT':'OWN_POST'):'EXTERNAL_GROUP_SOURCE'),
           'PolicyAction='+policyDecision.action,
           'HumanApproval='+(policyDecision.requiresHumanApproval?'YES':'NO'),
           'AutoComment=OFF',
