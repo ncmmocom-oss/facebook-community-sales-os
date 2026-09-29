@@ -452,11 +452,23 @@ const RemoteApp = (() => {
         }
       });
     }
+    const pool=getWorkerPoolRaw_();
+    const browserIdentity=String(profile&&profile.browserIdentity||'').trim().toLowerCase();
+    const linkedWorker=(browserIdentity
+      ?pool.find(w=>[w.slot,w.label,w.profile].some(v=>String(v||'').trim().toLowerCase()===browserIdentity))
+      :pool.find(w=>w.enabled&&w.clientId))||null;
+    const profileRuntime={
+      health:linkedWorker?workerHealthState_(linkedWorker):(profile&&profile.enabled===false?'PAUSED':'UNBOUND'),
+      lastActivity:linkedWorker?String(linkedWorker.lastJobAt||linkedWorker.lastSuccessAt||linkedWorker.lastTestAt||''):'',
+      errorState:linkedWorker?String(linkedWorker.lastError||''):'',
+      workerSlot:linkedWorker?String(linkedWorker.slot||''):''
+    };
     return {
       version:CFG.VERSION,
       config,
       enabled:isAutoMonitorEnabled_(),
-      activeProfile:profile,
+      activeProfile:Object.assign({},profile||{},profileRuntime),
+      profileRuntime,
       activeGroups,
       assignedGroups,
       capacity:Number(profile&&profile.maxGroupCapacity||0),
