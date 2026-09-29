@@ -78,6 +78,20 @@ jobs:
           for(const k of providerRequired){
             if(p.tests[k]!==true) throw new Error('provider acceptance failed: '+k);
           }
+          const g=sandbox.__remoteApp.runGroupSummaryCardinalityHarness();
+          console.log(JSON.stringify(g,null,2));
+          if(!g || g.ok!==true) process.exit(1);
+          const groupSummaryRequired=[
+            'GROUP_SUMMARY_ACTIVE_INACTIVE_ONE_ROW',
+            'GROUP_SUMMARY_ALIAS_COMPONENT_ONE_ROW',
+            'GROUP_SUMMARY_KPI_NOT_MULTIPLIED',
+            'GROUP_SUMMARY_ACTIVE_METADATA_WINS',
+            'GROUP_SUMMARY_IDENTITY_MISSING_FAIL_CLOSED',
+            'GROUP_SUMMARY_INACTIVE_ONLY_RETAINED'
+          ];
+          for(const k of groupSummaryRequired){
+            if(g.tests[k]!==true) throw new Error('group summary acceptance failed: '+k);
+          }
           NODE
 
       - name: Assert manual and Due scopes cannot cross
@@ -251,7 +265,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF8-group-summary-identity'" in runtime
+          assert "VERSION: '1.9.8.7-HF9-group-summary-cardinality'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -264,15 +278,24 @@ jobs:
           assert "function isSalesStageTransitionAllowed_(" in runtime
           assert "function salesTransitionReason_(" in runtime
           assert "function nextFollowUpForSalesStage_(" in runtime
+          registry_start = runtime.index('function buildCanonicalGroupSummaryRegistry_(')
           summary_start = runtime.index('function refreshGroupSummary_(')
           summary_end = runtime.index('function refreshCoordination_', summary_start)
+          registry_block = runtime[registry_start:summary_start]
           summary_block = runtime[summary_start:summary_end]
-          assert "byGroupKey = new Map()" in summary_block
-          assert "CFG.OPPORTUNITY_GROUP_KEY_COL - 1" in summary_block
-          assert "canonicalGroupKeyAliasesFromScanRow_(s, idx + 2)" in summary_block
-          assert "if (!key) return; // fail closed: never infer Group from display name" in summary_block
-          assert "String(r[26] || '').trim() === 'Đã bán'" in summary_block
-          assert "String(r[17] || '').trim() === 'Đã bán'" not in summary_block
+          assert "aliasOwner=new Map()" in registry_block
+          assert "canonicalGroupKeyAliasesFromScanRow_(s,idx+2)" in registry_block
+          assert "if(a.active!==b.active) return a.active?-1:1" in registry_block
+          assert "function buildGroupSummaryOpportunityIndex_(" in registry_block
+          assert "if(!key) return; // fail closed: identityMissing never joins by display name" in registry_block
+          assert "function collectGroupSummaryOpportunities_(" in registry_block
+          assert "seenSourceIds" in registry_block
+          assert "function runGroupSummaryCardinalityHarness_(" in registry_block
+          assert "buildCanonicalGroupSummaryRegistry_(scanRows)" in summary_block
+          assert "collectGroupSummaryOpportunities_(byGroupKey,group.aliases)" in summary_block
+          assert "String(r[26]||'').trim()==='Đã bán'" in registry_block
+          assert "String(r[17]||'').trim()==='Đã bán'" not in registry_block
+          assert "byGroup[name]" not in summary_block
           sales_start = runtime.index('function setSelectedOpportunitySalesStage_(')
           sales_end = runtime.index('function getSalesPipelineStats_', sales_start)
           sales_block = runtime[sales_start:sales_end]
