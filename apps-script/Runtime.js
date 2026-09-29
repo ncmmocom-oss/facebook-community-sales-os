@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF9-group-summary-cardinality',
+    VERSION: '1.9.8.7-HF10-auto-policy-profile-settings',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -41,6 +41,7 @@ const RemoteApp = (() => {
     OPS_COVERAGE_WINDOW_MS: 24 * 60 * 60 * 1000,
     OPS_FRESH_SIGNAL_MS: 2 * 60 * 60 * 1000,
     OPS_AI_STALE_MS: 2 * 60 * 60 * 1000,
+    AUTO_POLICY_KEY: 'SOCIAL_AIO_AUTO_POLICY_V1',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
     AUTO_MONITOR_LAST_RUN_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_LAST_RUN',
     AUTO_MONITOR_TRIGGER_HANDLER: 'autoMonitorTick',
@@ -78,6 +79,138 @@ const RemoteApp = (() => {
     SALES_STAGE_OPTIONS: ['Qualified','Outreach','Đang hội thoại','Chờ phản hồi','Follow-up','Đã bán','Lost'],
     SHEET_ROW_HEIGHT_PX: 21,
   };
+
+  function autoPolicyDefaults_() {
+    return {
+      schemaVersion:1,
+      activeProfileId:'IX01',
+      global:{
+        auto:{triggerMinutes:5,activeStart:'07:00',activeEnd:'23:00',timezone:'Asia/Ho_Chi_Minh',maxGroupsPerCycle:4,runtimeBudgetMs:230000},
+        scan:{scansPerDay:3,postsPerScan:10,maxPostsPerScan:25,dueToleranceMinutes:5,retryAttempts:5,retryBackoffMinutes:[2,10,30,120,360]},
+        comment:{enabled:true,maxPostsPerCycle:4,maxPagesPerPost:3,maxCommentsPerPost:100,hotWatchHours:24,recheckMinutes:30,ownPostPriority:100,externalPostPriority:50,providerBreakerMinutes:10},
+        ai:{signalEnabled:true,qualificationEnabled:true,chunkSize:12},
+        action:{humanApproval:true,autoComment:false}
+      },
+      profiles:[{
+        id:'IX01',displayName:'IX Profile 01',browserIdentity:'',facebookIdentities:[],
+        enabled:true,activeStart:'',activeEnd:'',timezone:'',maxGroupCapacity:30,
+        groupKeys:[],scan:{},comment:{},ai:{},action:{}
+      }]
+    };
+  }
+
+  function policyInt_(value,fallback,min,max) {
+    const n=Number(value);
+    if(!Number.isFinite(n)) return Number(fallback);
+    return Math.max(Number(min),Math.min(Number(max),Math.floor(n)));
+  }
+
+  function policyBool_(value,fallback) {
+    if(value===true||value===false) return value;
+    if(String(value).toLowerCase()==='true') return true;
+    if(String(value).toLowerCase()==='false') return false;
+    return !!fallback;
+  }
+
+  function policyTime_(value,fallback) {
+    const s=String(value||'').trim();
+    const m=s.match(/^(\d{2}):(\d{2})$/);
+    if(!m) return String(fallback||'00:00');
+    const h=Number(m[1]),min=Number(m[2]);
+    if(h<0||h>23||min<0||min>59) return String(fallback||'00:00');
+    return String(h).padStart(2,'0')+':'+String(min).padStart(2,'0');
+  }
+
+  function policyBackoff_(value,fallback) {
+    const input=Array.isArray(value)?value:String(value||'').split(',');
+    const out=input.map(x=>Number(String(x).trim()))
+      .filter(x=>Number.isFinite(x)&&x>=1&&x<=1440)
+      .map(x=>Math.floor(x));
+    return out.length?out:(fallback||[2,10,30,120,360]).slice();
+  }
+
+  function normalizeAutoPolicy_(raw) {
+    const d=autoPolicyDefaults_();
+    raw=raw&&typeof raw==='object'?raw:{};
+    const g=raw.global&&typeof raw.global==='object'?raw.global:{};
+    const ga=g.auto||{},gs=g.scan||{},gc=g.comment||{},gi=g.ai||{},gx=g.action||{};
+    const cfg={
+      schemaVersion:1,
+      activeProfileId:String(raw.activeProfileId||d.activeProfileId).trim()||d.activeProfileId,
+      global:{
+        auto:{
+          triggerMinutes:[5,10,15,30].indexOf(Number(ga.triggerMinutes))>=0?Number(ga.triggerMinutes):d.global.auto.triggerMinutes,
+          activeStart:policyTime_(ga.activeStart,d.global.auto.activeStart),
+          activeEnd:policyTime_(ga.activeEnd,d.global.auto.activeEnd),
+          timezone:String(ga.timezone||d.global.auto.timezone).trim()||d.global.auto.timezone,
+          maxGroupsPerCycle:policyInt_(ga.maxGroupsPerCycle,d.global.auto.maxGroupsPerCycle,1,12),
+          runtimeBudgetMs:policyInt_(ga.runtimeBudgetMs,d.global.auto.runtimeBudgetMs,60000,280000)
+        },
+        scan:{
+          scansPerDay:policyInt_(gs.scansPerDay,d.global.scan.scansPerDay,1,24),
+          postsPerScan:policyInt_(gs.postsPerScan,d.global.scan.postsPerScan,1,200),
+          maxPostsPerScan:policyInt_(gs.maxPostsPerScan,d.global.scan.maxPostsPerScan,1,200),
+          dueToleranceMinutes:policyInt_(gs.dueToleranceMinutes,d.global.scan.dueToleranceMinutes,0,120),
+          retryAttempts:policyInt_(gs.retryAttempts,d.global.scan.retryAttempts,1,10),
+          retryBackoffMinutes:policyBackoff_(gs.retryBackoffMinutes,d.global.scan.retryBackoffMinutes)
+        },
+        comment:{
+          enabled:policyBool_(gc.enabled,d.global.comment.enabled),
+          maxPostsPerCycle:policyInt_(gc.maxPostsPerCycle,d.global.comment.maxPostsPerCycle,1,20),
+          maxPagesPerPost:policyInt_(gc.maxPagesPerPost,d.global.comment.maxPagesPerPost,1,10),
+          maxCommentsPerPost:policyInt_(gc.maxCommentsPerPost,d.global.comment.maxCommentsPerPost,10,1000),
+          hotWatchHours:policyInt_(gc.hotWatchHours,d.global.comment.hotWatchHours,1,168),
+          recheckMinutes:policyInt_(gc.recheckMinutes,d.global.comment.recheckMinutes,5,1440),
+          ownPostPriority:policyInt_(gc.ownPostPriority,d.global.comment.ownPostPriority,0,1000),
+          externalPostPriority:policyInt_(gc.externalPostPriority,d.global.comment.externalPostPriority,0,1000),
+          providerBreakerMinutes:policyInt_(gc.providerBreakerMinutes,d.global.comment.providerBreakerMinutes,1,120)
+        },
+        ai:{
+          signalEnabled:policyBool_(gi.signalEnabled,d.global.ai.signalEnabled),
+          qualificationEnabled:policyBool_(gi.qualificationEnabled,d.global.ai.qualificationEnabled),
+          chunkSize:policyInt_(gi.chunkSize,d.global.ai.chunkSize,1,50)
+        },
+        action:{humanApproval:policyBool_(gx.humanApproval,true),autoComment:false}
+      },
+      profiles:[]
+    };
+    const profiles=Array.isArray(raw.profiles)&&raw.profiles.length?raw.profiles:d.profiles;
+    profiles.forEach((p,i)=>{
+      p=p||{};
+      const id=String(p.id||('IX'+String(i+1).padStart(2,'0'))).trim().toUpperCase().replace(/[^A-Z0-9_-]/g,'');
+      if(!id||cfg.profiles.some(x=>x.id===id)) return;
+      cfg.profiles.push({
+        id,displayName:String(p.displayName||id).trim()||id,
+        browserIdentity:String(p.browserIdentity||'').trim(),
+        facebookIdentities:(Array.isArray(p.facebookIdentities)?p.facebookIdentities:[]).map(x=>String(x||'').trim()).filter(Boolean),
+        enabled:policyBool_(p.enabled,true),
+        activeStart:String(p.activeStart||'').trim()?policyTime_(p.activeStart,cfg.global.auto.activeStart):'',
+        activeEnd:String(p.activeEnd||'').trim()?policyTime_(p.activeEnd,cfg.global.auto.activeEnd):'',
+        timezone:String(p.timezone||'').trim(),
+        maxGroupCapacity:policyInt_(p.maxGroupCapacity,30,1,100),
+        groupKeys:(Array.isArray(p.groupKeys)?p.groupKeys:[]).map(x=>String(x||'').trim().toLowerCase()).filter(Boolean),
+        scan:p.scan&&typeof p.scan==='object'?p.scan:{},
+        comment:p.comment&&typeof p.comment==='object'?p.comment:{},
+        ai:p.ai&&typeof p.ai==='object'?p.ai:{},
+        action:p.action&&typeof p.action==='object'?p.action:{}
+      });
+    });
+    if(!cfg.profiles.length) cfg.profiles=d.profiles;
+    if(!cfg.profiles.some(p=>p.id===cfg.activeProfileId)) cfg.activeProfileId=cfg.profiles[0].id;
+    if(cfg.global.scan.postsPerScan>cfg.global.scan.maxPostsPerScan) cfg.global.scan.postsPerScan=cfg.global.scan.maxPostsPerScan;
+    return cfg;
+  }
+
+  function getAutoPolicyConfig_() {
+    let raw=null;
+    try{raw=JSON.parse(PropertiesService.getDocumentProperties().getProperty(CFG.AUTO_POLICY_KEY)||'null');}catch(_){}
+    return normalizeAutoPolicy_(raw||autoPolicyDefaults_());
+  }
+
+  function activePolicyProfile_(config) {
+    const c=config||autoPolicyDefaults_();
+    return (c.profiles||[]).find(p=>p.id===c.activeProfileId)||(c.profiles||[])[0]||null;
+  }
 
   function getVersion() { return CFG.VERSION; }
 
