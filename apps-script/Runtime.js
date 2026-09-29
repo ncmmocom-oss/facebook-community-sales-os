@@ -6231,8 +6231,9 @@ const RemoteApp = (() => {
     try{
       const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
       if(sh.getLastRow()<2) return '';
+      const config=getAutoPolicyConfig_();
       const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
-      const rows=sh.getRange(2,1,sh.getLastRow()-1,24).getValues();
+      const rows=sh.getRange(2,1,sh.getLastRow()-1,27).getValues();
       let min=0;
       rows.forEach((row,i)=>{
         if(duplicateRows.has(i+2)) return;
@@ -6240,12 +6241,16 @@ const RemoteApp = (() => {
         const lifecycle=String(row[6]||'').trim();
         const status=String(row[23]||'').trim();
         const url=String(row[3]||'').trim();
-        if(active!=='Có' || !url || lifecycle==='Loại') return;
-        if(status==='ĐANG QUÉT' || status==='LỖI' || status==='THIẾU' || /^DỪNG/.test(status)) return;
-        const lastAt=row[9] instanceof Date ? row[9].getTime() : 0;
-        const nextAt=row[10] instanceof Date ? row[10].getTime() : 0;
-        if(!lastAt || !nextAt || nextAt<=Date.now()) return;
-        if(!min || nextAt<min) min=nextAt;
+        if(active!=='Có'||!url||lifecycle==='Loại') return;
+        if(status==='ĐANG QUÉT'||status==='LỖI'||status==='THIẾU'||/^DỪNG/.test(status)) return;
+        const group=groupPolicyInput_(row);
+        const profile=policyProfileForGroup_(config,group.groupKey);
+        if(!profile||profile.enabled===false) return;
+        const scan=resolveEffectiveScanPolicy_(profile,group,config);
+        const lastAt=opsDateMs_(row[9]);
+        const nextAt=effectiveNextDueMs_(lastAt,scan);
+        if(!lastAt||!nextAt||nextAt<=Date.now()) return;
+        if(!min||nextAt<min) min=nextAt;
       });
       return min?new Date(min).toISOString():'';
     }catch(_){
@@ -6258,8 +6263,17 @@ const RemoteApp = (() => {
     const started=Date.now();
     const runId='auto-'+Utilities.getUuid().slice(0,10);
     const testMode=!!options.testMode;
-    const requestedMaxJobs=Number(options.maxJobs||CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK);
-    const maxJobs=Math.max(1,Math.min(CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,requestedMaxJobs));
+    const policyConfig=getAutoPolicyConfig_();
+    const activeProfile=activePolicyProfile_(policyConfig);
+    const autoPolicy=policyConfig.global.auto||{};
+    const commentPolicy=resolveEffectiveCommentPolicy_(activeProfile,null,policyConfig);
+    const aiPolicy=resolveEffectiveAiPolicy_(activeProfile,null,policyConfig);
+    const actionPolicy=resolveEffectiveActionPolicy_(activeProfile,policyConfig);
+    const runtimeBudgetMs=policyInt_(autoPolicy.runtimeBudgetMs,CFG.AUTO_MONITOR_BUDGET_MS,60000,280000);
+    const policyMaxJobs=policyInt_(autoPolicy.maxGroupsPerCycle,CFG.AUTO_MONITOR_MAX_GROUPS_PER_TICK,1,12);
+    const requestedMaxJobs=Number(options.maxJobs||policyMaxJobs);
+    const maxJobs=Math.max(1,Math.min(policyMaxJobs,requestedMaxJobs));
+    const groupWindowOpen=shouldAutoScanProfile_(activeProfile,policyConfig,options.force===true,null);
     const summary={
       ok:true,version:CFG.VERSION,runId,source:options.source||'TRIGGER',testMode,
       acceptance:testMode?'PENDING':'',
@@ -6267,7 +6281,20 @@ const RemoteApp = (() => {
       commentsProcessed:0,commentsImported:0,aiAnalyzed:0,newSourceIds:[],
       queue:{retryAvailable:0,dueAvailable:0,selected:[]},
       jobResults:[],
-      startedAt:new Date(started).toISOString()
+      startedAt:new Date(started).toISOString(),
+      policy:{
+        profileId:activeProfile&&activeProfile.id||'',
+        profileName:activeProfile&&activeProfile.displayName||'',
+        triggerMinutes:Number(autoPolicy.triggerMinutes||CFG.AUTO_MONITOR_TRIGGER_MINUTES),
+        activeWindow:profileActiveWindow_(activeProfile,policyConfig),
+        activeNow:groupWindowOpen,
+        maxGroups:maxJobs,
+        runtimeBudgetMs,
+        scan:resolveEffectiveScanPolicy_(activeProfile,{},policyConfig),
+        comment:commentPolicy,
+        ai:aiPolicy,
+        action:actionPolicy
+      }
     };
 
     if(testMode){
@@ -6329,9 +6356,15 @@ const RemoteApp = (() => {
         return summary;
       }
 
-      const retry=getAutoRetryJobs_(Math.min(2,maxJobs));
+      const retryAll=getAutoRetryJobs_(Math.min(2,maxJobs),policyConfig);
+      const retry=options.force===true
+        ?retryAll
+        :retryAll.filter(j=>shouldAutoScanProfile_(policyProfileForGroup_(policyConfig,j.groupKey),policyConfig,false,null));
       const retryRows=new Set(retry.map(x=>x.row));
-      const due=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT)
+      const due=getDueGroupRows_(CFG.PILOT_GROUP_LIMIT,{
+          policyConfig,
+          requireActiveWindow:options.force!==true
+        })
         .filter(x=>!retryRows.has(x.row))
         .map(x=>Object.assign({},x,{autoKind:'DUE'}));
 
@@ -6348,9 +6381,11 @@ const RemoteApp = (() => {
       }));
       if(!jobs.length){
         summary.skipped=true;
-        summary.reason='NO_DUE_OR_RETRY';
+        summary.reason=(!options.force&&!groupWindowOpen)?'OUTSIDE_ACTIVE_WINDOW':'NO_DUE_OR_RETRY';
         summary.acceptance=testMode?'SCHEDULER_IDLE':'';
-        summary.message='Scheduler hợp lệ; hiện chưa có Group đến hạn hoặc retry.';
+        summary.message=summary.reason==='OUTSIDE_ACTIVE_WINDOW'
+          ?'Ngoài active window: không mở Group scan mới; Comment/AI backlog vẫn được xử lý theo policy.'
+          :'Scheduler hợp lệ; hiện chưa có Group đến hạn hoặc retry.';
         summary.nextDueAt=getNextAutoDueAt_();
       }
 
@@ -6359,7 +6394,7 @@ const RemoteApp = (() => {
         const work=flattenWorkerPlanJobs_(plan).slice(0,maxJobs);
         for(let i=0;i<work.length;i++){
           const elapsed=Date.now()-started;
-          const remaining=Math.max(0,CFG.AUTO_MONITOR_BUDGET_MS-elapsed);
+          const remaining=Math.max(0,runtimeBudgetMs-elapsed);
           if(remaining<CFG.AUTO_MONITOR_JOB_START_RESERVE_MS){
             summary.budgetDeferredGroups=work.length-i;
             summary.budgetReason='GROUP_START_RESERVE';
@@ -6369,7 +6404,7 @@ const RemoteApp = (() => {
           const job=work[i];
 
           const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
-          if(job.autoKind==='DUE' && !isDueJobStillValid_(sheet,job.row)){
+          if(job.autoKind==='DUE' && !isDueJobStillValid_(sheet,job.row,policyConfig)){
             summary.groupsSkipped++;
             summary.jobResults.push({
               row:job.row,name:job.name,kind:'DUE',outcome:'SKIP_NOT_DUE',workerSlot:job.workerSlot
@@ -6416,9 +6451,14 @@ const RemoteApp = (() => {
         }
       }
 
-      if(!options.skipComments && !testMode && Date.now()-started<CFG.AUTO_MONITOR_BUDGET_MS-45000){
+      if(!options.skipComments && !testMode && commentPolicy.enabled && Date.now()-started<runtimeBudgetMs-45000){
         heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
-        const cr=runCommentIntelligenceCycle_({limit:CFG.COMMENT_MAX_POSTS_PER_TICK,source:'AUTO'});
+        const cr=runCommentIntelligenceCycle_({
+          limit:commentPolicy.maxPostsPerCycle,
+          source:'AUTO',
+          policyConfig,
+          policyProfileId:activeProfile&&activeProfile.id||''
+        });
         summary.commentsProcessed=Number(cr.processed||0);
         summary.commentsImported=Number(cr.commentImported||0);
         summary.commentIntel={
@@ -6436,8 +6476,8 @@ const RemoteApp = (() => {
       summary.newSourceIds=[...new Set(summary.newSourceIds.map(x=>String(x||'').trim()).filter(Boolean))];
 
       const aiCfg=getAiConfig_();
-      if(!options.skipAi && !testMode && aiCfg.autoAnalyze){
-        const remaining=Math.max(0,CFG.AUTO_MONITOR_BUDGET_MS-(Date.now()-started));
+      if(!options.skipAi && !testMode && aiCfg.autoAnalyze && aiPolicy.signalEnabled){
+        const remaining=Math.max(0,runtimeBudgetMs-(Date.now()-started));
         if(remaining>=CFG.AUTO_AI_START_RESERVE_MS){
           heartbeatRuntimeLease_(CFG.AUTO_MONITOR_LEASE_KEY,autoLease.token,CFG.AUTO_MONITOR_LEASE_TTL_MS);
           try{
@@ -6446,13 +6486,17 @@ const RemoteApp = (() => {
               ? {
                   silent:true,
                   scope:'source_ids',
-                  sourceIds:summary.newSourceIds.slice(0,CFG.AUTO_AI_SOURCE_CHUNK),
-                  maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK
+                  sourceIds:summary.newSourceIds.slice(0,aiPolicy.chunkSize),
+                  maxRowsOverride:aiPolicy.chunkSize,
+                  policyConfig,
+                  policyProfileId:activeProfile&&activeProfile.id||''
                 }
               : {
                   silent:true,
                   scope:'all_waiting',
-                  maxRowsOverride:CFG.AUTO_AI_SOURCE_CHUNK
+                  maxRowsOverride:aiPolicy.chunkSize,
+                  policyConfig,
+                  policyProfileId:activeProfile&&activeProfile.id||''
                 };
             const ar=analyzeNewPosts_(aiOptions);
             summary.aiAnalyzed=Number(ar&&ar.analyzed||0);
@@ -6462,8 +6506,8 @@ const RemoteApp = (() => {
               errors:(ar&&ar.errors||[]).length,
               mode:hasNew?'NEW_SOURCE':'BACKLOG'
             };
-            if(hasNew && summary.newSourceIds.length>CFG.AUTO_AI_SOURCE_CHUNK){
-              summary.aiDeferredSources=summary.newSourceIds.length-CFG.AUTO_AI_SOURCE_CHUNK;
+            if(hasNew && summary.newSourceIds.length>aiPolicy.chunkSize){
+              summary.aiDeferredSources=summary.newSourceIds.length-aiPolicy.chunkSize;
             }
           }catch(err){
             summary.aiError=String(err.message||err);
