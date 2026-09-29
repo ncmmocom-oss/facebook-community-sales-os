@@ -10368,6 +10368,20 @@ const RemoteApp = (() => {
     return url;
   }
 
+  function runApiNativeCleanupHarness_() {
+    const body=ingestApiRecords_.toString();
+    const importer=importJsonFiles.toString();
+    const tests={
+      API_NATIVE_WRAPPER_EXISTS:body.indexOf('parsed:list')>=0,
+      API_NATIVE_NO_SERIALIZE:body.indexOf('JSON.stringify')<0,
+      LEGACY_JSON_PARSE_RETAINED:importer.indexOf("JSON.parse(file.text || '[]')")>=0,
+      PARSED_PAYLOAD_SUPPORTED:importer.indexOf("hasOwnProperty.call(file,'parsed')")>=0
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
+
   return {
     getVersion,
     onOpen,
@@ -10403,19 +10417,6 @@ const RemoteApp = (() => {
     runGroupSummaryCardinalityHarness: runGroupSummaryCardinalityHarness_,
     runGroupRegistryCleanupHarness: runGroupRegistryCleanupHarness_,
     runGroupOnboardingHarness: runGroupOnboardingHarness_,
-  function runApiNativeCleanupHarness_() {
-    const body=ingestApiRecords_.toString();
-    const importer=importJsonFiles.toString();
-    const tests={
-      API_NATIVE_WRAPPER_EXISTS:body.indexOf('parsed:list')>=0,
-      API_NATIVE_NO_SERIALIZE:body.indexOf('JSON.stringify')<0,
-      LEGACY_JSON_PARSE_RETAINED:importer.indexOf("JSON.parse(file.text || '[]')")>=0,
-      PARSED_PAYLOAD_SUPPORTED:importer.indexOf("hasOwnProperty.call(file,'parsed')")>=0
-    };
-    const failed=Object.keys(tests).filter(k=>!tests[k]);
-    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
-  }
-
     runGroupIntelligenceHarness: runGroupIntelligenceHarness_,
     runApiNativeCleanupHarness: runApiNativeCleanupHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,
