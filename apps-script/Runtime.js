@@ -3694,6 +3694,7 @@ const RemoteApp = (() => {
   function workspaceSheetMap_() {
     return {
       groups:CFG.GROUP_SCAN_SHEET,
+      group_intelligence:CFG.GROUP_SUMMARY_SHEET,
       comments:CFG.COMMENT_SHEET,
       signals:CFG.SIGNAL_FEED_SHEET,
       leads:CFG.LEAD_SHEET,
@@ -4544,7 +4545,8 @@ const RemoteApp = (() => {
       workerSlot:worker.slot||''
     };
     saveGroupActivityObservation_(groupKey,state);
-    return Object.assign({ok:true},state);
+    const refreshed=refreshGroupSummary_();
+    return Object.assign({ok:true,intelligenceGroups:Number(refreshed.groups||0)},state);
   }
 
   function dateMsSafe_(v) {
