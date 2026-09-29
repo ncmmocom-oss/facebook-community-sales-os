@@ -86,7 +86,7 @@ const RemoteApp = (() => {
       activeProfileId:'IX01',
       global:{
         auto:{triggerMinutes:5,activeStart:'07:00',activeEnd:'23:00',timezone:'Asia/Ho_Chi_Minh',maxGroupsPerCycle:4,runtimeBudgetMs:230000},
-        scan:{scansPerDay:3,postsPerScan:10,maxPostsPerScan:25,dueToleranceMinutes:5,retryAttempts:5,retryBackoffMinutes:[2,10,30,120,360]},
+        scan:{scansPerDay:3,postsPerScan:10,maxPostsPerScan:200,dueToleranceMinutes:5,retryAttempts:5,retryBackoffMinutes:[2,10,30,120,360]},
         comment:{enabled:true,maxPostsPerCycle:4,maxPagesPerPost:3,maxCommentsPerPost:100,hotWatchHours:24,recheckMinutes:30,ownPostPriority:100,externalPostPriority:50,providerBreakerMinutes:10},
         ai:{signalEnabled:true,qualificationEnabled:true,chunkSize:12},
         action:{humanApproval:true,autoComment:false}
@@ -6953,11 +6953,13 @@ const RemoteApp = (() => {
     return Object.prototype.hasOwnProperty.call(map,key)?map[key]:2;
   }
 
-  function getDueGroupRows_(limit) {
+  function getDueGroupRows_(limit,options) {
+    options=options||{};
     const sheet=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const last=sheet.getLastRow();
     if(last<2) return [];
-    const now=Date.now();
+    const now=Number(options.nowMs||Date.now());
+    const config=options.policyConfig||getAutoPolicyConfig_();
     const rows=sheet.getRange(2,1,last-1,27).getValues();
     const duplicateRows=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
     const jobs=[];
@@ -6968,23 +6970,29 @@ const RemoteApp = (() => {
       const url=String(r[3]||'').trim();
       const lifecycle=String(r[6]||'').trim();
       const runtimeStatus=String(r[23]||'').trim();
-      const dueText=String(r[11]||'').trim();
-      const nextAt=r[10] instanceof Date ? r[10].getTime() : 0;
-      const lastAt=r[9] instanceof Date ? r[9].getTime() : 0;
+      const lastAt=opsDateMs_(r[9]);
+      if(active!=='Có'||!url||lifecycle==='Loại') return;
+      if(runtimeStatus==='ĐANG QUÉT'||runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)) return;
 
-      if(active!=='Có' || !url || lifecycle==='Loại') return;
-      if(runtimeStatus==='ĐANG QUÉT' || runtimeStatus==='LỖI' || runtimeStatus==='THIẾU' || /^DỪNG/.test(runtimeStatus)) return;
-
-      const due=!lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=now;
+      const group=groupPolicyInput_(r);
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      if(!profile||profile.enabled===false) return;
+      if(options.requireActiveWindow===true && !shouldAutoScanProfile_(profile,config,false,null)) return;
+      const policy=resolveEffectiveScanPolicy_(profile,group,config);
+      const nextAt=effectiveNextDueMs_(lastAt,policy);
+      const due=!lastAt||!nextAt||nextAt<=now;
       if(!due) return;
 
       jobs.push({
         row:i+2,
-        name:String(r[2]||'').trim() || ('Group '+String(r[4]||'')),
-        profile:String(r[1]||'').trim() || 'AUTO',
+        name:String(r[2]||'').trim()||('Group '+String(r[4]||'')),
+        profile:String(r[1]||'').trim()||'AUTO',
+        policyProfileId:profile.id,
         url,
-        groupKey:exactGroupKeyFromRow_(url,r[4]),
-        targetCount:normalizeGroupTarget_(r[8]||25),
+        groupKey:group.groupKey,
+        targetCount:policy.postsPerScan,
+        scansPerDay:policy.scansPerDay,
+        effectivePolicy:policy,
         status:runtimeStatus||'CHỜ',
         lifecycle,
         priorityRank:groupPriorityRank_(lifecycle),
@@ -6998,9 +7006,8 @@ const RemoteApp = (() => {
       if(a.nextAtMs!==b.nextAtMs) return a.nextAtMs-b.nextAtMs;
       return a.lastAtMs-b.lastAtMs;
     });
-
-    const cap=Math.max(1,Math.min(CFG.PILOT_GROUP_LIMIT,Number(limit||CFG.DUE_CYCLE_LIMIT)));
-    return jobs.slice(0,cap);
+    const configuredLimit=Number(limit||config.global.auto.maxGroupsPerCycle||CFG.DUE_CYCLE_LIMIT);
+    return jobs.slice(0,Math.max(1,Math.min(CFG.PILOT_GROUP_LIMIT,configuredLimit)));
   }
 
   function countAiBacklogAndPass_() {
@@ -8469,20 +8476,22 @@ const RemoteApp = (() => {
     }
   }
 
-  function isDueJobStillValid_(sheet,row) {
-    if(!sheet || row<2 || row>sheet.getLastRow()) return false;
-    const vals=sheet.getRange(row,1,1,24).getValues()[0]||[];
+  function isDueJobStillValid_(sheet,row,policyConfig) {
+    if(!sheet||row<2||row>sheet.getLastRow()) return false;
+    const vals=sheet.getRange(row,1,1,27).getValues()[0]||[];
     const active=String(vals[0]||'').trim();
     const lifecycle=String(vals[6]||'').trim();
-    const lastAt=vals[9] instanceof Date ? vals[9].getTime() : 0;
-    const nextAt=vals[10] instanceof Date ? vals[10].getTime() : 0;
-    const dueText=String(vals[11]||'').trim();
     const status=String(vals[23]||'').trim();
-
-    if(active!=='Có' || lifecycle==='Loại') return false;
-    if(status==='ĐANG QUÉT' || status==='LỖI' || status==='THIẾU' || /^DỪNG/.test(status)) return false;
-
-    return !lastAt || dueText==='CẦN QUÉT' || !nextAt || nextAt<=Date.now();
+    if(active!=='Có'||lifecycle==='Loại') return false;
+    if(status==='ĐANG QUÉT'||status==='LỖI'||status==='THIẾU'||/^DỪNG/.test(status)) return false;
+    const config=policyConfig||getAutoPolicyConfig_();
+    const group=groupPolicyInput_(vals);
+    const profile=policyProfileForGroup_(config,group.groupKey);
+    if(!profile||profile.enabled===false) return false;
+    const policy=resolveEffectiveScanPolicy_(profile,group,config);
+    const lastAt=opsDateMs_(vals[9]);
+    const nextAt=effectiveNextDueMs_(lastAt,policy);
+    return !lastAt||!nextAt||nextAt<=Date.now();
   }
 
   function callSocialAioApiWithClient_(clientId, apiName, apiParams) {
