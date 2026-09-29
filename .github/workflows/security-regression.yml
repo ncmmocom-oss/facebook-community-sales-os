@@ -92,6 +92,26 @@ jobs:
           for(const k of groupSummaryRequired){
             if(g.tests[k]!==true) throw new Error('group summary acceptance failed: '+k);
           }
+          const policy=sandbox.__remoteApp.runAutoPolicyHarness();
+          console.log(JSON.stringify(policy,null,2));
+          if(!policy || policy.ok!==true) process.exit(1);
+          const policyRequired=[
+            'POLICY_T01_GLOBAL_DEFAULT',
+            'POLICY_T02_PROFILE_OVERRIDE',
+            'POLICY_T03_GROUP_OVERRIDE',
+            'POLICY_T04_INVALID_REJECTED',
+            'POLICY_T05_OUTSIDE_ACTIVE_HOURS',
+            'POLICY_T06_MANUAL_RUN_OUTSIDE_WINDOW',
+            'POLICY_T07_COMMENT_OFF_OTHER_LANES_RUN',
+            'POLICY_T08_SIGNAL_CONTEXT_MISSING',
+            'POLICY_T09_QUALIFICATION_REQUIRES_POLICY',
+            'POLICY_T10_HUMAN_APPROVAL_NO_EXTERNAL_ACTION',
+            'POLICY_T11_HF9_CARDINALITY',
+            'POLICY_T12_LEASE_ISOLATION'
+          ];
+          for(const k of policyRequired){
+            if(policy.tests[k]!==true) throw new Error('policy acceptance failed: '+k);
+          }
           NODE
 
       - name: Assert manual and Due scopes cannot cross
@@ -265,7 +285,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF9-group-summary-cardinality'" in runtime
+          assert "VERSION: '1.9.8.7-HF10-auto-policy-profile-settings'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -278,6 +298,19 @@ jobs:
           assert "function isSalesStageTransitionAllowed_(" in runtime
           assert "function salesTransitionReason_(" in runtime
           assert "function nextFollowUpForSalesStage_(" in runtime
+          assert "AUTO_POLICY_KEY: 'SOCIAL_AIO_AUTO_POLICY_V1'" in runtime
+          assert "function resolveEffectiveScanPolicy_(" in runtime
+          assert "function resolveEffectiveCommentPolicy_(" in runtime
+          assert "function resolveEffectiveAiPolicy_(" in runtime
+          assert "function resolveEffectiveActionPolicy_(" in runtime
+          assert "function runAutoPolicyHarness_(" in runtime
+          assert "AUTO_COMMENT_LOCKED_HF10" in runtime
+          assert "externalExecutionAllowed:false" in runtime
+          assert "policy.trigger=" in runtime
+          assert "policy.window=" in runtime
+          assert "policy.scan=" in runtime
+          assert "policy.comment=" in runtime
+          assert "policy.ai=" in runtime
           registry_start = runtime.index('function buildCanonicalGroupSummaryRegistry_(')
           summary_start = runtime.index('function refreshGroupSummary_(')
           summary_end = runtime.index('function refreshCoordination_', summary_start)
