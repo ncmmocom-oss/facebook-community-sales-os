@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF7-sales-transition-guard',
+    VERSION: '1.9.8.7-HF8-group-summary-identity',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -100,6 +100,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF8 Group Summary Identity: NHÓM/Group Summary join CƠ HỘI bằng canonical Group Key aliases thay vì display name; sold KPI chỉ dùng Sales Stage=Đã bán, không fallback Chuyển đổi legacy.\n' +
       'V1.9.8.7-HF7 Sales Transition Guard: Sales Stage là state machine thật; nguồn mới chỉ được vào Qualified khi Lead Gate=PASS; chỉ cho transition tuần tự Qualified→Outreach→Đang hội thoại→Chờ phản hồi→Follow-up→Đã bán/Lost; same-stage update idempotent và terminal stage không tự mở lại.\n' +
       'V1.9.8.7-HF6 Sheet Capacity: worker-fast append tự mở rộng grid trước write; lỗi lịch sử "rows out of bounds" được phân loại transient, clear hard quarantine và retry có kiểm soát; AUTO/self-test ghi evidence capacity repair.\n' +
       'V1.9.8.7-HF5 Provider Resilience: centralize transient failover decision, log fallback success/failure với actual provider/model, và thêm executable provider harness cho 408/429/5xx/high-demand hai chiều.\n' +
@@ -3402,35 +3403,49 @@ const RemoteApp = (() => {
       summarySheet.getRange(2, 1, oldLast - 1, 12).getValues().forEach(r => {
         const name = String(r[0] || '').trim();
         const url = String(r[1] || '').trim();
-        if (name) old['NAME|' + name] = r;
+        const key = String(extractGroupKey_(url) || '').trim().toLowerCase();
+        if (key) old['KEY|' + key] = r;
         if (url) old['URL|' + normalizeUrl_(url)] = r;
+        if (name) old['NAME|' + name] = r; // metadata-preservation fallback only
       });
     }
 
     const scanLast = scanSheet.getLastRow();
-    const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getValues() : [];
+    const scanRows = scanLast >= 2 ? scanSheet.getRange(2, 1, scanLast - 1, 16).getDisplayValues() : [];
     const oppLast = oppSheet.getLastRow();
     const oppRows = oppLast >= 2 ? oppSheet.getRange(2, 1, oppLast - 1, CFG.OPPORTUNITY_TOTAL_COLS).getValues() : [];
-    const byGroup = {};
+    const byGroupKey = new Map();
     oppRows.forEach(r => {
-      const g = String(r[4] || '').trim();
-      if (!g) return;
-      if (!byGroup[g]) byGroup[g] = [];
-      byGroup[g].push(r);
+      const key = String(r[CFG.OPPORTUNITY_GROUP_KEY_COL - 1] || '').trim().toLowerCase();
+      if (!key) return; // fail closed: never infer Group from display name
+      if (!byGroupKey.has(key)) byGroupKey.set(key, []);
+      byGroupKey.get(key).push(r);
     });
 
     const output = [];
-    scanRows.forEach(s => {
+    scanRows.forEach((s, idx) => {
       const url = String(s[3] || '').trim();
       if (!url) return;
       const name = String(s[2] || '').trim() || ('Group ' + String(s[4] || extractGroupKey_(url)));
-      const prev = old['NAME|' + name] || old['URL|' + normalizeUrl_(url)] || [];
-      const list = byGroup[name] || [];
+      const aliases = canonicalGroupKeyAliasesFromScanRow_(s, idx + 2);
+      const primaryKey = String(aliases[0] || '').trim().toLowerCase();
+      const prev =
+        (primaryKey ? old['KEY|' + primaryKey] : null) ||
+        old['URL|' + normalizeUrl_(url)] ||
+        old['NAME|' + name] ||
+        [];
+      const list = [];
+      aliases.forEach(alias => {
+        const key = String(alias || '').trim().toLowerCase();
+        const rows = key ? (byGroupKey.get(key) || []) : [];
+        rows.forEach(r => list.push(r));
+      });
+
       const leads = list
         .filter(r => String(r[24] || '').trim()==='PASS')
         .sort((a,b) => Number(b[10] || 0) - Number(a[10] || 0));
       const top = leads.slice(0, 5).map(r => `${r[5] || '(ẩn danh)'} (${Number(r[10] || 0)})`).join('\n');
-      const sold = list.filter(r => String(r[26] || '').trim() === 'Đã bán' || String(r[17] || '').trim() === 'Đã bán').length;
+      const sold = list.filter(r => String(r[26] || '').trim() === 'Đã bán').length;
       const analyzed = list.filter(r => [r[8],r[9],r[10],r[11]].some(v => v !== '' && v !== null && v !== undefined)).length;
       const pending = Math.max(0, list.length - analyzed);
       const posts = list.filter(r => String(r[3]||'') === 'Bài viết').length;
