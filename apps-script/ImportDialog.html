@@ -2110,9 +2110,10 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 
         const meta=document.createElement('div');
         meta.className='opsQueueMeta';
+        const truth=String(x.schedulerState||'');
         meta.textContent=type==='exception'
-          ? ('Age '+opsAgeText(x.ageMs)+(x.lifecycle?' • '+x.lifecycle:''))
-          : ((x.lifecycle||'')+' • '+Number(x.targetCount||25)+' bài'+(x.exception?' • QUARANTINE':''));
+          ? ((truth?('['+truth+'] • '):'')+'Age '+opsAgeText(x.ageMs)+(x.lifecycle?' • '+x.lifecycle:''))
+          : ((truth?('['+truth+'] • '):'')+(x.lifecycle||'')+' • '+Number(x.targetCount||25)+' bài');
         row.appendChild(meta);
 
         const note=String(x.error||x.progress||'').trim();
