@@ -8656,11 +8656,11 @@ const RemoteApp = (() => {
   function runCandidatePoolHarness_() {
     const a=canonicalCandidateIdentity_({id:'123456789',name:'Same'});
     const b=canonicalCandidateIdentity_({id:'987654321',name:'Same'});
-    const dueBody=getDueGroupRows_.toString();
+    const schedulerBody=schedulerGroupTruth_.toString();
     const tests={
       POOL_NUMERIC_ID:a.key==='123456789',
       POOL_SAME_NAME_DIFFERENT_ID:a.key!==b.key,
-      POOL_CANDIDATE_NOT_SCHEDULER:dueBody.indexOf('CANDIDATE_POOL_SHEET')<0&&dueBody.indexOf('GROUP CANDIDATE POOL')<0,
+      POOL_CANDIDATE_NOT_SCHEDULER:schedulerBody.indexOf('CANDIDATE_POOL_SHEET')<0&&schedulerBody.indexOf('GROUP CANDIDATE POOL')<0,
       POOL_SOURCE_LOCKED:CFG.CANDIDATE_SOURCE==='JOINED_GROUP_EXPORT',
       POOL_STATE_DISTINCT:CFG.CANDIDATE_STATES.indexOf('PRE_SCREENED')>=0&&CFG.GROUP_LIFECYCLE_STATES.indexOf('PRE_SCREENED')<0,
       POOL_WAVE_LIMIT:CFG.CANDIDATE_DEFAULT_WAVE_SIZE>=5&&CFG.CANDIDATE_MAX_WAVE_SIZE<=10
