@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.10.2-candidate-wave-eligibility-hardening',
+    VERSION: '1.9.8.7-HF10.10.3-trial-concurrency-semantics',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -773,6 +773,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.10.3 Trial Concurrency Semantics: Candidate Wave concurrent Trial guard now counts only lifecycle TRIAL; NEW/DISCOVERY/REVIEW_READY no longer consume Trial concurrency slots.\n' +
       'V1.9.8.7-HF10.10.2 Candidate Wave Eligibility Hardening: Wave readiness now blocks unmapped IX Facebook identities; zero-match waves return explicit eligibility diagnostics instead of silent queued=0.\n' +
       'V1.9.8.7-HF10.10.1 Candidate Wave Hardening: export-local numeric↔slug evidence dedupes deterministically; exact batch overlap stats; IX eligibility guard; bounded 5–10 Trial Waves respect capacity, concurrent Trial load, AI backlog, Comment backlog and theme diversity.\n' +
       'V1.9.8.7-HF10.10 Candidate Pool: adds staging inventory + normalized profile↔Group membership, metadata pre-screen, capacity-guarded Trial queue, and keeps Candidate rows completely outside AUTO Due Queue.\n' +
@@ -8722,6 +8723,10 @@ const RemoteApp = (() => {
     return {ok:matched.length>0,reason:matched.length?'MATCH':'CANDIDATE_PROFILE_NOT_ELIGIBLE',eligible,mapped,matched};
   }
 
+  function isCandidateConcurrentTrialLifecycle_(value) {
+    return normalizeGroupLifecycle_(value)==='TRIAL';
+  }
+
   function candidateConcurrentTrialCountForProfile_(profileId,policyConfig) {
     const config=policyConfig||getAutoPolicyConfig_();
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
@@ -8729,8 +8734,7 @@ const RemoteApp = (() => {
     let n=0;
     sh.getRange(2,1,sh.getLastRow()-1,CFG.GROUP_TRIAGE_TOTAL_COLS).getValues().forEach(r=>{
       if(String(r[0]||'').trim()!=='Có')return;
-      const lifecycle=normalizeGroupLifecycle_(r[6]);
-      if(['NEW','DISCOVERY','TRIAL','REVIEW_READY'].indexOf(lifecycle)<0)return;
+      if(!isCandidateConcurrentTrialLifecycle_(r[6]))return;
       const g=groupPolicyInput_(r),p=policyProfileForGroup_(config,g.groupKey);
       if(p&&String(p.id||'')===String(profileId||''))n++;
     });
@@ -8909,6 +8913,7 @@ const RemoteApp = (() => {
       POOL_PROFILE_ELIGIBILITY:candidateProfileEligibility_(Array(18).fill('').map((x,i)=>i===8?'Chi Giang | Trần Bảo Trang':''),{facebookIdentities:['Chi Giang']}).ok===true,
       POOL_PROFILE_ELIGIBILITY_UNMAPPED:candidateProfileEligibility_(Array(18).fill('').map((x,i)=>i===8?'Chi Giang':''),{facebookIdentities:[]}).reason==='CANDIDATE_PROFILE_ELIGIBILITY_UNMAPPED',
       POOL_PROFILE_NOT_ELIGIBLE:candidateProfileEligibility_(Array(18).fill('').map((x,i)=>i===8?'Chi Giang':''),{facebookIdentities:['Trần Bảo Trang']}).reason==='CANDIDATE_PROFILE_NOT_ELIGIBLE',
+      POOL_TRIAL_CONCURRENCY_SEMANTICS:isCandidateConcurrentTrialLifecycle_('TRIAL')===true&&isCandidateConcurrentTrialLifecycle_('NEW')===false&&isCandidateConcurrentTrialLifecycle_('DISCOVERY')===false&&isCandidateConcurrentTrialLifecycle_('REVIEW_READY')===false,
       POOL_WAVE_BACKLOG_LIMITS:CFG.CANDIDATE_AI_BACKLOG_MAX>0&&CFG.CANDIDATE_COMMENT_BACKLOG_MAX>0&&CFG.CANDIDATE_MAX_CONCURRENT_TRIALS>=CFG.CANDIDATE_DEFAULT_WAVE_SIZE
     };
     const failed=Object.keys(tests).filter(k=>!tests[k]);
