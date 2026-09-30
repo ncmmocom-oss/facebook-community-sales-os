@@ -1912,6 +1912,8 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
             ' • Buyer <b>'+Number(g.buyerPct||0)+'%</b>'+
             ' • Strong <b>'+Number(g.strongSignals||0)+'</b>'+
             ' • Yield <b>'+Number(g.customerSignalYieldPct||0)+'%</b>'+
+            ' • Cmt/Relevant Post <b>'+Number(g.commentsPerRelevantPost||0)+'</b>'+
+            (g.observedPostsDay!==''?(' • Posts/24h <b>'+Number(g.observedPostsDay||0)+'</b>'):'')+
           '</div>'+
           '<div class="muted">AI: '+escHtml(g.aiRecommendation||'—')+
             (g.summary?(' • '+escHtml(g.summary)):'')+
@@ -2266,9 +2268,11 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       const workers=document.getElementById('mount-workers');
       const data=document.getElementById('mount-data');
       const monitor=document.getElementById('monitorBox');
+      const triage=document.getElementById('groupTriageBox');
       const scan=document.getElementById('scanBox');
       const aiRun=document.getElementById('aiRunBox');
       const advanced=document.getElementById('advancedPanel');
+      if(groups&&triage) groups.appendChild(triage);
       if(groups&&scan) groups.appendChild(scan);
       if(groupAuto&&monitor) groupAuto.appendChild(monitor);
       if(groupAi&&aiRun) groupAi.appendChild(aiRun);
