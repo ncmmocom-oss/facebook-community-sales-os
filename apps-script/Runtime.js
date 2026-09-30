@@ -8753,8 +8753,6 @@ const RemoteApp = (() => {
     const profileId=String(command.ixProfile||config.activeProfileId||'').trim();
     const profile=(config.profiles||[]).find(p=>String(p.id||'')===profileId);
     if(!profile)throw new Error('CANDIDATE_IX_PROFILE_INVALID: '+profileId);
-    const eligibility=candidateProfileEligibility_(r,profile);
-    if(!eligibility.ok)throw new Error(eligibility.reason+': '+profileId);
     const capacity=Math.max(1,Number(profile.maxGroupCapacity||30));
     const used=candidateProductionCountForProfile_(profileId,config);
     const concurrentTrials=candidateConcurrentTrialCountForProfile_(profileId,config);
@@ -8856,6 +8854,8 @@ const RemoteApp = (() => {
     const profileId=String(command.ixProfile||r[13]||config.activeProfileId||'').trim();
     const profile=(config.profiles||[]).find(p=>String(p.id||'')===profileId);
     if(!profile)throw new Error('CANDIDATE_IX_PROFILE_INVALID: '+profileId);
+    const eligibility=candidateProfileEligibility_(r,profile);
+    if(!eligibility.ok)throw new Error(eligibility.reason+': '+profileId);
     const capacity=Math.max(1,Number(profile.maxGroupCapacity||30));
     const used=candidateProductionCountForProfile_(profileId,config);
     if(used>=capacity)throw new Error('CANDIDATE_CAPACITY_FULL: '+profileId+' '+used+'/'+capacity);
