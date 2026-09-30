@@ -655,7 +655,13 @@ jobs:
           assert 'id="groupOnboardUrl"' in ui
           assert 'onclick="onboardGroupUrl()"' in ui
           assert "ONBOARD_GROUP_URL" in ui
-          assert "EVALUATE_GROUP_DISCOVERY" in ui
+          assert "EVALUATE_GROUP_DISCOVERY" in runtime
+          onboard_ui_start = ui.index('function onboardGroupUrl()')
+          onboard_ui_end = ui.index('function runCheckedGroups()', onboard_ui_start)
+          onboard_ui_block = ui[onboard_ui_start:onboard_ui_end]
+          assert "EVALUATE_GROUP_DISCOVERY" not in onboard_ui_block, 'Add Group must only register NEW; AUTO owns heavy Discovery AI'
+          assert "runWorkerPlan(" not in onboard_ui_block, 'Add Group must not call heavy Worker scan inline'
+          assert "PENDING_ONBOARDING" in onboard_ui_block
           assert "MEASURE_GROUP_ACTIVITY" in ui
           assert "group_intelligence" in ui
           assert "ĐO ACTIVITY 24H / 7D" in ui
