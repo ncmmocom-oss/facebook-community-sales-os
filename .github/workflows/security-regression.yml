@@ -422,6 +422,9 @@ jobs:
           assert "CANDIDATE_PROFILE_ELIGIBILITY_UNMAPPED" in runtime
           assert "CANDIDATE_WAVE_BLOCKED" in runtime
           assert "identityConflicts" in runtime
+          assert "return {key:rawId" in runtime, 'numeric Group ID must remain primary candidate identity'
+          assert "source.snapshotAt||source.exportedAt||source.capturedAt||importedAt.toISOString()" in runtime
+          assert "recent_activity_hint chỉ là dấu hiệu profile đã tương tác/hoạt động quanh Group" in runtime
           assert "batchProfilesByKey" in runtime
           assert "function candidateProductionCountForProfile_(" in runtime
           assert "function runCandidatePoolHarness_(" in runtime
