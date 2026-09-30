@@ -337,6 +337,7 @@ jobs:
           retry_end = runtime.index('function prepareJobsForWorkers_', retry_start)
           retry_block = runtime[retry_start:retry_end]
           assert "String(r[0]||'').trim()!=='Có'" in retry_block
+          assert "lifecycleCanRetry_(r[6])" in retry_block, 'manual retry must never revive PAUSED/STOPPED/REVIEW_READY'
 
           assert "status:'SKIP_INACTIVE'" in worker_block
           assert "resolveCanonicalGroupRow_(sheet,row)" in worker_block
@@ -365,7 +366,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.9-group-portfolio-curation'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.9.1-group-portfolio-guards'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -397,6 +398,7 @@ jobs:
           assert "GROUP_TRIAL_DAYS: 3" in runtime
           assert "GROUP_TRIAGE_TOTAL_COLS: 33" in runtime
           assert "PENDING_ONBOARDING" in runtime
+          assert "if(!before&&!groupId)" in runtime, 'raw URL-only row must stay pending until canonical intake'
           assert "lifecycleCanEnterDueQueue_(lifecycle)" in runtime
           assert "['TRIAL','CORE','GOOD','WATCH']" in runtime
           assert "STOP_FOLLOWING:'STOPPED'" in runtime
