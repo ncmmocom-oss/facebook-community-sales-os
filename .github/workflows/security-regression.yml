@@ -365,7 +365,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.8-signal-intelligence-queue'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.9-group-portfolio-curation'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -385,6 +385,31 @@ jobs:
           assert "function resolveEffectiveActionPolicy_(" in runtime
           assert "function runGroupOnboardingHarness_(" in runtime
           assert "function runGroupIntelligenceHarness_(" in runtime
+          assert "function runGroupTriageHarness_(" in runtime
+          assert "function normalizeGroupLifecycle_(" in runtime
+          assert "function registerSheetFirstPendingRows_(" in runtime
+          assert "function getPendingOnboardingJobs_(" in runtime
+          assert "function groupTrialMetrics_(" in runtime
+          assert "function advanceTrialReadiness_(" in runtime
+          assert "function getGroupTriage_(" in runtime
+          assert "function setGroupTriageDecision_(" in runtime
+          assert "function evaluateGroupPortfolioReview_(" in runtime
+          assert "GROUP_TRIAL_DAYS: 3" in runtime
+          assert "GROUP_TRIAGE_TOTAL_COLS: 33" in runtime
+          assert "PENDING_ONBOARDING" in runtime
+          assert "lifecycleCanEnterDueQueue_(lifecycle)" in runtime
+          assert "['TRIAL','CORE','GOOD','WATCH']" in runtime
+          assert "STOP_FOLLOWING:'STOPPED'" in runtime
+          assert "finalStateChanged:false" in runtime
+          assert "Human decision required" in runtime
+          assert "Customer Signal Yield" in runtime or "customerSignalYieldPct" in runtime
+          assert "GROUP TRIAGE — PORTFOLIO CURATION" in ui
+          assert "PROMOTE CORE" in ui
+          assert "SET GOOD" in ui
+          assert "KEEP WATCH" in ui
+          assert "EXTEND TRIAL" in ui
+          assert "STOP FOLLOWING" in ui
+          assert "AUTO cycle kế tiếp sẽ chạy DISCOVERY 10 bài" in ui
           assert "function ingestApiRecords_(" in runtime
           assert "function runApiNativeCleanupHarness_(" in runtime
           assert "function repairVerifiedIdentityQuarantineOnce_(" in runtime
@@ -630,7 +655,13 @@ jobs:
           assert 'id="groupOnboardUrl"' in ui
           assert 'onclick="onboardGroupUrl()"' in ui
           assert "ONBOARD_GROUP_URL" in ui
-          assert "EVALUATE_GROUP_DISCOVERY" in ui
+          assert "EVALUATE_GROUP_DISCOVERY" in runtime
+          onboard_ui_start = ui.index('function onboardGroupUrl()')
+          onboard_ui_end = ui.index('function runCheckedGroups()', onboard_ui_start)
+          onboard_ui_block = ui[onboard_ui_start:onboard_ui_end]
+          assert "EVALUATE_GROUP_DISCOVERY" not in onboard_ui_block, 'Add Group must only register NEW; AUTO owns heavy Discovery AI'
+          assert "runWorkerPlan(" not in onboard_ui_block, 'Add Group must not call heavy Worker scan inline'
+          assert "PENDING_ONBOARDING" in onboard_ui_block
           assert "MEASURE_GROUP_ACTIVITY" in ui
           assert "group_intelligence" in ui
           assert "ĐO ACTIVITY 24H / 7D" in ui

@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.8-signal-intelligence-queue',
+    VERSION: '1.9.8.7-HF10.9-group-portfolio-curation',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -47,6 +47,12 @@ const RemoteApp = (() => {
     GROUP_EFFICIENCY_PREFIX: 'SOCIAL_AIO_GROUP_EFF_V1_',
     GROUP_DISCOVERY_PREFIX: 'SOCIAL_AIO_GROUP_DISCOVERY_V1_',
     GROUP_ACTIVITY_PREFIX: 'SOCIAL_AIO_GROUP_ACTIVITY_V1_',
+    GROUP_REVIEW_PREFIX: 'SOCIAL_AIO_GROUP_REVIEW_V1_',
+    GROUP_TRIAL_DAYS: 3,
+    GROUP_TRIAL_MIN_TOTAL_SOURCES: 30,
+    GROUP_TRIAL_MIN_ANALYZED_SOURCES: 20,
+    GROUP_TRIAL_MIN_POSTS: 10,
+    GROUP_TRIAGE_TOTAL_COLS: 33,
     GROUP_IDENTITY_RETRY_PREFIX: 'SOCIAL_AIO_GROUP_ID_RETRY_V1_',
     GROUP_SUMMARY_LEGACY_ARCHIVE_SHEET: 'NHÓM LEGACY ARCHIVE',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
@@ -757,6 +763,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.9 Group Portfolio Curation: formal lifecycle NEW→DISCOVERY→TRIAL→REVIEW_READY→human CORE/GOOD/WATCH; Sheet-first URL intake is detected by AUTO without heavy onEdit; Trial metrics expose Customer Signal Yield; STOPPED/PAUSED are excluded from scheduler; Group Triage remains human-final.\n' +
       'V1.9.8.7-HF10.8 Signal Intelligence Queue: TÍN HIỆU tách Signal Tier STRONG/MEDIUM/WATCH khỏi Lead Gate; buyer/pain signal có evidence vẫn được ưu tiên quan sát khi Offer Context thiếu, nhưng Lead PASS tiếp tục fail-closed.\n' +
       'V1.9.8.7-HF10.7 Display Fallback Closure: đóng hai đường legacy còn có thể phát sinh Group <key> trong Comment ingestion và Retry queue; mọi display name chưa xác minh đều CHƯA LẤY TÊN.\n' +
       'V1.9.8.7-HF10.6 Identity Display Cleanup: cấm placeholder Group <slug/id>; legacy generated names được chuẩn hóa thành CHƯA LẤY TÊN; Group Alias Registry và Group Intelligence khóa identity columns dạng TEXT để không scientific-coerce numeric IDs.\n' +
@@ -1834,14 +1841,20 @@ const RemoteApp = (() => {
 
     const scan = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
     if (scan) {
-      if (scan.getMaxColumns() < 27) scan.insertColumnsAfter(scan.getMaxColumns(),27-scan.getMaxColumns());
+      if (scan.getMaxColumns() < CFG.GROUP_TRIAGE_TOTAL_COLS) {
+        scan.insertColumnsAfter(scan.getMaxColumns(),CFG.GROUP_TRIAGE_TOTAL_COLS-scan.getMaxColumns());
+      }
       scan.getRange(1,17,1,6).setValues([[
         'Lượt cập nhật hôm nay','Bản ghi lần cuối','Bài quét lần cuối',
         'Bài mới hôm nay','Comment mới hôm nay','KH mới hôm nay'
       ]]);
       scan.getRange(1,27).setValue('AI Context / Offer');
+      scan.getRange(1,28,1,6).setValues([[
+        'Lifecycle Since','Trial Until','AI Recommendation','Human Decision At','Triage Summary','Onboarding Status'
+      ]]);
       normalizeGroupRegistryIdentityText_(scan);
       setupBridgeControlColumns_(scan);
+      migrateGroupLifecycleSchema_(scan);
     }
     props.setProperty(schemaKey, CFG.VERSION);
   }
@@ -2441,6 +2454,10 @@ const RemoteApp = (() => {
     if (name === 'APPLY_SELECTED_SCAN_RECOMMENDATION') return applySelectedScanRecommendation_();
     if (name === 'REPAIR_GROUP_DISPLAY_NAMES') return repairLegacyGroupDisplayNames_();
     if (name === 'ONBOARD_GROUP_URL') return prepareOnboardingWorkerBatch_(command);
+    if (name === 'GET_GROUP_TRIAGE') return getGroupTriage_();
+    if (name === 'SET_GROUP_TRIAGE_DECISION') return setGroupTriageDecision_(command);
+    if (name === 'RUN_GROUP_PORTFOLIO_REVIEW') return evaluateGroupPortfolioReview_(command);
+    if (name === 'RUN_GROUP_TRIAGE_HARNESS') return runGroupTriageHarness_();
     if (name === 'EVALUATE_GROUP_DISCOVERY') return evaluateGroupDiscovery_(command);
     if (name === 'GET_GROUP_DISCOVERY') return getGroupDiscovery_(command.groupKey);
     if (name === 'MEASURE_GROUP_ACTIVITY') return measureGroupActivityWindow_(command);
@@ -5482,39 +5499,16 @@ const RemoteApp = (() => {
     if(existing) return {ok:true,duplicate:true,existing,input:info};
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
     const row=sh.getLastRow()+1;
-    ensureSheetRowCapacity_(sh,row);
-    sh.getRange(row,5).setNumberFormat('@');
-    sh.getRange(row,1,1,9).setValues([[
-      'Có','',groupPlaceholderName_(),info.url,info.groupKey,'','Thử nghiệm',3,10
-    ]]);
-    sh.getRange(row,11).setFormula(`=IF(OR(H${row}="";J${row}="");"";J${row}+1/H${row})`);
-    sh.getRange(row,12).setFormula(`=IF(A${row}<>"Có";"TẮT";IF(K${row}="";"CẦN QUÉT";IF(K${row}<=NOW();"CẦN QUÉT";"CHỜ")))`);
-    sh.getRange(row,16).setValue('URL-only onboarding • discovery pending');
-    mergeGroupAliasRegistry_([{
-      canonicalKey:info.groupKey,alias:info.groupKey,
-      numericId:/^\d{6,}$/.test(info.groupKey)?info.groupKey:'',
-      source:'URL_ONBOARDING',firstSeen:new Date(),lastSeen:new Date(),reason:'OPERATOR_GROUP_URL'
-    }]);
-    return {ok:true,duplicate:false,row,name:groupPlaceholderName_(),url:info.url,groupKey:info.groupKey};
+    return initializeCandidateGroupRow_(sh,row,info.url,'SOCIAL_AIO_SHORTCUT');
   }
 
   function prepareOnboardingWorkerBatch_(command) {
     command=command||{};
     const existingInput=normalizeFacebookGroupInput_(command.groupUrl);
     const existing=findExistingCanonicalGroup_(existingInput.groupKey);
-    if(existing) return {ok:true,duplicate:true,existing,input:existingInput,plan:null};
-    const available=getWorkerPoolRaw_()
-      .filter(w=>w.enabled&&w.clientId&&workerSupportsRole_(w,'GROUP')&&workerHealthState_(w)!=='OFFLINE');
-    if(!available.length){
-      throw new Error('ONBOARDING_NO_WORKER: chưa có Worker GROUP/BOTH khả dụng; chưa ghi Group mới vào registry.');
-    }
+    if(existing) return {ok:true,duplicate:true,existing,input:existingInput,queued:false};
     const added=appendOnboardedGroup_(command.groupUrl);
-    const job={
-      row:added.row,name:added.name,profile:'AUTO',url:added.url,groupKey:added.groupKey,
-      targetCount:10,status:'CHỜ',lifecycle:'Thử nghiệm',priorityRank:0
-    };
-    const plan=prepareJobsForWorkers_([job],10,false,'onboarding');
-    return Object.assign({},added,{plan});
+    return Object.assign({},added,{queued:true,plan:null,message:'NEW candidate registered; AUTO will run Discovery safely.'});
   }
 
   function runGroupOnboardingHarness_() {
@@ -5529,6 +5523,7 @@ const RemoteApp = (() => {
       ONBOARD_NON_GROUP_REJECTED:bad,
       ONBOARD_REAL_TITLE_ONLY:title==='Tên Group Thật'&&noTitle==='',
       ONBOARD_PLACEHOLDER:groupPlaceholderName_()==='CHƯA LẤY TÊN',
+      ONBOARD_NEW_STATE:normalizeGroupLifecycle_('NEW')==='NEW',
       DISCOVERY_NO_OFFER_INFERENCE:prompt.indexOf('KHÔNG suy ra Offer/Product/Service')>=0,
       DISCOVERY_NO_POSTS_DAY_INFERENCE:prompt.indexOf('KHÔNG suy ra Posts/day')>=0
     };
@@ -7197,6 +7192,7 @@ const RemoteApp = (() => {
       const group=groupPolicyInput_(r);
       const profile=policyProfileForGroup_(config,group.groupKey);
       if(!profile||profile.enabled===false) return;
+      if(!lifecycleCanRetry_(r[6])) return;
       const cls=classifyAutoSheetException_(status,r[25]);
       if(['TRANSIENT','CONNECTION','SHEET_BUSY','TIME_BUDGET'].indexOf(cls)<0) return;
       const state=getAutoRetryState_(group.groupKey);
@@ -7430,7 +7426,8 @@ const RemoteApp = (() => {
         summary.triggerProbe?('auth='+(summary.triggerProbe.permissionOk?'OK':'REQUIRED')+
           ', trigger='+Number(summary.triggerProbe.triggerCount||0)):'',
         summary.waitingWorker?'WAIT_WORKER':'',
-        summary.queue?('queue retry='+Number(summary.queue.retryAvailable||0)+
+        summary.queue?('queue onboarding='+Number(summary.queue.onboardingAvailable||0)+
+          ', retry='+Number(summary.queue.retryAvailable||0)+
           ', due='+Number(summary.queue.dueAvailable||0)+
           ', selected='+Number((summary.queue.selected||[]).length)):'',
         summary.jobResults&&summary.jobResults.length
@@ -7521,6 +7518,7 @@ const RemoteApp = (() => {
 
   function autoMonitorTick_(options) {
     options=options||{};
+    ensureV16Sheets_(false);
     const started=Date.now();
     const runId='auto-'+Utilities.getUuid().slice(0,10);
     const testMode=!!options.testMode;
@@ -7605,6 +7603,8 @@ const RemoteApp = (() => {
       const repairs=cleanupExpiredRuntimeState_(true);
       summary.repairs=repairs;
       summary.registryCleanup=cleanGroupRegistryCanonicalOnce_();
+      summary.sheetIntake=registerSheetFirstPendingRows_();
+      summary.trialReadiness=advanceTrialReadiness_();
 
       const configured=getWorkerPoolRaw_().filter(w=>w.enabled&&w.clientId);
       const available=configured.filter(w=>workerHealthState_(w)!=='OFFLINE');
@@ -7618,6 +7618,7 @@ const RemoteApp = (() => {
         return summary;
       }
 
+      const onboarding=getPendingOnboardingJobs_(1,policyConfig);
       const retryAll=getAutoRetryJobs_(Math.min(2,maxJobs),policyConfig);
       const retry=options.force===true
         ?retryAll
@@ -7630,11 +7631,13 @@ const RemoteApp = (() => {
         .filter(x=>!retryRows.has(x.row))
         .map(x=>Object.assign({},x,{autoKind:'DUE'}));
 
+      summary.queue.onboardingAvailable=onboarding.length;
       summary.queue.retryAvailable=retry.length;
       summary.queue.dueAvailable=due.length;
 
       const jobs=[];
-      if(retry.length) jobs.push(retry[0]);
+      onboarding.forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
+      if(retry.length&&jobs.length<maxJobs) jobs.push(retry[0]);
       due.forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
       retry.slice(1).forEach(j=>{if(jobs.length<maxJobs) jobs.push(j);});
 
@@ -7643,11 +7646,11 @@ const RemoteApp = (() => {
       }));
       if(!jobs.length){
         summary.skipped=true;
-        summary.reason=(!options.force&&!groupWindowOpen)?'OUTSIDE_ACTIVE_WINDOW':'NO_DUE_OR_RETRY';
+        summary.reason=(!options.force&&!groupWindowOpen)?'OUTSIDE_ACTIVE_WINDOW':'NO_GROUP_WORK';
         summary.acceptance=testMode?'SCHEDULER_IDLE':'';
         summary.message=summary.reason==='OUTSIDE_ACTIVE_WINDOW'
           ?'Ngoài active window: không mở Group scan mới; Comment/AI backlog vẫn được xử lý theo policy.'
-          :'Scheduler hợp lệ; hiện chưa có Group đến hạn hoặc retry.';
+          :'Scheduler hợp lệ; hiện chưa có NEW onboarding, Group đến hạn hoặc retry.';
         summary.nextDueAt=getNextAutoDueAt_();
       }
 
@@ -7674,6 +7677,10 @@ const RemoteApp = (() => {
             continue;
           }
 
+          if(job.autoKind==='ONBOARDING'){
+            setGroupLifecycle_(sheet,job.row,'DISCOVERY');
+            sheet.getRange(job.row,24).setValue('DISCOVERY');
+          }
           const result=runWorkerJob_({
             row:job.row,targetCount:job.targetCount,workerSlot:job.workerSlot,
             runId,jobMode:'auto_v2',requireDue:job.autoKind==='DUE'
@@ -7686,11 +7693,19 @@ const RemoteApp = (() => {
             summary.groupsPassed++;
             outcome='PASS';
             clearAutoRetryState_(result.groupKey||job.groupKey);
+            if(job.autoKind==='ONBOARDING'){
+              const onboard=completeOnboardingAfterScan_(sheet,job,result);
+              summary.onboardingResult=onboard;
+            }
           } else if(result&&(result.busy||result.skippedNotDue||result.skippedInactive||result.skippedDuplicate||result.stoppedRun)){
             summary.groupsSkipped++;
             outcome=String(result.status||'SKIP');
           } else {
             summary.groupsFailed++;
+            if(job.autoKind==='ONBOARDING'){
+              setGroupLifecycle_(sheet,job.row,'ERROR');
+              sheet.getRange(job.row,33).setValue('SCAN_ERROR');
+            }
             const key=(result&&result.groupKey)||job.groupKey;
             if(key){
               const retryState=setAutoRetryFailure_(key,(result&&result.errorClass)||'UNKNOWN',(result&&(result.error||result.note))||'');
@@ -7783,6 +7798,10 @@ const RemoteApp = (() => {
           summary.aiBacklogDeferred=summary.newSourceIds.length===0;
           summary.budgetReason=summary.budgetReason||'AI_START_RESERVE';
         }
+      }
+
+      if(!testMode && Date.now()-started<runtimeBudgetMs-45000){
+        summary.groupReview=runPendingGroupReview_();
       }
 
       if(testMode){
@@ -8270,10 +8289,580 @@ const RemoteApp = (() => {
     return repaired;
   }
 
+  function normalizeGroupLifecycle_(value) {
+    const raw=String(value||'').trim();
+    const legacy={
+      'Ưu tiên':'CORE',
+      'Giữ':'GOOD',
+      'Thử nghiệm':'TRIAL',
+      'Giảm ưu tiên':'WATCH',
+      'Loại':'STOPPED'
+    };
+    const state=legacy[raw]||raw.toUpperCase();
+    const allowed=new Set(['NEW','DISCOVERY','TRIAL','REVIEW_READY','CORE','GOOD','WATCH','PAUSED','STOPPED','ERROR']);
+    return allowed.has(state)?state:(raw?'TRIAL':'');
+  }
+
+  function lifecycleCanEnterDueQueue_(value) {
+    return ['TRIAL','CORE','GOOD','WATCH'].indexOf(normalizeGroupLifecycle_(value))>=0;
+  }
+
+  function lifecycleCanRetry_(value) {
+    return ['DISCOVERY','TRIAL','CORE','GOOD','WATCH','ERROR'].indexOf(normalizeGroupLifecycle_(value))>=0;
+  }
+
   function groupPriorityRank_(status) {
-    const map={'Ưu tiên':0,'Giữ':1,'Thử nghiệm':2,'Giảm ưu tiên':3,'Loại':99};
-    const key=String(status||'').trim();
-    return Object.prototype.hasOwnProperty.call(map,key)?map[key]:2;
+    const map={CORE:0,GOOD:1,TRIAL:2,WATCH:3,NEW:4,DISCOVERY:4,REVIEW_READY:5,ERROR:90,PAUSED:98,STOPPED:99};
+    const key=normalizeGroupLifecycle_(status)||'TRIAL';
+    return Object.prototype.hasOwnProperty.call(map,key)?map[key]:50;
+  }
+
+  function migrateGroupLifecycleSchema_(sheet) {
+    if(!sheet||sheet.getLastRow()<2) return {rows:0,migrated:0};
+    const n=sheet.getLastRow()-1;
+    const width=Math.max(CFG.GROUP_TRIAGE_TOTAL_COLS,33);
+    if(sheet.getMaxColumns()<width) sheet.insertColumnsAfter(sheet.getMaxColumns(),width-sheet.getMaxColumns());
+    const rows=sheet.getRange(2,1,n,width).getValues();
+    let migrated=0;
+    const now=new Date();
+    rows.forEach((r,i)=>{
+      const row=i+2;
+      const url=String(r[3]||'').trim();
+      if(!url) return;
+      const before=String(r[6]||'').trim();
+      const lifecycle=normalizeGroupLifecycle_(before)||'TRIAL';
+      if(before!==lifecycle){
+        sheet.getRange(row,7).setValue(lifecycle);
+        migrated++;
+      }
+      if(!r[27]) sheet.getRange(row,28).setValue(now);
+      if(lifecycle==='TRIAL'&&!r[28]){
+        sheet.getRange(row,29).setValue(new Date(now.getTime()+CFG.GROUP_TRIAL_DAYS*86400000));
+      }
+      if(!String(r[32]||'').trim()){
+        sheet.getRange(row,33).setValue(lifecycle==='NEW'?'PENDING_ONBOARDING':'ACTIVE');
+      }
+    });
+    return {rows:n,migrated};
+  }
+
+  function findExistingCanonicalGroupExceptRow_(groupKey,excludeRow) {
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!key) return null;
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const aliasMap=aliasCanonicalMap_();
+    const wanted=aliasMap.get(key)||key;
+    if(sh.getLastRow()<2) return null;
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,Math.max(27,Math.min(sh.getMaxColumns(),CFG.GROUP_TRIAGE_TOTAL_COLS))).getDisplayValues();
+    for(let i=0;i<rows.length;i++){
+      const row=i+2;
+      if(row===Number(excludeRow||0)) continue;
+      const aliases=canonicalGroupKeyAliasesFromScanRow_(rows[i],row);
+      if(aliases.indexOf(key)>=0||aliases.indexOf(wanted)>=0){
+        return {
+          row,
+          name:String(rows[i][2]||'').trim()||groupPlaceholderName_(),
+          url:String(rows[i][3]||'').trim(),
+          canonicalKey:String(aliases[0]||wanted||key).trim().toLowerCase(),
+          active:String(rows[i][0]||'').trim()==='Có'
+        };
+      }
+    }
+    return null;
+  }
+
+  function initializeCandidateGroupRow_(sheet,row,input,source) {
+    const info=normalizeFacebookGroupInput_(input);
+    const duplicate=findExistingCanonicalGroupExceptRow_(info.groupKey,row);
+    ensureSheetRowCapacity_(sheet,row);
+    if(sheet.getMaxColumns()<CFG.GROUP_TRIAGE_TOTAL_COLS){
+      sheet.insertColumnsAfter(sheet.getMaxColumns(),CFG.GROUP_TRIAGE_TOTAL_COLS-sheet.getMaxColumns());
+    }
+    if(duplicate){
+      sheet.getRange(row,1).setValue('Không');
+      sheet.getRange(row,3).setValue(groupPlaceholderName_());
+      sheet.getRange(row,4).setValue(info.url);
+      sheet.getRange(row,5).setNumberFormat('@').setValue(info.groupKey);
+      sheet.getRange(row,7).setValue('STOPPED');
+      sheet.getRange(row,24).setValue('DUPLICATE_BLOCKED');
+      sheet.getRange(row,26).setValue('Duplicate → canonical row '+duplicate.row+' ('+duplicate.canonicalKey+'). History row retained; no second canonical job.');
+      sheet.getRange(row,28).setValue(new Date());
+      sheet.getRange(row,32).setValue(new Date());
+      sheet.getRange(row,33).setValue('DUPLICATE_BLOCKED');
+      return {ok:true,duplicate:true,row,existing:duplicate,input:info};
+    }
+
+    const now=new Date();
+    sheet.getRange(row,1,1,9).setValues([[
+      'Có','',groupPlaceholderName_(),info.url,info.groupKey,'','NEW',3,10
+    ]]);
+    sheet.getRange(row,5).setNumberFormat('@');
+    sheet.getRange(row,11).setFormula(`=IF(OR(H${row}="";J${row}="");"";J${row}+1/H${row})`);
+    sheet.getRange(row,12).setFormula(`=IF(A${row}<>"Có";"TẮT";IF(K${row}="";"CẦN QUÉT";IF(K${row}<=NOW();"CẦN QUÉT";"CHỜ")))`);
+    sheet.getRange(row,16).setValue((source||'SHEET')+' URL-only candidate • probation onboarding pending');
+    sheet.getRange(row,24).setValue('PENDING_ONBOARDING');
+    sheet.getRange(row,28).setValue(now);
+    sheet.getRange(row,29).clearContent();
+    sheet.getRange(row,30,1,3).clearContent();
+    sheet.getRange(row,33).setValue('PENDING_ONBOARDING');
+    mergeGroupAliasRegistry_([{
+      canonicalKey:info.groupKey,alias:info.groupKey,
+      numericId:/^\d{6,}$/.test(info.groupKey)?info.groupKey:'',
+      source:String(source||'SHEET_URL_INTAKE'),
+      firstSeen:now,lastSeen:now,reason:'GROUP_CANDIDATE_URL'
+    }]);
+    return {ok:true,duplicate:false,row,name:groupPlaceholderName_(),url:info.url,groupKey:info.groupKey,lifecycle:'NEW'};
+  }
+
+  function registerSheetFirstPendingRows_() {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {detected:0,registered:0,duplicates:0,invalid:0};
+    if(sh.getMaxColumns()<CFG.GROUP_TRIAGE_TOTAL_COLS){
+      sh.insertColumnsAfter(sh.getMaxColumns(),CFG.GROUP_TRIAGE_TOTAL_COLS-sh.getMaxColumns());
+    }
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,CFG.GROUP_TRIAGE_TOTAL_COLS).getDisplayValues();
+    let detected=0,registered=0,duplicates=0,invalid=0;
+    rows.forEach((r,i)=>{
+      const row=i+2;
+      const url=String(r[3]||'').trim();
+      if(!url) return;
+      const lifecycle=normalizeGroupLifecycle_(r[6]);
+      const groupId=String(r[4]||'').trim();
+      const onboarding=String(r[32]||'').trim();
+      const looksUnregistered=!lifecycle||!groupId||(!onboarding&&String(r[23]||'').trim()==='');
+      if(!looksUnregistered) return;
+      detected++;
+      try{
+        const x=initializeCandidateGroupRow_(sh,row,url,'SHEET_URL_INTAKE');
+        if(x.duplicate) duplicates++; else registered++;
+      }catch(err){
+        invalid++;
+        sh.getRange(row,7).setValue('ERROR');
+        sh.getRange(row,24).setValue('ONBOARDING_ERROR');
+        sh.getRange(row,26).setValue(String(err&&err.message||err).slice(0,500));
+        sh.getRange(row,33).setValue('ERROR');
+      }
+    });
+    return {detected,registered,duplicates,invalid};
+  }
+
+  function getPendingOnboardingJobs_(limit,policyConfig) {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return [];
+    const config=policyConfig||getAutoPolicyConfig_();
+    const dup=new Set(getDuplicateGroupIdentityRows_().map(x=>Number(x.row||0)));
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,Math.min(sh.getMaxColumns(),CFG.GROUP_TRIAGE_TOTAL_COLS)).getValues();
+    const out=[];
+    rows.forEach((r,i)=>{
+      const row=i+2;
+      if(dup.has(row)) return;
+      if(String(r[0]||'').trim()!=='Có') return;
+      const lifecycle=normalizeGroupLifecycle_(r[6]);
+      const onboarding=String(r[32]||'').trim();
+      if(lifecycle!=='NEW'&&onboarding!=='PENDING_ONBOARDING') return;
+      const url=String(r[3]||'').trim();
+      const group=groupPolicyInput_(r);
+      if(!url||!group.groupKey) return;
+      const profile=policyProfileForGroup_(config,group.groupKey);
+      if(!profile||profile.enabled===false) return;
+      out.push({
+        row,name:normalizeGroupDisplayName_(r[2]),profile:String(r[1]||'').trim()||'AUTO',
+        policyProfileId:profile.id,url,groupKey:group.groupKey,targetCount:10,scansPerDay:3,
+        effectivePolicy:{scansPerDay:3,postsPerScan:10},status:String(r[23]||'PENDING_ONBOARDING'),
+        lifecycle:'NEW',priorityRank:-10,autoKind:'ONBOARDING'
+      });
+    });
+    return out.slice(0,Math.max(1,Math.min(3,Number(limit||1))));
+  }
+
+  function setGroupLifecycle_(sheet,row,state,options) {
+    options=options||{};
+    const next=normalizeGroupLifecycle_(state);
+    if(!next) throw new Error('Lifecycle không hợp lệ: '+state);
+    const now=new Date();
+    sheet.getRange(row,7).setValue(next);
+    sheet.getRange(row,28).setValue(now);
+    if(next==='TRIAL'){
+      const days=Math.max(1,Math.min(14,Number(options.trialDays||CFG.GROUP_TRIAL_DAYS)));
+      sheet.getRange(row,29).setValue(new Date(now.getTime()+days*86400000));
+      sheet.getRange(row,8).setValue(3);
+      sheet.getRange(row,9).setValue(10);
+      sheet.getRange(row,33).setValue('TRIAL_ACTIVE');
+    }else if(next==='CORE'){
+      sheet.getRange(row,8).setValue(5);
+      sheet.getRange(row,9).setValue(25);
+      sheet.getRange(row,33).setValue('PORTFOLIO');
+    }else if(next==='GOOD'){
+      sheet.getRange(row,8).setValue(3);
+      sheet.getRange(row,9).setValue(15);
+      sheet.getRange(row,33).setValue('PORTFOLIO');
+    }else if(next==='WATCH'){
+      sheet.getRange(row,8).setValue(1);
+      sheet.getRange(row,9).setValue(10);
+      sheet.getRange(row,33).setValue('PORTFOLIO');
+    }else if(next==='PAUSED'||next==='STOPPED'){
+      sheet.getRange(row,1).setValue('Không');
+      sheet.getRange(row,33).setValue(next);
+    }else if(next==='REVIEW_READY'){
+      sheet.getRange(row,33).setValue('AWAITING_HUMAN_DECISION');
+    }else if(next==='DISCOVERY'){
+      sheet.getRange(row,33).setValue('DISCOVERY_RUNNING');
+    }else if(next==='NEW'){
+      sheet.getRange(row,33).setValue('PENDING_ONBOARDING');
+    }else if(next==='ERROR'){
+      sheet.getRange(row,33).setValue('ERROR');
+    }
+    if(['CORE','GOOD','WATCH','PAUSED','STOPPED'].indexOf(next)>=0){
+      sheet.getRange(row,31).setValue(now);
+    }
+    return next;
+  }
+
+  function groupTrialMetrics_(list,nowMs) {
+    list=list||[];
+    const actionableIntents=new Set(['Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối','Muốn đổi','Muốn mua','Cần mua gấp']);
+    const analyzed=list.filter(r=>[r[8],r[9],r[10],r[11]].some(v=>v!==''&&v!==null&&v!==undefined));
+    const relevant=analyzed.filter(r=>String(r[11]||'').trim()!=='Không phải KH');
+    const relevantPosts=relevant.filter(r=>String(r[3]||'').trim()==='Bài viết');
+    const buyer=analyzed.filter(r=>actionableIntents.has(String(r[9]||'').trim()));
+    const strong=analyzed.filter(r=>signalFeedSignalTier_(r)==='STRONG');
+    const actionable=analyzed.filter(r=>['STRONG','MEDIUM'].indexOf(signalFeedSignalTier_(r))>=0);
+    const posts=list.filter(r=>String(r[3]||'').trim()==='Bài viết');
+    const comments=list.filter(r=>String(r[3]||'').trim()==='Bình luận');
+    const authors=new Set(list.map(r=>normalizeFacebookProfileUrl_(r[6]||'')||String(r[5]||'').trim()).filter(Boolean));
+    const pct=(n,d)=>d?Math.round(n*1000/d)/10:0;
+    return {
+      totalSources:list.length,
+      analyzedSources:analyzed.length,
+      posts:posts.length,
+      comments:comments.length,
+      uniqueAuthors:authors.size,
+      relevantSources:relevant.length,
+      relevantPosts:relevantPosts.length,
+      relevantPct:pct(relevant.length,analyzed.length),
+      buyerSignals:buyer.length,
+      buyerPct:pct(buyer.length,analyzed.length),
+      strongSignals:strong.length,
+      actionableSignals:actionable.length,
+      customerSignalYieldPct:pct(actionable.length,list.length),
+      commentsPerRelevantPost:relevantPosts.length?Math.round(comments.length*100/relevantPosts.length)/100:0,
+      measuredAt:new Date(Number(nowMs||Date.now())).toISOString()
+    };
+  }
+
+  function triageGroupDataIndex_() {
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const opp=mustSheet_(ss,CFG.OPPORTUNITY_SHEET);
+    const oppRows=opp.getLastRow()>=2?opp.getRange(2,1,opp.getLastRow()-1,CFG.OPPORTUNITY_TOTAL_COLS).getValues():[];
+    return buildGroupSummaryOpportunityIndex_(oppRows);
+  }
+
+  function advanceTrialReadiness_() {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {checked:0,ready:0};
+    const index=triageGroupDataIndex_();
+    const registry=buildCanonicalGroupSummaryRegistry_(sh.getRange(2,1,sh.getLastRow()-1,Math.min(sh.getMaxColumns(),CFG.GROUP_TRIAGE_TOTAL_COLS)).getDisplayValues());
+    const byRow=new Map(registry.map(g=>[Number(g.row||0),g]));
+    const now=Date.now();
+    let checked=0,ready=0;
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,CFG.GROUP_TRIAGE_TOTAL_COLS).getValues();
+    rows.forEach((r,i)=>{
+      const row=i+2;
+      if(normalizeGroupLifecycle_(r[6])!=='TRIAL') return;
+      checked++;
+      const group=byRow.get(row);
+      if(!group) return;
+      const list=collectGroupSummaryOpportunities_(index,group.aliases);
+      const metrics=groupTrialMetrics_(list,now);
+      const since=opsDateMs_(r[27])||now;
+      const until=opsDateMs_(r[28])||since+CFG.GROUP_TRIAL_DAYS*86400000;
+      if(!r[28]) sh.getRange(row,29).setValue(new Date(until));
+      const enoughAge=now>=until;
+      const enoughEvidence=
+        metrics.totalSources>=CFG.GROUP_TRIAL_MIN_TOTAL_SOURCES &&
+        metrics.analyzedSources>=CFG.GROUP_TRIAL_MIN_ANALYZED_SOURCES &&
+        metrics.posts>=CFG.GROUP_TRIAL_MIN_POSTS;
+      sh.getRange(row,32).setValue(
+        'Trial '+Math.max(1,Math.floor((now-since)/86400000)+1)+'d • '+
+        'Sources '+metrics.totalSources+' • Relevant '+metrics.relevantPct+'% • Buyer '+metrics.buyerPct+'% • '+
+        'Strong '+metrics.strongSignals+' • Yield '+metrics.customerSignalYieldPct+'%'
+      );
+      if(enoughAge&&enoughEvidence){
+        setGroupLifecycle_(sh,row,'REVIEW_READY');
+        ready++;
+      }
+    });
+    return {checked,ready};
+  }
+
+  function groupReviewKey_(groupKey) {
+    return CFG.GROUP_REVIEW_PREFIX+encodeURIComponent(String(groupKey||'').trim().toLowerCase());
+  }
+
+  function saveGroupReview_(groupKey,state) {
+    if(!groupKey) return;
+    PropertiesService.getDocumentProperties().setProperty(groupReviewKey_(groupKey),JSON.stringify(state||{}));
+  }
+
+  function getGroupReview_(groupKey) {
+    const raw=PropertiesService.getDocumentProperties().getProperty(groupReviewKey_(groupKey))||'';
+    if(!raw) return null;
+    try{return JSON.parse(raw);}catch(_){return null;}
+  }
+
+  function groupReviewSchema_() {
+    return {
+      type:'object',
+      properties:{
+        recommendation:{type:'string'},
+        noise_spam:{type:'string'},
+        summary:{type:'string'},
+        rationale:{type:'string'},
+        recommended_scans_per_day:{type:'integer'},
+        recommended_posts_per_scan:{type:'integer'}
+      },
+      required:['recommendation','noise_spam','summary','rationale','recommended_scans_per_day','recommended_posts_per_scan'],
+      additionalProperties:false
+    };
+  }
+
+  function evaluateGroupPortfolioReview_(command) {
+    command=command||{};
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const sh=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    let row=Number(command.row||0);
+    if(!row&&command.groupKey){
+      const existing=findExistingCanonicalGroup_(command.groupKey);
+      row=existing?Number(existing.row||0):0;
+    }
+    if(row<2||row>sh.getLastRow()) throw new Error('Không xác định được Group review row.');
+    const r=sh.getRange(row,1,1,CFG.GROUP_TRIAGE_TOTAL_COLS).getValues()[0]||[];
+    const lifecycle=normalizeGroupLifecycle_(r[6]);
+    if(lifecycle!=='REVIEW_READY'&&command.force!==true) throw new Error('Group chưa REVIEW_READY.');
+    const groupKey=exactGroupKeyFromRow_(r[3],r[4]);
+    const registry=buildCanonicalGroupSummaryRegistry_([r]);
+    const aliases=registry[0]&&registry[0].aliases||[groupKey];
+    const list=collectGroupSummaryOpportunities_(triageGroupDataIndex_(),aliases);
+    const metrics=groupTrialMetrics_(list,Date.now());
+    const discovery=getGroupDiscovery_(groupKey)||{};
+    const since=opsDateMs_(r[27])||Date.now();
+    const payload={
+      trial_age_days:Math.max(1,Math.floor((Date.now()-since)/86400000)+1),
+      metrics,
+      discovery:{
+        topic_summary:String(discovery.topicSummary||''),
+        pain_summary:String(discovery.painSummary||''),
+        buyer_signal_summary:String(discovery.buyerSignalSummary||''),
+        caveats:String(discovery.caveats||'')
+      }
+    };
+    const cfg=getAiConfig_();
+    if(!cfg.configured) throw new Error('AI provider chưa cấu hình cho Group Review.');
+    const prompt=[
+      'Bạn review Facebook Group dựa CHỈ trên observed Trial evidence được cung cấp.',
+      'Không suy ra Owner Offer/Product Fit hay sales qualification.',
+      'recommendation chỉ được: A — CORE, B — GOOD, C — WATCH, D — STOP.',
+      'Recommendation KHÔNG được tự đổi lifecycle; human decision là bước cuối.',
+      'Ưu tiên Customer Signal Yield, relevance, buyer/strong signals, conversation quality; không dùng Group size làm proxy.',
+      'Nếu evidence mỏng/mâu thuẫn, chọn C — WATCH và nêu rõ.',
+      'recommended_scans_per_day 0-6; recommended_posts_per_scan 0-50.'
+    ].join('\n');
+    const schema=groupReviewSchema_();
+    let ai;
+    if(cfg.provider==='gemini'){
+      const x=callGeminiStructured_(prompt,JSON.stringify(payload),schema,cfg);
+      ai={data:x.data,provider:'gemini',model:x.model||cfg.model};
+    }else{
+      const response=callOpenAi_({
+        model:cfg.model,
+        input:[{role:'system',content:prompt},{role:'user',content:JSON.stringify(payload)}],
+        max_output_tokens:2200,
+        text:{format:{type:'json_schema',name:'group_portfolio_review',strict:true,schema}}
+      });
+      ai={data:parseStructuredResponse_(response),provider:'openai',model:cfg.model};
+    }
+    const d=ai.data||{};
+    const rec=String(d.recommendation||'C — WATCH').trim();
+    const state={
+      version:CFG.VERSION,row,groupKey,reviewedAt:new Date().toISOString(),
+      recommendation:rec,
+      noiseSpam:String(d.noise_spam||'').trim(),
+      summary:String(d.summary||'').trim(),
+      rationale:String(d.rationale||'').trim(),
+      recommendedScansPerDay:policyInt_(d.recommended_scans_per_day,1,0,6),
+      recommendedPostsPerScan:policyInt_(d.recommended_posts_per_scan,10,0,50),
+      metrics,provider:ai.provider,model:ai.model,
+      finalStateChanged:false
+    };
+    saveGroupReview_(groupKey,state);
+    sh.getRange(row,30).setValue(rec);
+    sh.getRange(row,32).setValue(
+      state.summary+' • Yield '+metrics.customerSignalYieldPct+'% • Strong '+metrics.strongSignals+
+      ' • Human decision required'
+    );
+    sh.getRange(row,33).setValue('AWAITING_HUMAN_DECISION');
+    return Object.assign({ok:true},state);
+  }
+
+  function runPendingGroupReview_() {
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {reviewed:0};
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,CFG.GROUP_TRIAGE_TOTAL_COLS).getDisplayValues();
+    for(let i=0;i<rows.length;i++){
+      const r=rows[i]||[];
+      if(normalizeGroupLifecycle_(r[6])!=='REVIEW_READY') continue;
+      const key=exactGroupKeyFromRow_(r[3],r[4]);
+      if(!key||String(r[29]||'').trim()||getGroupReview_(key)) continue;
+      try{
+        const result=evaluateGroupPortfolioReview_({row:i+2});
+        return {reviewed:1,result};
+      }catch(err){
+        return {reviewed:0,error:String(err&&err.message||err)};
+      }
+    }
+    return {reviewed:0};
+  }
+
+  function getGroupTriage_() {
+    ensureV16Sheets_(false);
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2) return {version:CFG.VERSION,groups:[]};
+    const scanRows=sh.getRange(2,1,sh.getLastRow()-1,CFG.GROUP_TRIAGE_TOTAL_COLS).getValues();
+    const registry=buildCanonicalGroupSummaryRegistry_(scanRows);
+    const index=triageGroupDataIndex_();
+    const now=Date.now();
+    const groups=registry.map(g=>{
+      const r=g.rowData||[];
+      const row=Number(g.row||0);
+      const key=String(g.canonicalKey||'').trim().toLowerCase();
+      const list=collectGroupSummaryOpportunities_(index,g.aliases);
+      const metrics=groupTrialMetrics_(list,now);
+      const lifecycle=normalizeGroupLifecycle_(r[6])||'NEW';
+      const since=opsDateMs_(r[27])||0;
+      const review=getGroupReview_(key)||{};
+      return {
+        row,
+        title:normalizeGroupDisplayName_(r[2]),
+        url:String(r[3]||''),
+        groupKey:key,
+        lifecycle,
+        active:String(r[0]||'').trim()==='Có',
+        trialDay:since?Math.max(1,Math.floor((now-since)/86400000)+1):1,
+        trialUntil:r[28] instanceof Date?r[28].toISOString():String(r[28]||''),
+        totalSources:metrics.totalSources,
+        posts:metrics.posts,
+        comments:metrics.comments,
+        relevantPct:metrics.relevantPct,
+        buyerPct:metrics.buyerPct,
+        strongSignals:metrics.strongSignals,
+        actionableSignals:metrics.actionableSignals,
+        customerSignalYieldPct:metrics.customerSignalYieldPct,
+        commentsPerRelevantPost:metrics.commentsPerRelevantPost,
+        observedPostsDay:(()=>{const a=getGroupActivityObservation_(key)||{};return a.complete24h?Number(a.post24hObserved||0):'';})(),
+        observedAvgPostsDay7d:(()=>{const a=getGroupActivityObservation_(key)||{};return a.complete7d?Number(a.avgPostsDay7dObserved||0):'';})(),
+        aiRecommendation:String(r[29]||review.recommendation||''),
+        summary:String(r[31]||review.summary||''),
+        onboardingStatus:String(r[32]||'')
+      };
+    }).sort((a,b)=>groupPriorityRank_(a.lifecycle)-groupPriorityRank_(b.lifecycle)||b.customerSignalYieldPct-a.customerSignalYieldPct||a.row-b.row);
+    const counts={};
+    groups.forEach(g=>{counts[g.lifecycle]=(counts[g.lifecycle]||0)+1;});
+    return {version:CFG.VERSION,trialDays:CFG.GROUP_TRIAL_DAYS,counts,groups};
+  }
+
+  function setGroupTriageDecision_(command) {
+    command=command||{};
+    const action=String(command.action||'').trim().toUpperCase();
+    const map={
+      PROMOTE_CORE:'CORE',
+      SET_GOOD:'GOOD',
+      KEEP_WATCH:'WATCH',
+      EXTEND_TRIAL:'TRIAL',
+      PAUSE:'PAUSED',
+      STOP_FOLLOWING:'STOPPED'
+    };
+    const state=map[action];
+    if(!state) throw new Error('Triage action không hợp lệ.');
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    const row=Number(command.row||0);
+    if(row<2||row>sh.getLastRow()) throw new Error('Group row không hợp lệ.');
+    const current=sh.getRange(row,1,1,CFG.GROUP_TRIAGE_TOTAL_COLS).getValues()[0]||[];
+    const currentLifecycle=normalizeGroupLifecycle_(current[6]);
+    if(['CORE','GOOD','WATCH'].indexOf(state)>=0 && currentLifecycle!=='REVIEW_READY' && command.force!==true){
+      throw new Error('Chỉ Human Decision từ REVIEW_READY mới được Promote CORE/GOOD/WATCH.');
+    }
+    if(state==='TRIAL'){
+      sh.getRange(row,1).setValue('Có');
+      setGroupLifecycle_(sh,row,'TRIAL',{trialDays:Math.max(1,Math.min(14,Number(command.trialDays||CFG.GROUP_TRIAL_DAYS)))});
+    }else{
+      if(['CORE','GOOD','WATCH'].indexOf(state)>=0) sh.getRange(row,1).setValue('Có');
+      setGroupLifecycle_(sh,row,state);
+    }
+    const key=exactGroupKeyFromRow_(current[3],current[4]);
+    sh.getRange(row,26).setValue(
+      'HUMAN_TRIAGE '+action+' • '+new Date().toISOString()+
+      (key?' • '+key:'')
+    );
+    SpreadsheetApp.flush();
+    return {ok:true,version:CFG.VERSION,row,groupKey:key,lifecycle:state,action,humanDecision:true};
+  }
+
+  function completeOnboardingAfterScan_(sheet,job,result) {
+    const row=Number(job&&job.row||0);
+    if(row<2) return {ok:false};
+    const success=!!(result&&result.ok&&!result.incomplete&&!result.stopped);
+    if(!success){
+      setGroupLifecycle_(sheet,row,'ERROR');
+      sheet.getRange(row,33).setValue('SCAN_ERROR');
+      return {ok:false,row};
+    }
+    let discovery=null,discoveryError='';
+    try{discovery=evaluateGroupDiscovery_({row});}
+    catch(err){discoveryError=String(err&&err.message||err);}
+    setGroupLifecycle_(sheet,row,'TRIAL',{trialDays:CFG.GROUP_TRIAL_DAYS});
+    sheet.getRange(row,24).setValue('XONG');
+    sheet.getRange(row,33).setValue(discoveryError?'TRIAL_DISCOVERY_AI_PENDING':'TRIAL_ACTIVE');
+    if(discoveryError){
+      const note=String(sheet.getRange(row,26).getDisplayValue()||'').trim();
+      sheet.getRange(row,26).setValue((note?note+' | ':'')+'Discovery AI pending: '+discoveryError.slice(0,300));
+    }
+    return {ok:true,row,discovery,discoveryError,lifecycle:'TRIAL'};
+  }
+
+  function runGroupTriageHarness_() {
+    const fake=(type,classification,intent,gate,score,buyer,evidence)=>{
+      const r=Array(CFG.OPPORTUNITY_TOTAL_COLS).fill('');
+      r[0]=new Date();
+      r[1]='S'+Math.random();
+      r[3]=type;
+      r[5]='Person';
+      r[6]='https://facebook.com/profile.php?id='+(1000+Math.floor(Math.random()*9000));
+      r[8]='pain';
+      r[9]=intent;
+      r[10]=score;
+      r[11]=classification;
+      r[21]=buyer;
+      r[23]=evidence;
+      r[24]=gate;
+      return r;
+    };
+    const list=[
+      fake('Bài viết','Theo dõi','Cần mua gấp','CONTEXT_REQUIRED',70,'Có','cần mua ngay'),
+      fake('Bài viết','Theo dõi','Tìm giải pháp','WATCH',55,'Có','cần hỗ trợ'),
+      fake('Bình luận','Không phải KH','Thảo luận','FAIL',5,'Không','Không có bằng chứng nhu cầu rõ')
+    ];
+    const m=groupTrialMetrics_(list,Date.now());
+    const tests={
+      TRIAGE_LIFECYCLE_LEGACY_MAP:normalizeGroupLifecycle_('Thử nghiệm')==='TRIAL'&&normalizeGroupLifecycle_('Loại')==='STOPPED',
+      TRIAGE_DUE_STATES:lifecycleCanEnterDueQueue_('CORE')&&lifecycleCanEnterDueQueue_('TRIAL')&&!lifecycleCanEnterDueQueue_('STOPPED')&&!lifecycleCanEnterDueQueue_('PAUSED')&&!lifecycleCanEnterDueQueue_('REVIEW_READY'),
+      TRIAGE_STRONG_SIGNAL:m.strongSignals>=1,
+      TRIAGE_YIELD_FORMULA:m.customerSignalYieldPct===66.7,
+      TRIAGE_NO_AUTO_FINAL:normalizeGroupLifecycle_('REVIEW_READY')==='REVIEW_READY',
+      TRIAGE_TRIAL_DEFAULTS:CFG.GROUP_TRIAL_DAYS===3
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed,metrics:m};
   }
 
   function getDueGroupRows_(limit,options) {
@@ -8294,7 +8883,7 @@ const RemoteApp = (() => {
       const lifecycle=String(r[6]||'').trim();
       const runtimeStatus=String(r[23]||'').trim();
       const lastAt=opsDateMs_(r[9]);
-      if(active!=='Có'||!url||lifecycle==='Loại') return;
+      if(active!=='Có'||!url||!lifecycleCanEnterDueQueue_(lifecycle)) return;
       if(runtimeStatus==='ĐANG QUÉT'||runtimeStatus==='LỖI'||runtimeStatus==='THIẾU'||/^DỪNG/.test(runtimeStatus)) return;
 
       const group=groupPolicyInput_(r);
@@ -8510,8 +9099,11 @@ const RemoteApp = (() => {
     const group=groupPolicyInput_(row);
     if(!group.groupKey) return {state:'IDENTITY_ERROR',reason:'MISSING_GROUP_KEY',group,profile:null,scan:null,nextAtMs:0,due:false};
     const profile=policyProfileForGroup_(config,group.groupKey);
-    if(active!=='Có'||lifecycle==='Loại'||!profile||profile.enabled===false){
-      return {state:'BLOCKED',reason:active!=='Có'?'INACTIVE':'PROFILE_OR_LIFECYCLE_BLOCK',group,profile,scan:null,nextAtMs:0,due:false};
+    if(active!=='Có'||!profile||profile.enabled===false){
+      return {state:'BLOCKED',reason:active!=='Có'?'INACTIVE':'PROFILE_BLOCK',group,profile,scan:null,nextAtMs:0,due:false};
+    }
+    if(!lifecycleCanEnterDueQueue_(lifecycle) && normalizeGroupLifecycle_(lifecycle)!=='ERROR'){
+      return {state:'BLOCKED',reason:'LIFECYCLE_'+(normalizeGroupLifecycle_(lifecycle)||'UNKNOWN'),group,profile,scan:null,nextAtMs:0,due:false};
     }
     if(runtimeStatus==='ĐANG QUÉT') return {state:'BLOCKED',reason:'RUNNING',group,profile,scan:null,nextAtMs:0,due:false};
     if(/Wrong ID|FB account not found|GROUP_ID_RESOLVE|only supports group/i.test(note)){
@@ -10613,6 +11205,7 @@ const RemoteApp = (() => {
     runGroupRegistryCleanupHarness: runGroupRegistryCleanupHarness_,
     runGroupOnboardingHarness: runGroupOnboardingHarness_,
     runGroupIntelligenceHarness: runGroupIntelligenceHarness_,
+    runGroupTriageHarness: runGroupTriageHarness_,
     runApiNativeCleanupHarness: runApiNativeCleanupHarness_,
     runVerifiedIdentityRetryHarness: runVerifiedIdentityRetryHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,
