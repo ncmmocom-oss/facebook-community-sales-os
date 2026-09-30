@@ -8403,8 +8403,7 @@ const RemoteApp = (() => {
     }
     const urlKey=String(normalizedUrl&&normalizedUrl.groupKey||'').trim().toLowerCase();
     if(/^\d{6,}$/.test(rawId)){
-      const verified=verifiedAliasMap.get(rawId.toLowerCase())||rawId;
-      return {key:String(verified),url:(normalizedUrl&&normalizedUrl.url)||rawUrl||('https://www.facebook.com/groups/'+rawId+'/'),source:'NUMERIC_ID'};
+      return {key:rawId,url:(normalizedUrl&&normalizedUrl.url)||rawUrl||('https://www.facebook.com/groups/'+rawId+'/'),source:'NUMERIC_ID'};
     }
     if(urlKey){
       const evidenceNumeric=evidence.aliasToNumeric&&evidence.aliasToNumeric.get(urlKey);
@@ -8567,7 +8566,7 @@ const RemoteApp = (() => {
       const recentHint=typeof source.recentActivity==='string'?source.recentActivity:JSON.stringify(source.recentActivity||'');
       const values=[
         cand.key,String(source.name||''),cand.url,String(source.description||''),String(source.visibility||''),
-        Number(source.membersCount||source.members||0)||'',String(source.addedTime||importedAt.toISOString()),
+        Number(source.membersCount||source.members||0)||'',String(source.snapshotAt||source.exportedAt||source.capturedAt||importedAt.toISOString()),
         CFG.CANDIDATE_SOURCE,profiles.join(' | '),profiles.length,theme,
         existing?String(existing.data[11]||''):'',priority,
         existing?String(existing.data[13]||''):'',state,importedAt,recentHint,''
@@ -8648,6 +8647,7 @@ const RemoteApp = (() => {
       'Phân loại metadata Facebook Group để quyết định có đáng dành tài nguyên 3 ngày Trial hay không.',
       'Chỉ dùng metadata được cung cấp. Không suy ra Owner Offer, Product Fit, buyer persona, CTA, pricing hay sales qualification.',
       'Group size chỉ là metadata ngữ cảnh, không phải quality score.',
+      'recent_activity_hint chỉ là dấu hiệu profile đã tương tác/hoạt động quanh Group; tuyệt đối không coi là buyer signal hay Lead Gate evidence.',
       'trial_priority 0-100 chỉ là queue priority, không phải final Group rank.'
     ].join('\n');
     const schema=candidatePreScreenSchema_();
