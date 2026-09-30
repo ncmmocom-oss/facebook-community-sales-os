@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.9.1-group-portfolio-guards',
+    VERSION: '1.9.8.7-HF10.9.2-lifecycle-validation',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -53,6 +53,7 @@ const RemoteApp = (() => {
     GROUP_TRIAL_MIN_ANALYZED_SOURCES: 20,
     GROUP_TRIAL_MIN_POSTS: 10,
     GROUP_TRIAGE_TOTAL_COLS: 33,
+    GROUP_LIFECYCLE_STATES: ['NEW','DISCOVERY','TRIAL','REVIEW_READY','CORE','GOOD','WATCH','PAUSED','STOPPED','ERROR'],
     GROUP_IDENTITY_RETRY_PREFIX: 'SOCIAL_AIO_GROUP_ID_RETRY_V1_',
     GROUP_SUMMARY_LEGACY_ARCHIVE_SHEET: 'NHÓM LEGACY ARCHIVE',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
@@ -763,6 +764,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.9.2 Lifecycle Validation: column G stores only canonical lifecycle enum; legacy values migrate deterministically; legacy TRIAL age backfills Lifecycle Since from Trial Until minus configured Trial duration without restarting Trial.\n' +
       'V1.9.8.7-HF10.9.1 Group Portfolio Guards: manual retry explicitly respects lifecycle; raw URL-only Sheet rows remain pending onboarding instead of receiving legacy TRIAL migration before canonical intake.\n' +
       'V1.9.8.7-HF10.9 Group Portfolio Curation: formal lifecycle NEW→DISCOVERY→TRIAL→REVIEW_READY→human CORE/GOOD/WATCH; Sheet-first URL intake is detected by AUTO without heavy onEdit; Trial metrics expose Customer Signal Yield; STOPPED/PAUSED are excluded from scheduler; Group Triage remains human-final.\n' +
       'V1.9.8.7-HF10.8 Signal Intelligence Queue: TÍN HIỆU tách Signal Tier STRONG/MEDIUM/WATCH khỏi Lead Gate; buyer/pain signal có evidence vẫn được ưu tiên quan sát khi Offer Context thiếu, nhưng Lead PASS tiếp tục fail-closed.\n' +
@@ -7968,6 +7970,14 @@ const RemoteApp = (() => {
 
     sheet.getRange(2,23,n,1).insertCheckboxes();
 
+    // Canonical lifecycle storage. Never retain the legacy Vietnamese vocabulary
+    // as a competing state machine; UI labels may localize separately.
+    const lifecycleRule=SpreadsheetApp.newDataValidation()
+      .requireValueInList(CFG.GROUP_LIFECYCLE_STATES,true)
+      .setAllowInvalid(false)
+      .build();
+    sheet.getRange(2,7,n,1).setDataValidation(lifecycleRule);
+
     // V1.8.1 used X as a command dropdown. From V1.8.3+ X:Y:Z are output-only
     // status/progress/error columns, so remove every legacy validation rule first.
     sheet.getRange(2,24,n,3).clearDataValidations();
@@ -8300,8 +8310,19 @@ const RemoteApp = (() => {
       'Loại':'STOPPED'
     };
     const state=legacy[raw]||raw.toUpperCase();
-    const allowed=new Set(['NEW','DISCOVERY','TRIAL','REVIEW_READY','CORE','GOOD','WATCH','PAUSED','STOPPED','ERROR']);
+    const allowed=new Set(CFG.GROUP_LIFECYCLE_STATES);
     return allowed.has(state)?state:(raw?'TRIAL':'');
+  }
+
+  function migratedLifecycleSinceMs_(lifecycle,sinceValue,untilValue) {
+    const lifecycleKey=normalizeGroupLifecycle_(lifecycle);
+    const since=opsDateMs_(sinceValue);
+    if(since) return since;
+    const until=opsDateMs_(untilValue);
+    if(lifecycleKey==='TRIAL'&&until){
+      return Math.max(0,until-CFG.GROUP_TRIAL_DAYS*86400000);
+    }
+    return 0;
   }
 
   function lifecycleCanEnterDueQueue_(value) {
@@ -8341,9 +8362,13 @@ const RemoteApp = (() => {
         sheet.getRange(row,7).setValue(lifecycle);
         migrated++;
       }
-      if(!r[27]) sheet.getRange(row,28).setValue(now);
+      const migratedSinceMs=migratedLifecycleSinceMs_(lifecycle,r[27],r[28]);
+      if(!r[27]){
+        sheet.getRange(row,28).setValue(migratedSinceMs?new Date(migratedSinceMs):now);
+      }
       if(lifecycle==='TRIAL'&&!r[28]){
-        sheet.getRange(row,29).setValue(new Date(now.getTime()+CFG.GROUP_TRIAL_DAYS*86400000));
+        const base=migratedSinceMs||now.getTime();
+        sheet.getRange(row,29).setValue(new Date(base+CFG.GROUP_TRIAL_DAYS*86400000));
       }
       if(!String(r[32]||'').trim()){
         sheet.getRange(row,33).setValue(lifecycle==='NEW'?'PENDING_ONBOARDING':'ACTIVE');
@@ -8865,7 +8890,9 @@ const RemoteApp = (() => {
       TRIAGE_STRONG_SIGNAL:m.strongSignals>=1,
       TRIAGE_YIELD_FORMULA:m.customerSignalYieldPct===66.7,
       TRIAGE_NO_AUTO_FINAL:normalizeGroupLifecycle_('REVIEW_READY')==='REVIEW_READY',
-      TRIAGE_TRIAL_DEFAULTS:CFG.GROUP_TRIAL_DAYS===3
+      TRIAGE_TRIAL_DEFAULTS:CFG.GROUP_TRIAL_DAYS===3,
+      TRIAGE_CANONICAL_ENUM_ONLY:CFG.GROUP_LIFECYCLE_STATES.indexOf('TRIAL')>=0&&CFG.GROUP_LIFECYCLE_STATES.indexOf('Thử nghiệm')<0,
+      TRIAGE_LEGACY_AGE_BACKFILL:migratedLifecycleSinceMs_('TRIAL','',new Date(4*86400000))===86400000
     };
     const failed=Object.keys(tests).filter(k=>!tests[k]);
     return {ok:failed.length===0,version:CFG.VERSION,tests,failed,metrics:m};
