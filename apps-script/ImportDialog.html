@@ -383,6 +383,19 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
 <section id="view-system" class="view"><div class="viewHead"><div><div class="sectionLabel">SYSTEM</div><h2>Runtime / Version / Logs</h2><p>Kiểm tra hệ thống mà không trộn vào thao tác quét hằng ngày.</p></div></div><div class="systemGrid"><div class="panel"><div class="panelTitle">Runtime</div><div class="healthRows"><div class="healthRow"><span>Version</span><b id="sysRuntime">—</b></div><div class="healthRow"><span>Architecture</span><b>Apps Script + GitHub runtime</b></div><div class="healthRow"><span>Source of truth</span><b>Google Sheets</b></div><div class="healthRow"><span>Scale target</span><b>200 Group pilot</b></div></div></div><div class="panel"><div class="panelTitle">Maintenance</div><div style="display:grid;gap:7px"><button class="secondary" onclick="refreshData()">↻ ĐỒNG BỘ SHEET</button><button class="dark" onclick="auditConsistency()">KIỂM TRA ĐỒNG NHẤT</button><button class="retry" onclick="runApiDiagnostic()">🔎 API DIAGNOSTIC</button><button class="primary" onclick="runProductionSelfTest()">✓ SELF-TEST & REPAIR</button></div></div></div><div class="panel" style="margin-top:12px"><div class="panelTitle">Log sources</div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('api_log','NHẬT KÝ API')" title="Mở / tái sử dụng tab NHẬT KÝ API"><b>NHẬT KÝ API ↗</b><div class="muted">Diagnostic, cursor, relay và worker evidence.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('import_log','NHẬT KÝ IMPORT')" title="Mở / tái sử dụng tab NHẬT KÝ IMPORT"><b>NHẬT KÝ IMPORT ↗</b><div class="muted">Run import, số bài đọc/mới/trùng và duration.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('ai_log','NHẬT KÝ AI')" title="Mở / tái sử dụng tab NHẬT KÝ AI"><b>NHẬT KÝ AI ↗</b><div class="muted">AI analysis, model, Gate, error và provenance.</div></div><div class="logSource" style="cursor:pointer" role="button" tabindex="0" onclick="openWorkspaceTab('auto_log','NHẬT KÝ AUTO')" title="Mở / tái sử dụng tab NHẬT KÝ AUTO"><b>NHẬT KÝ AUTO ↗</b><div class="muted">Backend cycle: Group scan, retry, Comment Intelligence, AI và self-repair.</div></div><div class="emptyNote">V1.9.4: AUTO V2 chạy backend trigger + Comment Intelligence delta/pagination. Scanner, raw pagination và Lead Gate vẫn giữ business logic cũ.</div></div></section>
 </div><div class="statusDock"><div class="statusDockHead"><b>LIVE ACTIVITY</b><span id="statusHeadline">Sẵn sàng.</span></div><div id="status">Sẵn sàng.</div></div></main></div><div id="legacyRoot">
 
+  <div class="box" id="groupTriageBox">
+    <h3>GROUP TRIAGE — PORTFOLIO CURATION</h3>
+    <div class="muted">
+      NEW → DISCOVERY → TRIAL → REVIEW READY → <b>Human Decision</b>.
+      AI recommendation không tự đổi CORE / GOOD / WATCH. STOPPED giữ lịch sử và không vào Due Queue.
+    </div>
+    <div class="monitorActions">
+      <button class="retry" onclick="loadGroupTriage()">↻ LÀM MỚI TRIAGE</button>
+    </div>
+    <div id="groupTriageSummary" class="muted">Đang đọc Group Portfolio...</div>
+    <div id="groupTriageList" class="scanlist">Chưa có dữ liệu Triage.</div>
+  </div>
+
   <div class="box monitorbox" id="monitorBox">
     <h3>MONITOR 200 GROUP — PILOT</h3>
     <div class="muted">Due Queue tự lấy Group đến hạn. <b>AUTO MONITOR V2 chạy bằng backend trigger, vẫn hoạt động khi đóng Control Center.</b></div>
@@ -1830,45 +1843,117 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
       });
     }
 
+    function escHtml(v){
+      return String(v===undefined||v===null?'':v)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+    }
+
+    function triageAction(row,action){
+      const labels={
+        PROMOTE_CORE:'PROMOTE CORE',SET_GOOD:'SET GOOD',KEEP_WATCH:'KEEP WATCH',
+        EXTEND_TRIAL:'EXTEND TRIAL',PAUSE:'PAUSE',STOP_FOLLOWING:'STOP FOLLOWING'
+      };
+      setStatus('Đang áp dụng Human Triage: '+String(labels[action]||action)+'...');
+      command({__command:'SET_GROUP_TRIAGE_DECISION',row:Number(row||0),action},r=>{
+        setStatus('✅ HUMAN TRIAGE • row '+Number(r.row||0)+' → '+String(r.lifecycle||''));
+        loadGroupTriage();pollMonitoring();pollGroupScanState();
+      },e=>setStatus('Triage action lỗi: '+(e.message||e)));
+    }
+
+    function runGroupPortfolioReview(row){
+      setStatus('Đang chạy AI Group Review trên Trial evidence...');
+      command({__command:'RUN_GROUP_PORTFOLIO_REVIEW',row:Number(row||0)},r=>{
+        setStatus(
+          '✅ AI GROUP REVIEW • '+String(r.recommendation||'')+
+          '\nYield '+Number(r.metrics&&r.metrics.customerSignalYieldPct||0)+'%'+
+          '\nHuman Decision vẫn bắt buộc.'
+        );
+        loadGroupTriage();
+      },e=>setStatus('AI Group Review lỗi: '+(e.message||e)));
+    }
+
+    function renderGroupTriage(data){
+      data=data||{};
+      const groups=data.groups||[];
+      const summary=document.getElementById('groupTriageSummary');
+      const list=document.getElementById('groupTriageList');
+      const counts=data.counts||{};
+      if(summary){
+        summary.textContent=
+          'NEW '+Number(counts.NEW||0)+' • DISCOVERY '+Number(counts.DISCOVERY||0)+
+          ' • TRIAL '+Number(counts.TRIAL||0)+' • REVIEW READY '+Number(counts.REVIEW_READY||0)+
+          ' • CORE '+Number(counts.CORE||0)+' • GOOD '+Number(counts.GOOD||0)+
+          ' • WATCH '+Number(counts.WATCH||0)+' • STOPPED '+Number(counts.STOPPED||0);
+      }
+      if(!list)return;
+      if(!groups.length){list.innerHTML='<div class="muted">Chưa có Group trong Portfolio Registry.</div>';return;}
+      list.innerHTML=groups.map(g=>{
+        const lifecycle=String(g.lifecycle||'NEW');
+        const decisionReady=lifecycle==='REVIEW_READY';
+        const canPause=['TRIAL','REVIEW_READY','CORE','GOOD','WATCH'].indexOf(lifecycle)>=0;
+        const actionButtons=decisionReady
+          ? '<button class="primary" onclick="triageAction('+Number(g.row||0)+',\'PROMOTE_CORE\')">PROMOTE CORE</button> '+
+            '<button class="secondary" onclick="triageAction('+Number(g.row||0)+',\'SET_GOOD\')">SET GOOD</button> '+
+            '<button class="retry" onclick="triageAction('+Number(g.row||0)+',\'KEEP_WATCH\')">KEEP WATCH</button> '+
+            '<button class="dark" onclick="triageAction('+Number(g.row||0)+',\'EXTEND_TRIAL\')">EXTEND TRIAL</button> '+
+            '<button class="secondary" onclick="runGroupPortfolioReview('+Number(g.row||0)+')">AI REVIEW</button>'
+          : '';
+        const opsButtons=canPause
+          ? ' <button class="dark" onclick="triageAction('+Number(g.row||0)+',\'PAUSE\')">PAUSE</button>'+
+            ' <button class="danger" onclick="triageAction('+Number(g.row||0)+',\'STOP_FOLLOWING\')">STOP FOLLOWING</button>'
+          : '';
+        return '<div class="poolstate" style="margin:8px 0;padding:10px">'+
+          '<div><b>'+escHtml(g.title||'CHƯA LẤY TÊN')+'</b> • <b>'+escHtml(lifecycle)+'</b> • row '+Number(g.row||0)+'</div>'+
+          '<div class="muted">'+escHtml(g.url||'')+'</div>'+
+          '<div style="margin-top:6px">'+
+            'Trial day <b>'+Number(g.trialDay||1)+'</b> • Sources <b>'+Number(g.totalSources||0)+'</b>'+
+            ' • Relevant <b>'+Number(g.relevantPct||0)+'%</b>'+
+            ' • Buyer <b>'+Number(g.buyerPct||0)+'%</b>'+
+            ' • Strong <b>'+Number(g.strongSignals||0)+'</b>'+
+            ' • Yield <b>'+Number(g.customerSignalYieldPct||0)+'%</b>'+
+          '</div>'+
+          '<div class="muted">AI: '+escHtml(g.aiRecommendation||'—')+
+            (g.summary?(' • '+escHtml(g.summary)):'')+
+            ' • '+escHtml(g.onboardingStatus||'')+'</div>'+
+          '<div style="margin-top:8px">'+actionButtons+opsButtons+'</div>'+
+        '</div>';
+      }).join('');
+    }
+
+    function loadGroupTriage(){
+      command({__command:'GET_GROUP_TRIAGE'},renderGroupTriage,e=>{
+        const el=document.getElementById('groupTriageSummary');
+        if(el)el.textContent='Group Triage lỗi: '+(e.message||e);
+      });
+    }
+
     function onboardGroupUrl(){
       const input=document.getElementById('groupOnboardUrl');
       const btn=document.getElementById('groupOnboardBtn');
       const groupUrl=String(input&&input.value||'').trim();
       if(!groupUrl){setStatus('Hãy dán Facebook Group URL.');return;}
       if(btn)btn.disabled=true;
-      setStatus('Đang kiểm tra canonical identity và tạo discovery plan...');
+      setStatus('Đang đăng ký NEW candidate vào cùng QUÉT NHÓM registry...');
       command({__command:'ONBOARD_GROUP_URL',groupUrl},r=>{
         if(btn)btn.disabled=false;
         if(r&&r.duplicate){
           const x=r.existing||{};
-          setStatus('Group đã tồn tại ở registry • row '+Number(x.row||0)+' • '+String(x.name||'CHƯA LẤY TÊN')+'. Không tạo duplicate.');
+          setStatus('Group đã tồn tại ở registry • row '+Number(x.row||0)+' • '+String(x.name||'CHƯA LẤY TÊN')+'. Không tạo canonical row thứ hai.');
           const el=document.getElementById('groupOnboardResult');
           if(el)el.textContent='DUPLICATE BLOCKED • canonical='+String(x.canonicalKey||'')+' • row='+Number(x.row||0);
-          pollGroupScanState();pollMonitoring();
-          return;
-        }
-        const plan=r&&r.plan;
-        if(!plan||plan.mode!=='onboarding'||plan.scope!=='ONBOARDING_DISCOVERY'){
-          setStatus('❌ ONBOARD_SCOPE_MISMATCH: backend không trả đúng discovery plan. Đã chặn scan.');
+          pollGroupScanState();pollMonitoring();loadGroupTriage();
           return;
         }
         const row=Number(r.row||0);
-        setStatus('Đã thêm canonical Group row '+row+'. Đang discovery scan đúng 10 bài...');
-        runWorkerPlan(plan,false,result=>{
-          if(result&&result.pauseAuto){
-            setStatus('Discovery scan lỗi; Group vẫn giữ trong registry để retry có kiểm soát.\n'+String(result.message||''));
-            return;
-          }
-          setStatus('Discovery scan xong. Đang AI Group evaluation...');
-          command({__command:'EVALUATE_GROUP_DISCOVERY',row},ev=>{
-            renderGroupDiscoveryResult(ev);
-            setStatus('✅ GROUP ONBOARDING XONG • row '+row+' • sample '+Number(ev.sampleSize||0)+' • '+String(ev.buyerSignalLevel||'')+'.');
-            if(input)input.value='';
-            pollGroupScanState();pollMonitoring();
-          },e=>{
-            setStatus('Discovery scan đã lưu nhưng AI Group evaluation chưa xong: '+(e.message||e));
-          });
-        });
+        setStatus(
+          '✅ NEW CANDIDATE ĐÃ ĐĂNG KÝ • row '+row+
+          '\nAUTO cycle kế tiếp sẽ chạy DISCOVERY 10 bài → TRIAL. Không gọi FBAIO/AI trong bước đăng ký.'
+        );
+        const el=document.getElementById('groupOnboardResult');
+        if(el)el.textContent='NEW • PENDING_ONBOARDING • row='+row+' • canonical='+String(r.groupKey||'');
+        if(input)input.value='';
+        pollGroupScanState();pollMonitoring();loadGroupTriage();
       },e=>{
         if(btn)btn.disabled=false;
         setStatus('Không thêm được Group: '+(e.message||e));
@@ -2417,6 +2502,7 @@ input,textarea,select{width:100%;margin:6px 0;padding:9px 10px;border:1px solid 
     loadAiConfig();
     loadWorkerPool();
     loadAutoPolicy();
+    loadGroupTriage();
     startMonitoringPolling();
     startGroupScanPolling();
     setAutoMonitorUi();
