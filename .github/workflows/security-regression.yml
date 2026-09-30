@@ -366,7 +366,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.9.1-group-portfolio-guards'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.9.2-lifecycle-validation'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -397,6 +397,12 @@ jobs:
           assert "function evaluateGroupPortfolioReview_(" in runtime
           assert "GROUP_TRIAL_DAYS: 3" in runtime
           assert "GROUP_TRIAGE_TOTAL_COLS: 33" in runtime
+          assert "GROUP_LIFECYCLE_STATES: ['NEW','DISCOVERY','TRIAL','REVIEW_READY','CORE','GOOD','WATCH','PAUSED','STOPPED','ERROR']" in runtime
+          assert ".requireValueInList(CFG.GROUP_LIFECYCLE_STATES,true)" in runtime
+          assert "function migratedLifecycleSinceMs_(" in runtime
+          assert "until-CFG.GROUP_TRIAL_DAYS*86400000" in runtime
+          assert "TRIAGE_CANONICAL_ENUM_ONLY" in runtime
+          assert "TRIAGE_LEGACY_AGE_BACKFILL" in runtime
           assert "PENDING_ONBOARDING" in runtime
           assert "if(!before&&!groupId)" in runtime, 'raw URL-only row must stay pending until canonical intake'
           assert "lifecycleCanEnterDueQueue_(lifecycle)" in runtime
