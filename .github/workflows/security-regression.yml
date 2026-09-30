@@ -415,6 +415,10 @@ jobs:
           assert "POOL_CANDIDATE_NOT_SCHEDULER" in runtime
           assert "POOL_SAME_NAME_DIFFERENT_ID" in runtime
           assert "CANDIDATE_CAPACITY_FULL" in runtime
+          assert "function assignCandidateGroupToPolicyProfile_(" in runtime
+          assert "profile.groupKeys=[...new Set([...(profile.groupKeys||[]),key])]" in runtime
+          assert "scan.getRange(added.row,2).setValue('AUTO')" in runtime
+          assert "scan.getRange(added.row,2).setValue(profileId)" not in runtime
           assert "Không suy ra Owner Offer, Product Fit, buyer persona, CTA, pricing hay sales qualification." in runtime
           assert "PENDING_ONBOARDING" in runtime
           assert "if(!before&&!groupId)" in runtime, 'raw URL-only row must stay pending until canonical intake'
