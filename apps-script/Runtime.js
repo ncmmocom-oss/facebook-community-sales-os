@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.9-group-portfolio-curation',
+    VERSION: '1.9.8.7-HF10.9.1-group-portfolio-guards',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -763,6 +763,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.9.1 Group Portfolio Guards: manual retry explicitly respects lifecycle; raw URL-only Sheet rows remain pending onboarding instead of receiving legacy TRIAL migration before canonical intake.\n' +
       'V1.9.8.7-HF10.9 Group Portfolio Curation: formal lifecycle NEW→DISCOVERY→TRIAL→REVIEW_READY→human CORE/GOOD/WATCH; Sheet-first URL intake is detected by AUTO without heavy onEdit; Trial metrics expose Customer Signal Yield; STOPPED/PAUSED are excluded from scheduler; Group Triage remains human-final.\n' +
       'V1.9.8.7-HF10.8 Signal Intelligence Queue: TÍN HIỆU tách Signal Tier STRONG/MEDIUM/WATCH khỏi Lead Gate; buyer/pain signal có evidence vẫn được ưu tiên quan sát khi Offer Context thiếu, nhưng Lead PASS tiếp tục fail-closed.\n' +
       'V1.9.8.7-HF10.7 Display Fallback Closure: đóng hai đường legacy còn có thể phát sinh Group <key> trong Comment ingestion và Retry queue; mọi display name chưa xác minh đều CHƯA LẤY TÊN.\n' +
@@ -8330,6 +8331,11 @@ const RemoteApp = (() => {
       const url=String(r[3]||'').trim();
       if(!url) return;
       const before=String(r[6]||'').trim();
+      const groupId=String(r[4]||'').trim();
+      if(!before&&!groupId){
+        if(!String(r[32]||'').trim()) sheet.getRange(row,33).setValue('PENDING_ONBOARDING');
+        return;
+      }
       const lifecycle=normalizeGroupLifecycle_(before)||'TRIAL';
       if(before!==lifecycle){
         sheet.getRange(row,7).setValue(lifecycle);
@@ -10835,6 +10841,7 @@ const RemoteApp = (() => {
     values.forEach((r,i)=>{
       if(duplicateRows.has(i+2)) return;
       if(String(r[0]||'').trim()!=='Có') return;
+      if(!lifecycleCanRetry_(r[6])) return;
       const status=String(r[23]||'');
       if(status!=='LỖI' && status!=='THIẾU') return;
       const url=String(r[3]||'').trim();
