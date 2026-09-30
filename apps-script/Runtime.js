@@ -7518,6 +7518,7 @@ const RemoteApp = (() => {
 
   function autoMonitorTick_(options) {
     options=options||{};
+    ensureV16Sheets_(false);
     const started=Date.now();
     const runId='auto-'+Utilities.getUuid().slice(0,10);
     const testMode=!!options.testMode;
@@ -8523,6 +8524,7 @@ const RemoteApp = (() => {
     const actionableIntents=new Set(['Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối','Muốn đổi','Muốn mua','Cần mua gấp']);
     const analyzed=list.filter(r=>[r[8],r[9],r[10],r[11]].some(v=>v!==''&&v!==null&&v!==undefined));
     const relevant=analyzed.filter(r=>String(r[11]||'').trim()!=='Không phải KH');
+    const relevantPosts=relevant.filter(r=>String(r[3]||'').trim()==='Bài viết');
     const buyer=analyzed.filter(r=>actionableIntents.has(String(r[9]||'').trim()));
     const strong=analyzed.filter(r=>signalFeedSignalTier_(r)==='STRONG');
     const actionable=analyzed.filter(r=>['STRONG','MEDIUM'].indexOf(signalFeedSignalTier_(r))>=0);
@@ -8537,13 +8539,14 @@ const RemoteApp = (() => {
       comments:comments.length,
       uniqueAuthors:authors.size,
       relevantSources:relevant.length,
+      relevantPosts:relevantPosts.length,
       relevantPct:pct(relevant.length,analyzed.length),
       buyerSignals:buyer.length,
       buyerPct:pct(buyer.length,analyzed.length),
       strongSignals:strong.length,
       actionableSignals:actionable.length,
       customerSignalYieldPct:pct(actionable.length,list.length),
-      commentsPerRelevantPost:relevant.length?Math.round(comments.length*100/relevant.length)/100:0,
+      commentsPerRelevantPost:relevantPosts.length?Math.round(comments.length*100/relevantPosts.length)/100:0,
       measuredAt:new Date(Number(nowMs||Date.now())).toISOString()
     };
   }
@@ -8755,6 +8758,9 @@ const RemoteApp = (() => {
         strongSignals:metrics.strongSignals,
         actionableSignals:metrics.actionableSignals,
         customerSignalYieldPct:metrics.customerSignalYieldPct,
+        commentsPerRelevantPost:metrics.commentsPerRelevantPost,
+        observedPostsDay:(()=>{const a=getGroupActivityObservation_(key)||{};return a.complete24h?Number(a.post24hObserved||0):'';})(),
+        observedAvgPostsDay7d:(()=>{const a=getGroupActivityObservation_(key)||{};return a.complete7d?Number(a.avgPostsDay7dObserved||0):'';})(),
         aiRecommendation:String(r[29]||review.recommendation||''),
         summary:String(r[31]||review.summary||''),
         onboardingStatus:String(r[32]||'')
