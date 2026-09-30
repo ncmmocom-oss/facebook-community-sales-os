@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.9.2-lifecycle-validation',
+    VERSION: '1.9.8.7-HF10.10-candidate-pool',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -54,6 +54,12 @@ const RemoteApp = (() => {
     GROUP_TRIAL_MIN_POSTS: 10,
     GROUP_TRIAGE_TOTAL_COLS: 33,
     GROUP_LIFECYCLE_STATES: ['NEW','DISCOVERY','TRIAL','REVIEW_READY','CORE','GOOD','WATCH','PAUSED','STOPPED','ERROR'],
+    CANDIDATE_POOL_SHEET: 'GROUP CANDIDATE POOL',
+    PROFILE_GROUP_MEMBERSHIP_SHEET: 'PROFILE_GROUP_MEMBERSHIP',
+    CANDIDATE_STATES: ['NEW_CANDIDATE','PRE_SCREENED','TRIAL_QUEUED','IN_TRIAL','PORTFOLIO','DEFERRED','REJECTED','DUPLICATE','INACCESSIBLE'],
+    CANDIDATE_SOURCE: 'JOINED_GROUP_EXPORT',
+    CANDIDATE_DEFAULT_WAVE_SIZE: 5,
+    CANDIDATE_MAX_WAVE_SIZE: 10,
     GROUP_IDENTITY_RETRY_PREFIX: 'SOCIAL_AIO_GROUP_ID_RETRY_V1_',
     GROUP_SUMMARY_LEGACY_ARCHIVE_SHEET: 'NHÓM LEGACY ARCHIVE',
     AUTO_MONITOR_ENABLED_KEY: 'SOCIAL_AIO_AUTO_MONITOR_V2_ENABLED',
@@ -764,6 +770,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.10 Candidate Pool: adds staging inventory + normalized profile↔Group membership, metadata pre-screen, capacity-guarded Trial queue, and keeps Candidate rows completely outside AUTO Due Queue.\n' +
       'V1.9.8.7-HF10.9.2 Lifecycle Validation: column G stores only canonical lifecycle enum; legacy values migrate deterministically; legacy TRIAL age backfills Lifecycle Since from Trial Until minus configured Trial duration without restarting Trial.\n' +
       'V1.9.8.7-HF10.9.1 Group Portfolio Guards: manual retry explicitly respects lifecycle; raw URL-only Sheet rows remain pending onboarding instead of receiving legacy TRIAL migration before canonical intake.\n' +
       'V1.9.8.7-HF10.9 Group Portfolio Curation: formal lifecycle NEW→DISCOVERY→TRIAL→REVIEW_READY→human CORE/GOOD/WATCH; Sheet-first URL intake is detected by AUTO without heavy onEdit; Trial metrics expose Customer Signal Yield; STOPPED/PAUSED are excluded from scheduler; Group Triage remains human-final.\n' +
@@ -1842,6 +1849,31 @@ const RemoteApp = (() => {
       groupSummary.setFrozenRows(1);
     }
 
+    let candidatePool=ss.getSheetByName(CFG.CANDIDATE_POOL_SHEET);
+    if(!candidatePool) candidatePool=ss.insertSheet(CFG.CANDIDATE_POOL_SHEET);
+    if(candidatePool.getMaxColumns()<18) candidatePool.insertColumnsAfter(candidatePool.getMaxColumns(),18-candidatePool.getMaxColumns());
+    candidatePool.getRange(1,1,1,18).setValues([[
+      'Canonical Group ID','Group Name','URL','Description','Visibility','Members — FB Snapshot',
+      'Snapshot At','Candidate Source','Eligible Profiles','Profile Membership Count','Theme',
+      'AI Pre-screen','Trial Priority','Assigned IX Profile','Candidate State','Imported At',
+      'Recent Activity Hint','Notes'
+    ]]);
+    candidatePool.getRange(2,1,Math.max(1,candidatePool.getMaxRows()-1),1).setNumberFormat('@');
+    const candidateStateRule=SpreadsheetApp.newDataValidation()
+      .requireValueInList(CFG.CANDIDATE_STATES,true).setAllowInvalid(false).build();
+    candidatePool.getRange(2,15,Math.max(1,candidatePool.getMaxRows()-1),1).setDataValidation(candidateStateRule);
+    candidatePool.setFrozenRows(1);
+
+    let membership=ss.getSheetByName(CFG.PROFILE_GROUP_MEMBERSHIP_SHEET);
+    if(!membership) membership=ss.insertSheet(CFG.PROFILE_GROUP_MEMBERSHIP_SHEET);
+    if(membership.getMaxColumns()<8) membership.insertColumnsAfter(membership.getMaxColumns(),8-membership.getMaxColumns());
+    membership.getRange(1,1,1,8).setValues([[
+      'Canonical Group ID','Facebook Profile','Source File','Added Time','Recent','Recent Activity','Imported At','Source'
+    ]]);
+    membership.getRange(2,1,Math.max(1,membership.getMaxRows()-1),1).setNumberFormat('@');
+    membership.setFrozenRows(1);
+    try{membership.hideSheet();}catch(_){}
+
     const scan = ss.getSheetByName(CFG.GROUP_SCAN_SHEET);
     if (scan) {
       if (scan.getMaxColumns() < CFG.GROUP_TRIAGE_TOTAL_COLS) {
@@ -2458,6 +2490,12 @@ const RemoteApp = (() => {
     if (name === 'REPAIR_GROUP_DISPLAY_NAMES') return repairLegacyGroupDisplayNames_();
     if (name === 'ONBOARD_GROUP_URL') return prepareOnboardingWorkerBatch_(command);
     if (name === 'GET_GROUP_TRIAGE') return getGroupTriage_();
+    if (name === 'GET_GROUP_CANDIDATE_POOL') return getGroupCandidatePool_(command);
+    if (name === 'IMPORT_GROUP_CANDIDATE_FILES') return importGroupCandidateFiles_(command);
+    if (name === 'PRE_SCREEN_GROUP_CANDIDATE') return preScreenGroupCandidate_(command);
+    if (name === 'QUEUE_GROUP_CANDIDATE_TRIAL') return queueGroupCandidateTrial_(command);
+    if (name === 'SET_GROUP_CANDIDATE_STATE') return setGroupCandidateState_(command);
+    if (name === 'RUN_CANDIDATE_POOL_HARNESS') return runCandidatePoolHarness_();
     if (name === 'SET_GROUP_TRIAGE_DECISION') return setGroupTriageDecision_(command);
     if (name === 'RUN_GROUP_PORTFOLIO_REVIEW') return evaluateGroupPortfolioReview_(command);
     if (name === 'RUN_GROUP_TRIAGE_HARNESS') return runGroupTriageHarness_();
@@ -8300,6 +8338,354 @@ const RemoteApp = (() => {
     return repaired;
   }
 
+  function normalizeCandidateState_(value) {
+    const x=String(value||'').trim().toUpperCase();
+    return CFG.CANDIDATE_STATES.indexOf(x)>=0?x:'NEW_CANDIDATE';
+  }
+
+  function joinedGroupRecordsFromFile_(file) {
+    file=file||{};
+    let raw=file.records!==undefined?file.records:(file.parsed!==undefined?file.parsed:file.text);
+    if(typeof raw==='string'){
+      try{raw=JSON.parse(raw);}catch(err){throw new Error('CANDIDATE_JSON_PARSE: '+String(file.name||'unknown')+' • '+String(err&&err.message||err));}
+    }
+    if(Array.isArray(raw)) return raw;
+    if(raw&&Array.isArray(raw.groups)) return raw.groups;
+    if(raw&&Array.isArray(raw.data)) return raw.data;
+    throw new Error('CANDIDATE_JSON_SHAPE: '+String(file.name||'unknown')+' không có array records/groups/data.');
+  }
+
+  function canonicalCandidateIdentity_(record) {
+    record=record||{};
+    const rawId=String(record.id||record.groupId||record.group_id||'').trim();
+    const rawUrl=String(record.url||record.link||record.groupUrl||'').trim();
+    if(/^\d{6,}$/.test(rawId)) {
+      return {key:rawId,url:rawUrl||('https://www.facebook.com/groups/'+rawId+'/')};
+    }
+    if(rawUrl){
+      const n=normalizeFacebookGroupInput_(rawUrl);
+      return {key:n.groupKey,url:n.url};
+    }
+    if(rawId && /^[a-zA-Z0-9._-]+$/.test(rawId)){
+      const n=normalizeFacebookGroupInput_('https://www.facebook.com/groups/'+rawId+'/');
+      return {key:n.groupKey,url:n.url};
+    }
+    return {key:'',url:''};
+  }
+
+  function candidateThemeHeuristic_(name,description) {
+    const s=(String(name||'')+' '+String(description||'')).toLowerCase();
+    const rules=[
+      ['Đá quý / phong thủy / trang sức',/(đá quý|phong thủy|trang sức|jade|gem|ngọc|vòng)/],
+      ['Du lịch / khách sạn',/(du lịch|travel|hotel|khách sạn|resort|homestay)/],
+      ['Công nhân / KCN / việc làm',/(công nhân|kcn|khu công nghiệp|việc làm|tuyển dụng|job)/],
+      ['Hẹn hò / cộng đồng',/(hẹn hò|kết bạn|độc thân|dating|cộng đồng)/],
+      ['Công nghệ',/(công nghệ|technology|developer|lập trình|ai |seo|amazon|it\b)/],
+      ['Kinh doanh',/(kinh doanh|bán hàng|marketing|khởi nghiệp|business|affiliate)/],
+      ['Local marketplace',/(chợ|mua bán|rao vặt|marketplace|thanh lý)/],
+      ['Phát triển bản thân',/(phát triển bản thân|self help|kỹ năng|học tập)/]
+    ];
+    for(const r of rules) if(r[1].test(s)) return r[0];
+    return 'Other';
+  }
+
+  function candidatePriorityHeuristic_(record,membershipCount) {
+    record=record||{};
+    const members=Math.max(0,Number(record.membersCount||record.members||0));
+    const visibility=String(record.visibility||'').toLowerCase();
+    const name=String(record.name||'').trim();
+    const description=String(record.description||'').trim();
+    let score=20;
+    if(name) score+=10;
+    if(description.length>=40) score+=15;
+    if(members>=1000) score+=10;
+    if(members>=10000) score+=10;
+    if(members>=100000) score+=5;
+    if(Number(membershipCount||0)>=2) score+=15;
+    if(/public|công khai/.test(visibility)) score+=5;
+    return Math.max(0,Math.min(100,score));
+  }
+
+  function candidatePoolIndex_(sheet) {
+    const out=new Map();
+    if(!sheet||sheet.getLastRow()<2) return out;
+    sheet.getRange(2,1,sheet.getLastRow()-1,18).getDisplayValues().forEach((r,i)=>{
+      const key=String(r[0]||'').trim().toLowerCase();
+      if(key) out.set(key,{row:i+2,data:r});
+    });
+    return out;
+  }
+
+  function membershipIndex_(sheet) {
+    const out=new Map();
+    if(!sheet||sheet.getLastRow()<2) return out;
+    sheet.getRange(2,1,sheet.getLastRow()-1,8).getDisplayValues().forEach((r,i)=>{
+      const key=String(r[0]||'').trim().toLowerCase();
+      const profile=String(r[1]||'').trim();
+      if(key&&profile) out.set(key+'|'+profile.toLowerCase(),{row:i+2,data:r});
+    });
+    return out;
+  }
+
+  function importGroupCandidateFiles_(command) {
+    command=command||{};
+    ensureV16Sheets_(false);
+    const files=Array.isArray(command.files)?command.files:[];
+    if(!files.length) throw new Error('CANDIDATE_IMPORT_NO_FILES');
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const pool=mustSheet_(ss,CFG.CANDIDATE_POOL_SHEET);
+    const membership=mustSheet_(ss,CFG.PROFILE_GROUP_MEMBERSHIP_SHEET);
+    const poolIndex=candidatePoolIndex_(pool);
+    const memberIndex=membershipIndex_(membership);
+    const candidates=new Map();
+    let rawRecords=0,malformed=0;
+    const importedAt=new Date();
+
+    files.forEach(file=>{
+      const profile=String(file.profile||file.facebookProfile||'').trim();
+      if(!profile) throw new Error('CANDIDATE_PROFILE_REQUIRED: '+String(file.name||'unknown'));
+      const records=joinedGroupRecordsFromFile_(file);
+      records.forEach(record=>{
+        rawRecords++;
+        const id=canonicalCandidateIdentity_(record);
+        if(!id.key){malformed++;return;}
+        const key=id.key.toLowerCase();
+        if(!candidates.has(key)){
+          candidates.set(key,{key:id.key,url:id.url,records:[],profiles:new Set(),sourceFiles:new Set()});
+        }
+        const c=candidates.get(key);
+        c.records.push(record||{});
+        c.profiles.add(profile);
+        c.sourceFiles.add(String(file.name||profile));
+        const mk=key+'|'+profile.toLowerCase();
+        if(!memberIndex.has(mk)){
+          const row=membership.getLastRow()+1;
+          ensureSheetRowCapacity_(membership,row);
+          membership.getRange(row,1,1,8).setValues([[
+            id.key,profile,String(file.name||''),String(record.addedTime||''),
+            record.recent===true?'TRUE':String(record.recent||''),
+            typeof record.recentActivity==='string'?record.recentActivity:JSON.stringify(record.recentActivity||''),
+            importedAt,CFG.CANDIDATE_SOURCE
+          ]]);
+          memberIndex.set(mk,{row});
+        }
+      });
+    });
+
+    const allMembershipRows=membership.getLastRow()>=2
+      ?membership.getRange(2,1,membership.getLastRow()-1,8).getDisplayValues():[];
+    const profilesByKey=new Map();
+    allMembershipRows.forEach(r=>{
+      const key=String(r[0]||'').trim().toLowerCase(),profile=String(r[1]||'').trim();
+      if(!key||!profile)return;
+      if(!profilesByKey.has(key))profilesByKey.set(key,new Set());
+      profilesByKey.get(key).add(profile);
+    });
+
+    let inserted=0,updated=0,existingProduction=0;
+    candidates.forEach(cand=>{
+      const key=cand.key.toLowerCase();
+      const source=cand.records[0]||{};
+      const profiles=[...(profilesByKey.get(key)||cand.profiles)].sort();
+      const production=findExistingCanonicalGroup_(cand.key);
+      const existing=poolIndex.get(key);
+      const state=production?'PORTFOLIO':(existing?normalizeCandidateState_(existing.data[14]):'NEW_CANDIDATE');
+      if(production) existingProduction++;
+      const theme=candidateThemeHeuristic_(source.name,source.description);
+      const priority=candidatePriorityHeuristic_(source,profiles.length);
+      const recentHint=typeof source.recentActivity==='string'?source.recentActivity:JSON.stringify(source.recentActivity||'');
+      const values=[
+        cand.key,String(source.name||''),cand.url,String(source.description||''),String(source.visibility||''),
+        Number(source.membersCount||source.members||0)||'',String(source.addedTime||importedAt.toISOString()),
+        CFG.CANDIDATE_SOURCE,profiles.join(' | '),profiles.length,theme,
+        existing?String(existing.data[11]||''):'',priority,
+        existing?String(existing.data[13]||''):'',state,importedAt,recentHint,''
+      ];
+      if(existing){
+        pool.getRange(existing.row,1,1,18).setValues([values]);updated++;
+      }else{
+        const row=pool.getLastRow()+1;ensureSheetRowCapacity_(pool,row);
+        pool.getRange(row,1,1,18).setValues([values]);poolIndex.set(key,{row,data:values});inserted++;
+      }
+    });
+
+    return {
+      ok:true,version:CFG.VERSION,rawRecords,uniqueCanonical:candidates.size,malformed,
+      inserted,updated,existingProduction,
+      crossProfileOverlaps:[...profilesByKey.values()].filter(s=>s.size>1).length,
+      byProfile:files.reduce((a,f)=>{
+        const p=String(f.profile||f.facebookProfile||'').trim();
+        a[p]=(a[p]||0)+joinedGroupRecordsFromFile_(f).length;return a;
+      },{})
+    };
+  }
+
+  function getGroupCandidatePool_(command) {
+    command=command||{};ensureV16Sheets_(false);
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.CANDIDATE_POOL_SHEET);
+    if(sh.getLastRow()<2)return {version:CFG.VERSION,rows:[],counts:{}};
+    const rows=sh.getRange(2,1,sh.getLastRow()-1,18).getDisplayValues().map((r,i)=>({
+      row:i+2,groupKey:String(r[0]||''),name:String(r[1]||''),url:String(r[2]||''),
+      description:String(r[3]||''),visibility:String(r[4]||''),members:Number(r[5]||0),
+      snapshotAt:String(r[6]||''),source:String(r[7]||''),eligibleProfiles:String(r[8]||''),
+      membershipCount:Number(r[9]||0),theme:String(r[10]||''),preScreen:String(r[11]||''),
+      trialPriority:Number(r[12]||0),assignedIxProfile:String(r[13]||''),
+      state:normalizeCandidateState_(r[14]),importedAt:String(r[15]||''),recentActivityHint:String(r[16]||'')
+    }));
+    const stateFilter=String(command.state||'').trim().toUpperCase();
+    const profileFilter=String(command.profile||'').trim().toLowerCase();
+    const themeFilter=String(command.theme||'').trim().toLowerCase();
+    const filtered=rows.filter(x=>(!stateFilter||x.state===stateFilter)&&
+      (!profileFilter||x.eligibleProfiles.toLowerCase().includes(profileFilter))&&
+      (!themeFilter||x.theme.toLowerCase()===themeFilter));
+    filtered.sort((a,b)=>b.trialPriority-a.trialPriority||b.members-a.members||a.row-b.row);
+    const counts={};rows.forEach(x=>counts[x.state]=(counts[x.state]||0)+1);
+    return {version:CFG.VERSION,total:rows.length,counts,rows:filtered.slice(0,Math.max(1,Math.min(500,Number(command.limit||200))))};
+  }
+
+  function candidatePreScreenSchema_() {
+    return {
+      type:'object',
+      properties:{
+        theme:{type:'string'},metadata_relevance:{type:'string'},commercial_potential:{type:'string'},
+        noise_spam_risk:{type:'string'},trial_priority:{type:'integer'},rationale:{type:'string'}
+      },
+      required:['theme','metadata_relevance','commercial_potential','noise_spam_risk','trial_priority','rationale'],
+      additionalProperties:false
+    };
+  }
+
+  function preScreenGroupCandidate_(command) {
+    command=command||{};ensureV16Sheets_(false);
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.CANDIDATE_POOL_SHEET);
+    const row=Number(command.row||0);
+    if(row<2||row>sh.getLastRow())throw new Error('CANDIDATE_ROW_INVALID');
+    const r=sh.getRange(row,1,1,18).getValues()[0]||[];
+    const state=normalizeCandidateState_(r[14]);
+    if(['IN_TRIAL','PORTFOLIO','REJECTED'].indexOf(state)>=0)throw new Error('CANDIDATE_STATE_BLOCKED: '+state);
+    const payload={
+      name:String(r[1]||''),description:String(r[3]||''),visibility:String(r[4]||''),
+      members_snapshot:Number(r[5]||0),eligible_profiles:String(r[8]||''),membership_count:Number(r[9]||0),
+      recent_activity_hint:String(r[16]||'')
+    };
+    const cfg=getAiConfig_();
+    if(!cfg.configured)throw new Error('AI provider chưa cấu hình.');
+    const prompt=[
+      'Phân loại metadata Facebook Group để quyết định có đáng dành tài nguyên 3 ngày Trial hay không.',
+      'Chỉ dùng metadata được cung cấp. Không suy ra Owner Offer, Product Fit, buyer persona, CTA, pricing hay sales qualification.',
+      'Group size chỉ là metadata ngữ cảnh, không phải quality score.',
+      'trial_priority 0-100 chỉ là queue priority, không phải final Group rank.'
+    ].join('\n');
+    const schema=candidatePreScreenSchema_();
+    let d;
+    if(cfg.provider==='gemini') d=callGeminiStructured_(prompt,JSON.stringify(payload),schema,cfg).data;
+    else d=parseStructuredResponse_(callOpenAi_({
+      model:cfg.model,input:[{role:'system',content:prompt},{role:'user',content:JSON.stringify(payload)}],
+      max_output_tokens:1400,text:{format:{type:'json_schema',name:'candidate_pre_screen',strict:true,schema}}
+    }));
+    d=d||{};
+    const summary=[
+      'Relevance: '+String(d.metadata_relevance||''),
+      'Commercial: '+String(d.commercial_potential||''),
+      'Noise: '+String(d.noise_spam_risk||''),
+      String(d.rationale||'')
+    ].filter(Boolean).join(' • ');
+    sh.getRange(row,11).setValue(String(d.theme||candidateThemeHeuristic_(r[1],r[3])));
+    sh.getRange(row,12).setValue(summary);
+    sh.getRange(row,13).setValue(policyInt_(d.trial_priority,Number(r[12]||50),0,100));
+    sh.getRange(row,15).setValue('PRE_SCREENED');
+    return {ok:true,row,groupKey:String(r[0]||''),theme:String(d.theme||''),trialPriority:policyInt_(d.trial_priority,50,0,100),summary,state:'PRE_SCREENED'};
+  }
+
+  function assignCandidateGroupToPolicyProfile_(policyConfig,profileId,groupKey) {
+    const next=normalizeAutoPolicy_(policyConfig||getAutoPolicyConfig_());
+    const id=String(profileId||'').trim();
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!id||!key) throw new Error('CANDIDATE_POLICY_ASSIGNMENT_INVALID');
+    const profile=(next.profiles||[]).find(p=>String(p.id||'').trim()===id);
+    if(!profile) throw new Error('CANDIDATE_IX_PROFILE_INVALID: '+id);
+    (next.profiles||[]).forEach(p=>{
+      p.groupKeys=(p.groupKeys||[]).map(x=>String(x||'').trim().toLowerCase()).filter(Boolean).filter(x=>x!==key);
+    });
+    profile.groupKeys=[...new Set([...(profile.groupKeys||[]),key])];
+    validateAutoPolicy_(next);
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_POLICY_KEY,JSON.stringify(next));
+    return {profileId:id,groupKey:key};
+  }
+
+  function candidateProductionCountForProfile_(profileId,policyConfig) {
+    const config=policyConfig||getAutoPolicyConfig_();
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
+    if(sh.getLastRow()<2)return 0;
+    let n=0;
+    sh.getRange(2,1,sh.getLastRow()-1,CFG.GROUP_TRIAGE_TOTAL_COLS).getValues().forEach(r=>{
+      if(String(r[0]||'').trim()!=='Có')return;
+      const lifecycle=normalizeGroupLifecycle_(r[6]);
+      if(['NEW','DISCOVERY','TRIAL','REVIEW_READY','CORE','GOOD','WATCH'].indexOf(lifecycle)<0)return;
+      const g=groupPolicyInput_(r),p=policyProfileForGroup_(config,g.groupKey);
+      if(p&&String(p.id||'')===String(profileId||''))n++;
+    });
+    return n;
+  }
+
+  function queueGroupCandidateTrial_(command) {
+    command=command||{};ensureV16Sheets_(false);
+    const ss=SpreadsheetApp.getActiveSpreadsheet();
+    const pool=mustSheet_(ss,CFG.CANDIDATE_POOL_SHEET);
+    const row=Number(command.row||0);
+    if(row<2||row>pool.getLastRow())throw new Error('CANDIDATE_ROW_INVALID');
+    const r=pool.getRange(row,1,1,18).getValues()[0]||[];
+    const state=normalizeCandidateState_(r[14]);
+    if(['PRE_SCREENED','TRIAL_QUEUED','DEFERRED','NEW_CANDIDATE'].indexOf(state)<0)throw new Error('CANDIDATE_STATE_BLOCKED: '+state);
+    const key=String(r[0]||'').trim();
+    const existing=findExistingCanonicalGroup_(key);
+    if(existing){
+      pool.getRange(row,15).setValue('IN_TRIAL');
+      return {ok:true,duplicate:true,row,existing};
+    }
+    const config=getAutoPolicyConfig_();
+    const profileId=String(command.ixProfile||r[13]||config.activeProfileId||'').trim();
+    const profile=(config.profiles||[]).find(p=>String(p.id||'')===profileId);
+    if(!profile)throw new Error('CANDIDATE_IX_PROFILE_INVALID: '+profileId);
+    const capacity=Math.max(1,Number(profile.maxGroupCapacity||30));
+    const used=candidateProductionCountForProfile_(profileId,config);
+    if(used>=capacity)throw new Error('CANDIDATE_CAPACITY_FULL: '+profileId+' '+used+'/'+capacity);
+    const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
+    const added=initializeCandidateGroupRow_(scan,scan.getLastRow()+1,String(r[2]||''),'CANDIDATE_POOL');
+    scan.getRange(added.row,2).setValue('AUTO');
+    const policyAssignment=assignCandidateGroupToPolicyProfile_(config,profileId,added.groupKey||key);
+    pool.getRange(row,14).setValue(profileId);
+    pool.getRange(row,15).setValue('IN_TRIAL');
+    pool.getRange(row,18).setValue('Queued to production row '+added.row+' • '+new Date().toISOString());
+    return {ok:true,row,groupKey:key,productionRow:added.row,ixProfile:profileId,policyAssignment,capacity:{usedBefore:used,max:capacity},lifecycle:'NEW'};
+  }
+
+  function setGroupCandidateState_(command) {
+    command=command||{};ensureV16Sheets_(false);
+    const state=normalizeCandidateState_(command.state);
+    if(['IN_TRIAL','PORTFOLIO'].indexOf(state)>=0)throw new Error('Use production Trial/Human Triage path for '+state);
+    const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.CANDIDATE_POOL_SHEET);
+    const row=Number(command.row||0);if(row<2||row>sh.getLastRow())throw new Error('CANDIDATE_ROW_INVALID');
+    sh.getRange(row,15).setValue(state);
+    return {ok:true,row,state};
+  }
+
+  function runCandidatePoolHarness_() {
+    const a=canonicalCandidateIdentity_({id:'123456789',name:'Same'});
+    const b=canonicalCandidateIdentity_({id:'987654321',name:'Same'});
+    const schedulerBody=schedulerGroupTruth_.toString();
+    const tests={
+      POOL_NUMERIC_ID:a.key==='123456789',
+      POOL_SAME_NAME_DIFFERENT_ID:a.key!==b.key,
+      POOL_CANDIDATE_NOT_SCHEDULER:schedulerBody.indexOf('CANDIDATE_POOL_SHEET')<0&&schedulerBody.indexOf('GROUP CANDIDATE POOL')<0,
+      POOL_SOURCE_LOCKED:CFG.CANDIDATE_SOURCE==='JOINED_GROUP_EXPORT',
+      POOL_STATE_DISTINCT:CFG.CANDIDATE_STATES.indexOf('PRE_SCREENED')>=0&&CFG.GROUP_LIFECYCLE_STATES.indexOf('PRE_SCREENED')<0,
+      POOL_WAVE_LIMIT:CFG.CANDIDATE_DEFAULT_WAVE_SIZE>=5&&CFG.CANDIDATE_MAX_WAVE_SIZE<=10
+    };
+    const failed=Object.keys(tests).filter(k=>!tests[k]);
+    return {ok:failed.length===0,version:CFG.VERSION,tests,failed};
+  }
+
   function normalizeGroupLifecycle_(value) {
     const raw=String(value||'').trim();
     const legacy={
@@ -11240,6 +11626,7 @@ const RemoteApp = (() => {
     runGroupOnboardingHarness: runGroupOnboardingHarness_,
     runGroupIntelligenceHarness: runGroupIntelligenceHarness_,
     runGroupTriageHarness: runGroupTriageHarness_,
+    runCandidatePoolHarness: runCandidatePoolHarness_,
     runApiNativeCleanupHarness: runApiNativeCleanupHarness_,
     runVerifiedIdentityRetryHarness: runVerifiedIdentityRetryHarness_,
     runAutoPolicyHarness: runAutoPolicyHarness_,

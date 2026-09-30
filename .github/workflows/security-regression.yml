@@ -366,7 +366,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.9.2-lifecycle-validation'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.10-candidate-pool'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -403,6 +403,23 @@ jobs:
           assert "until-CFG.GROUP_TRIAL_DAYS*86400000" in runtime
           assert "TRIAGE_CANONICAL_ENUM_ONLY" in runtime
           assert "TRIAGE_LEGACY_AGE_BACKFILL" in runtime
+          assert "CANDIDATE_POOL_SHEET: 'GROUP CANDIDATE POOL'" in runtime
+          assert "PROFILE_GROUP_MEMBERSHIP_SHEET: 'PROFILE_GROUP_MEMBERSHIP'" in runtime
+          assert "CANDIDATE_SOURCE: 'JOINED_GROUP_EXPORT'" in runtime
+          assert "function importGroupCandidateFiles_(" in runtime
+          assert "function canonicalCandidateIdentity_(" in runtime
+          assert "function preScreenGroupCandidate_(" in runtime
+          assert "function queueGroupCandidateTrial_(" in runtime
+          assert "function candidateProductionCountForProfile_(" in runtime
+          assert "function runCandidatePoolHarness_(" in runtime
+          assert "POOL_CANDIDATE_NOT_SCHEDULER" in runtime
+          assert "POOL_SAME_NAME_DIFFERENT_ID" in runtime
+          assert "CANDIDATE_CAPACITY_FULL" in runtime
+          assert "function assignCandidateGroupToPolicyProfile_(" in runtime
+          assert "profile.groupKeys=[...new Set([...(profile.groupKeys||[]),key])]" in runtime
+          assert "scan.getRange(added.row,2).setValue('AUTO')" in runtime
+          assert "scan.getRange(added.row,2).setValue(profileId)" not in runtime
+          assert "Không suy ra Owner Offer, Product Fit, buyer persona, CTA, pricing hay sales qualification." in runtime
           assert "PENDING_ONBOARDING" in runtime
           assert "if(!before&&!groupId)" in runtime, 'raw URL-only row must stay pending until canonical intake'
           assert "lifecycleCanEnterDueQueue_(lifecycle)" in runtime
