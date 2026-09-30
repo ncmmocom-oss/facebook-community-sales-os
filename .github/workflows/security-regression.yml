@@ -365,7 +365,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.7-display-fallback-closure'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.8-signal-intelligence-queue'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -415,6 +415,14 @@ jobs:
           assert "setValue('Group ' + key)" not in runtime
           assert "`Group ${groupKey" not in runtime
           assert "('Group '+String(r[4]||''))" not in runtime
+          assert "function signalFeedSignalTier_" in runtime
+          assert "Lead Gate PASS" in runtime or "Hard Gate PASS" in runtime
+          assert "CONTEXT_REQUIRED vẫn có thể là tín hiệu đáng chú ý" in runtime
+          assert "const rank={STRONG:0,MEDIUM:1,WATCH:2}" in runtime
+          assert "if(gate==='PASS') return 'STRONG'" in runtime
+          assert "if(buyer==='Có' && actionable && concreteEvidence && score>=60) return 'STRONG'" in runtime
+          assert "if(!tier) return" in runtime
+          assert "if(!gate) return" not in runtime
           assert "targetCount:10" in runtime
           assert "'ONBOARDING_DISCOVERY'" in runtime
           assert "offerInferred:false" in runtime

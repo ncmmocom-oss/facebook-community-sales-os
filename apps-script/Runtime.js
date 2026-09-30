@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.7-display-fallback-closure',
+    VERSION: '1.9.8.7-HF10.8-signal-intelligence-queue',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -757,6 +757,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.8 Signal Intelligence Queue: TÍN HIỆU tách Signal Tier STRONG/MEDIUM/WATCH khỏi Lead Gate; buyer/pain signal có evidence vẫn được ưu tiên quan sát khi Offer Context thiếu, nhưng Lead PASS tiếp tục fail-closed.\n' +
       'V1.9.8.7-HF10.7 Display Fallback Closure: đóng hai đường legacy còn có thể phát sinh Group <key> trong Comment ingestion và Retry queue; mọi display name chưa xác minh đều CHƯA LẤY TÊN.\n' +
       'V1.9.8.7-HF10.6 Identity Display Cleanup: cấm placeholder Group <slug/id>; legacy generated names được chuẩn hóa thành CHƯA LẤY TÊN; Group Alias Registry và Group Intelligence khóa identity columns dạng TEXT để không scientific-coerce numeric IDs.\n' +
       'V1.9.8.7-HF10.5 Verified Identity Retry: Group đang LỖI GROUP_ID_RESOLVE chỉ được self-repair đúng 1 lần khi có numeric Group ID deterministic đã xác minh; nếu retry lại fail thì giữ quarantine, không loop.\n' +
@@ -3778,11 +3779,40 @@ const RemoteApp = (() => {
     return s.length<=max?s:(s.slice(0,max-1)+'…');
   }
 
-  function signalFeedGate_(value) {
+  function signalFeedLeadGate_(value) {
     const g=String(value||'').trim().toUpperCase();
     if(g==='PASS') return 'PASS';
     if(g==='WATCH') return 'WATCH';
-    if(g==='REVIEW' || g==='REVIEW_REQUIRED') return 'REVIEW';
+    if(g==='REVIEW' || g==='REVIEW_REQUIRED') return 'REVIEW_REQUIRED';
+    if(g==='CONTEXT_REQUIRED') return 'CONTEXT_REQUIRED';
+    if(g==='FAIL') return 'FAIL';
+    return '';
+  }
+
+  function signalFeedSignalTier_(r) {
+    r=r||[];
+    const gate=signalFeedLeadGate_(r[24]);
+    const score=Number(r[10]||0);
+    const intent=String(r[9]||'').trim();
+    const buyer=String(r[21]||'').trim();
+    const evidence=String(r[23]||'').trim();
+    const classification=String(r[11]||'').trim();
+    const concreteEvidence=!!evidence && !/^không có bằng chứng nhu cầu rõ$/i.test(evidence);
+    const actionable=new Set([
+      'Hỏi kinh nghiệm','Tìm giải pháp','So sánh','Xác thực','Phản đối',
+      'Muốn đổi','Muốn mua','Cần mua gấp'
+    ]).has(intent);
+
+    // Signal quality is intentionally independent from sales qualification.
+    // Missing Offer Context may block Lead PASS, but must not hide real buyer/pain evidence.
+    if(gate==='PASS') return 'STRONG';
+    if(buyer==='Có' && actionable && concreteEvidence && score>=60) return 'STRONG';
+    if(actionable && concreteEvidence && score>=40) return 'MEDIUM';
+    if(
+      gate==='WATCH' || gate==='REVIEW_REQUIRED' ||
+      (actionable && concreteEvidence && score>=25) ||
+      (classification==='Nguồn hội thoại' && score>=25)
+    ) return 'WATCH';
     return '';
   }
 
@@ -3819,13 +3849,14 @@ const RemoteApp = (() => {
         const dayKey=Utilities.formatDate(d,tz,'yyyy-MM-dd');
         const dayLabel=Utilities.formatDate(d,tz,'dd/MM/yyyy');
         const group=String(r[4]||'Group không rõ').trim()||'Group không rõ';
-        const gate=signalFeedGate_(r[24]);
+        const leadGate=signalFeedLeadGate_(r[24]);
+        const tier=signalFeedSignalTier_(r);
         const score=Number(r[10]||0);
         const key=dayKey+'|'+group;
 
         if(!buckets[key]){
           buckets[key]={
-            dayKey,dayLabel,group,total:0,candidate:0,pass:0,watch:0,review:0,
+            dayKey,dayLabel,group,total:0,candidate:0,strong:0,medium:0,watch:0,
             maxScore:0,latestMs:0,signals:[]
           };
         }
@@ -3834,14 +3865,15 @@ const RemoteApp = (() => {
         b.maxScore=Math.max(b.maxScore,score);
         b.latestMs=Math.max(b.latestMs,d.getTime());
 
-        if(!gate) return;
+        if(!tier) return;
         b.candidate++;
-        if(gate==='PASS') b.pass++;
-        else if(gate==='WATCH') b.watch++;
-        else if(gate==='REVIEW') b.review++;
+        if(tier==='STRONG') b.strong++;
+        else if(tier==='MEDIUM') b.medium++;
+        else if(tier==='WATCH') b.watch++;
 
         b.signals.push({
-          gate,
+          tier,
+          leadGate,
           score,
           person:String(r[5]||'').trim()||'Ẩn danh',
           sourceType:String(r[3]||'Bài viết').trim()||'Bài viết',
@@ -3859,7 +3891,8 @@ const RemoteApp = (() => {
       .filter(b=>b.candidate>0)
       .sort((a,b)=>{
         if(a.dayKey!==b.dayKey) return b.dayKey.localeCompare(a.dayKey);
-        if(a.pass!==b.pass) return b.pass-a.pass;
+        if(a.strong!==b.strong) return b.strong-a.strong;
+        if(a.medium!==b.medium) return b.medium-a.medium;
         if(a.candidate!==b.candidate) return b.candidate-a.candidate;
         if(a.maxScore!==b.maxScore) return b.maxScore-a.maxScore;
         return a.group.localeCompare(b.group,'vi');
@@ -3882,46 +3915,52 @@ const RemoteApp = (() => {
       const dayGroups=day.groups;
       const dayTotal=dayGroups.reduce((n,g)=>n+g.total,0);
       const daySignals=dayGroups.reduce((n,g)=>n+g.candidate,0);
-      const dayPass=dayGroups.reduce((n,g)=>n+g.pass,0);
+      const dayStrong=dayGroups.reduce((n,g)=>n+g.strong,0);
+      const dayMedium=dayGroups.reduce((n,g)=>n+g.medium,0);
       const dayStart=rows.length+4;
       rows.push([
         'NGÀY',day.label,
         dayGroups.length+' Group có tín hiệu',
         dayTotal+' nguồn',
         daySignals+' tín hiệu',
-        dayPass+' PASS','','','','','',''
+        dayStrong+' STRONG',dayMedium+' MEDIUM','','','','',''
       ]);
       rowKinds.push('DAY');
 
       dayGroups.forEach(g=>{
         const summaryRow=rows.length+4;
-        const topGate=g.pass>0?'PASS':(g.review>0?'REVIEW':'WATCH');
+        const topTier=g.strong>0?'STRONG':(g.medium>0?'MEDIUM':'WATCH');
         rows.push([
-          'GROUP',g.dayLabel,g.group,g.total,g.candidate,g.pass,g.watch,topGate,g.maxScore,
-          (g.review?('REVIEW '+g.review+' • '):'')+'Candidate '+g.candidate+'/'+g.total,
+          'GROUP',g.dayLabel,g.group,g.total,g.candidate,g.strong,g.medium,topTier,g.maxScore,
+          'WATCH '+g.watch+' • Candidate '+g.candidate+'/'+g.total,
           'Bấm + để mở '+g.signals.length+' tín hiệu',''
         ]);
-        rowKinds.push(g.pass>0?'GROUP_PASS':'GROUP_WATCH');
+        rowKinds.push(g.strong>0?'GROUP_STRONG':(g.medium>0?'GROUP_MEDIUM':'GROUP_WATCH'));
 
         const childStart=rows.length+4;
-        const rank={PASS:0,REVIEW:1,WATCH:2};
+        const rank={STRONG:0,MEDIUM:1,WATCH:2};
         g.signals.sort((x,y)=>{
-          const rx=rank[x.gate]===undefined?9:rank[x.gate];
-          const ry=rank[y.gate]===undefined?9:rank[y.gate];
+          const rx=rank[x.tier]===undefined?9:rank[x.tier];
+          const ry=rank[y.tier]===undefined?9:rank[y.tier];
           if(rx!==ry) return rx-ry;
           return y.score-x.score;
         }).forEach(x=>{
           signalCount++;
           rows.push([
-            'TÍN HIỆU','',x.person,x.sourceType,x.pain,'','',x.gate,x.score,
+            'TÍN HIỆU','',x.person,x.sourceType,x.pain,
+            x.tier==='STRONG'?'✓':'',
+            x.tier==='MEDIUM'?'✓':'',
+            x.leadGate||'',
+            x.score,
             signalFeedSnippet_(
+              'Tier: '+x.tier+' • '+
               (x.intent?('Intent: '+x.intent+' • '):'')+
               (x.evidence?('Evidence: '+x.evidence):''),360
             ),
             x.nextAction||x.status,
             x.url
           ]);
-          rowKinds.push('SIGNAL_'+x.gate);
+          rowKinds.push('SIGNAL_'+x.tier);
         });
         const childEnd=rows.length+3;
         if(childEnd>=childStart) groupBlocks.push({start:childStart,end:childEnd});
@@ -3944,10 +3983,10 @@ const RemoteApp = (() => {
 
     sh.getRange(2,1,1,12).breakApart().merge();
     sh.getRange(2,1).setValue(
-      'Chỉ hiển thị PASS / WATCH / REVIEW. CƠ HỘI vẫn là source-of-truth. Dấu + bên trái để bung tín hiệu của từng Group.'
+      'Signal Tier STRONG / MEDIUM / WATCH độc lập với Lead Gate. CONTEXT_REQUIRED vẫn có thể là tín hiệu đáng chú ý nhưng KHÁCH HÀNG TIỀM NĂNG chỉ nhận Hard Gate PASS. Dấu + bên trái để bung tín hiệu.'
     ).setFontColor('#64748b').setFontSize(10).setWrap(true);
 
-    const headers=['Loại','Ngày','Group / Người','Tổng nguồn / Loại','Tín hiệu / Pain','PASS','WATCH','Gate','Điểm','Intent / Bằng chứng','Hành động','URL nguồn'];
+    const headers=['Loại','Ngày','Group / Người','Tổng nguồn / Loại','Tín hiệu / Pain','STRONG','MEDIUM','Lead Gate','Điểm','Tier / Intent / Bằng chứng','Hành động','URL nguồn'];
     sh.getRange(3,1,1,12).setValues([headers])
       .setFontWeight('bold').setHorizontalAlignment('center').setVerticalAlignment('middle')
       .setBackground('#d1fae5');
@@ -3963,11 +4002,12 @@ const RemoteApp = (() => {
       rowKinds.forEach(kind=>{
         let color='#ffffff',weight='normal';
         if(kind==='DAY'){color='#e0f2fe';weight='bold';}
-        else if(kind==='GROUP_PASS'){color='#dcfce7';weight='bold';}
-        else if(kind==='GROUP_WATCH'){color='#fef3c7';weight='bold';}
-        else if(kind==='SIGNAL_PASS'){color='#f0fdf4';}
-        else if(kind==='SIGNAL_REVIEW'){color='#faf5ff';}
-        else if(kind==='SIGNAL_WATCH'){color='#fffbeb';}
+        else if(kind==='GROUP_STRONG'){color='#dcfce7';weight='bold';}
+        else if(kind==='GROUP_MEDIUM'){color='#fef3c7';weight='bold';}
+        else if(kind==='GROUP_WATCH'){color='#f8fafc';weight='bold';}
+        else if(kind==='SIGNAL_STRONG'){color='#f0fdf4';}
+        else if(kind==='SIGNAL_MEDIUM'){color='#fffbeb';}
+        else if(kind==='SIGNAL_WATCH'){color='#f8fafc';}
         bg.push(Array(12).fill(color));
         weights.push(Array(12).fill(weight));
       });
