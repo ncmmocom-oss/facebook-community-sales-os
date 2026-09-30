@@ -366,7 +366,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.10.2-candidate-wave-eligibility-hardening'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.10.3-trial-concurrency-semantics'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -415,11 +415,13 @@ jobs:
           assert "function candidateIdentityEvidence_(" in runtime
           assert "function canonicalCandidateIdentityWithEvidence_(" in runtime
           assert "function candidateProfileEligibility_(" in runtime
+          assert "function isCandidateConcurrentTrialLifecycle_(" in runtime
           assert "function selectCandidateWaveRows_(" in runtime
           assert "POOL_EXPORT_ALIAS_EVIDENCE" in runtime
           assert "POOL_PROFILE_ELIGIBILITY" in runtime
           assert "POOL_PROFILE_ELIGIBILITY_UNMAPPED" in runtime
           assert "POOL_PROFILE_NOT_ELIGIBLE" in runtime
+          assert "POOL_TRIAL_CONCURRENCY_SEMANTICS" in runtime
           assert "POOL_WAVE_BACKLOG_LIMITS" in runtime
           assert "CANDIDATE_PROFILE_ELIGIBILITY_UNMAPPED" in runtime
           assert "PROFILE_ELIGIBILITY_UNMAPPED" in runtime
