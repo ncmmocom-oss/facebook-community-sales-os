@@ -1,6 +1,6 @@
 const RemoteApp = (() => {
   const CFG = {
-    VERSION: '1.9.8.7-HF10.10.1-candidate-wave-hardening',
+    VERSION: '1.9.8.7-HF10.10.2-candidate-wave-eligibility-hardening',
     UI_CONTRACT: 'scan-scope-v2',
     RAW_SHEET: 'NHẬP JSON',
     OPPORTUNITY_SHEET: 'CƠ HỘI',
@@ -773,6 +773,7 @@ const RemoteApp = (() => {
       'SOCIAL AIO Community Sales\n' +
       'Runtime: V' + CFG.VERSION + '\n' +
       'Nguồn code: GitHub\n' +
+      'V1.9.8.7-HF10.10.2 Candidate Wave Eligibility Hardening: Wave readiness now blocks unmapped IX Facebook identities; zero-match waves return explicit eligibility diagnostics instead of silent queued=0.\n' +
       'V1.9.8.7-HF10.10.1 Candidate Wave Hardening: export-local numeric↔slug evidence dedupes deterministically; exact batch overlap stats; IX eligibility guard; bounded 5–10 Trial Waves respect capacity, concurrent Trial load, AI backlog, Comment backlog and theme diversity.\n' +
       'V1.9.8.7-HF10.10 Candidate Pool: adds staging inventory + normalized profile↔Group membership, metadata pre-screen, capacity-guarded Trial queue, and keeps Candidate rows completely outside AUTO Due Queue.\n' +
       'V1.9.8.7-HF10.9.2 Lifecycle Validation: column G stores only canonical lifecycle enum; legacy values migrate deterministically; legacy TRIAL age backfills Lifecycle Since from Trial Until minus configured Trial duration without restarting Trial.\n' +
@@ -8757,7 +8758,9 @@ const RemoteApp = (() => {
     const used=candidateProductionCountForProfile_(profileId,config);
     const concurrentTrials=candidateConcurrentTrialCountForProfile_(profileId,config);
     const backlog=candidateWaveBacklogState_();
+    const mappedProfileIdentities=[...(profile.facebookIdentities||[])].map(normalizeCandidateProfileToken_).filter(Boolean);
     const reasons=[];
+    if(!mappedProfileIdentities.length) reasons.push('PROFILE_ELIGIBILITY_UNMAPPED');
     if(used>=capacity) reasons.push('CAPACITY_FULL');
     if(concurrentTrials>=CFG.CANDIDATE_MAX_CONCURRENT_TRIALS) reasons.push('CONCURRENT_TRIAL_LIMIT');
     if(backlog.aiBacklog>backlog.aiLimit) reasons.push('AI_BACKLOG');
@@ -8766,6 +8769,7 @@ const RemoteApp = (() => {
       ok:reasons.length===0,version:CFG.VERSION,profileId,
       capacity:{used,max:capacity,available:Math.max(0,capacity-used)},
       concurrentTrials,maxConcurrentTrials:CFG.CANDIDATE_MAX_CONCURRENT_TRIALS,
+      profileIdentityMappings:mappedProfileIdentities.length,
       backlog,reasons
     };
   }
@@ -8812,10 +8816,21 @@ const RemoteApp = (() => {
     const pool=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.CANDIDATE_POOL_SHEET);
     if(pool.getLastRow()<2) return {ok:true,queued:0,profileId,readiness,selected:[]};
     const raw=pool.getRange(2,1,pool.getLastRow()-1,18).getValues();
-    const candidates=raw.map((r,i)=>({
+    const preScreened=raw.map((r,i)=>({
       row:i+2,rowData:r,state:normalizeCandidateState_(r[14]),theme:String(r[10]||'Other'),
       trialPriority:Number(r[12]||0),members:Number(r[5]||0)
-    })).filter(x=>x.state==='PRE_SCREENED' && candidateProfileEligibility_(x.rowData,profile).ok);
+    })).filter(x=>x.state==='PRE_SCREENED');
+    const eligibilityReasons={};
+    const candidates=preScreened.filter(x=>{
+      const eligibility=candidateProfileEligibility_(x.rowData,profile);
+      if(eligibility.ok) return true;
+      eligibilityReasons[eligibility.reason]=(eligibilityReasons[eligibility.reason]||0)+1;
+      return false;
+    });
+    const eligibility={preScreened:preScreened.length,eligible:candidates.length,ineligible:preScreened.length-candidates.length,reasons:eligibilityReasons};
+    if(preScreened.length && !candidates.length){
+      return {ok:false,queued:0,profileId,readiness,eligibility,reason:'CANDIDATE_WAVE_NO_ELIGIBLE_PROFILE'};
+    }
     const selected=selectCandidateWaveRows_(candidates,availableSlots);
     const results=[];
     selected.forEach(x=>{
@@ -8831,7 +8846,7 @@ const RemoteApp = (() => {
     return {
       ok:results.every(x=>x.ok),version:CFG.VERSION,profileId,requested,selected:selected.length,
       queued:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok).length,
-      readiness,results
+      readiness,eligibility,results
     };
   }
 
@@ -8892,6 +8907,8 @@ const RemoteApp = (() => {
       POOL_WAVE_LIMIT:CFG.CANDIDATE_DEFAULT_WAVE_SIZE>=5&&CFG.CANDIDATE_MAX_WAVE_SIZE<=10,
       POOL_EXPORT_ALIAS_EVIDENCE:canonicalCandidateIdentityWithEvidence_({url:'https://www.facebook.com/groups/example.slug/'},{aliasToNumeric:new Map([['example.slug','123456789']])},new Map()).key==='123456789',
       POOL_PROFILE_ELIGIBILITY:candidateProfileEligibility_(Array(18).fill('').map((x,i)=>i===8?'Chi Giang | Trần Bảo Trang':''),{facebookIdentities:['Chi Giang']}).ok===true,
+      POOL_PROFILE_ELIGIBILITY_UNMAPPED:candidateProfileEligibility_(Array(18).fill('').map((x,i)=>i===8?'Chi Giang':''),{facebookIdentities:[]}).reason==='CANDIDATE_PROFILE_ELIGIBILITY_UNMAPPED',
+      POOL_PROFILE_NOT_ELIGIBLE:candidateProfileEligibility_(Array(18).fill('').map((x,i)=>i===8?'Chi Giang':''),{facebookIdentities:['Trần Bảo Trang']}).reason==='CANDIDATE_PROFILE_NOT_ELIGIBLE',
       POOL_WAVE_BACKLOG_LIMITS:CFG.CANDIDATE_AI_BACKLOG_MAX>0&&CFG.CANDIDATE_COMMENT_BACKLOG_MAX>0&&CFG.CANDIDATE_MAX_CONCURRENT_TRIALS>=CFG.CANDIDATE_DEFAULT_WAVE_SIZE
     };
     const failed=Object.keys(tests).filter(k=>!tests[k]);
