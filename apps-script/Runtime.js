@@ -8513,7 +8513,7 @@ const RemoteApp = (() => {
       sheet.getRange(row,33).setValue('ERROR');
     }
     if(['CORE','GOOD','WATCH','PAUSED','STOPPED'].indexOf(next)>=0){
-      sheet.getRange(row,32).setValue(now);
+      sheet.getRange(row,31).setValue(now);
     }
     return next;
   }
@@ -8580,7 +8580,7 @@ const RemoteApp = (() => {
         metrics.totalSources>=CFG.GROUP_TRIAL_MIN_TOTAL_SOURCES &&
         metrics.analyzedSources>=CFG.GROUP_TRIAL_MIN_ANALYZED_SOURCES &&
         metrics.posts>=CFG.GROUP_TRIAL_MIN_POSTS;
-      sh.getRange(row,31).setValue(
+      sh.getRange(row,32).setValue(
         'Trial '+Math.max(1,Math.floor((now-since)/86400000)+1)+'d • '+
         'Sources '+metrics.totalSources+' • Relevant '+metrics.relevantPct+'% • Buyer '+metrics.buyerPct+'% • '+
         'Strong '+metrics.strongSignals+' • Yield '+metrics.customerSignalYieldPct+'%'
@@ -8694,7 +8694,7 @@ const RemoteApp = (() => {
     };
     saveGroupReview_(groupKey,state);
     sh.getRange(row,30).setValue(rec);
-    sh.getRange(row,31).setValue(
+    sh.getRange(row,32).setValue(
       state.summary+' • Yield '+metrics.customerSignalYieldPct+'% • Strong '+metrics.strongSignals+
       ' • Human decision required'
     );
@@ -8756,7 +8756,7 @@ const RemoteApp = (() => {
         actionableSignals:metrics.actionableSignals,
         customerSignalYieldPct:metrics.customerSignalYieldPct,
         aiRecommendation:String(r[29]||review.recommendation||''),
-        summary:String(r[30]||review.summary||''),
+        summary:String(r[31]||review.summary||''),
         onboardingStatus:String(r[32]||'')
       };
     }).sort((a,b)=>groupPriorityRank_(a.lifecycle)-groupPriorityRank_(b.lifecycle)||b.customerSignalYieldPct-a.customerSignalYieldPct||a.row-b.row);
