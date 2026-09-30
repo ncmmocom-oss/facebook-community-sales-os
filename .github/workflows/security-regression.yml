@@ -421,6 +421,14 @@ jobs:
           assert "POOL_WAVE_BACKLOG_LIMITS" in runtime
           assert "CANDIDATE_PROFILE_ELIGIBILITY_UNMAPPED" in runtime
           assert "CANDIDATE_WAVE_BLOCKED" in runtime
+          wave_ready_start = runtime.index('function getCandidateWaveReadiness_(')
+          wave_ready_end = runtime.index('function selectCandidateWaveRows_(', wave_ready_start)
+          wave_ready_block = runtime[wave_ready_start:wave_ready_end]
+          assert "candidateProfileEligibility_(r,profile)" not in wave_ready_block, 'readiness has no candidate row and must not dereference r'
+          candidate_queue_start = runtime.index('function queueGroupCandidateTrial_(')
+          candidate_queue_end = runtime.index('function setGroupCandidateState_(', candidate_queue_start)
+          candidate_queue_block = runtime[candidate_queue_start:candidate_queue_end]
+          assert "candidateProfileEligibility_(r,profile)" in candidate_queue_block, 'single Candidate queue must enforce Facebook-profile eligibility'
           assert "identityConflicts" in runtime
           assert "return {key:rawId" in runtime, 'numeric Group ID must remain primary candidate identity'
           assert "source.snapshotAt||source.exportedAt||source.capturedAt||importedAt.toISOString()" in runtime
