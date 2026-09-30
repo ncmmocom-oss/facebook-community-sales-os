@@ -8597,6 +8597,22 @@ const RemoteApp = (() => {
     return {ok:true,row,groupKey:String(r[0]||''),theme:String(d.theme||''),trialPriority:policyInt_(d.trial_priority,50,0,100),summary,state:'PRE_SCREENED'};
   }
 
+  function assignCandidateGroupToPolicyProfile_(policyConfig,profileId,groupKey) {
+    const next=normalizeAutoPolicy_(policyConfig||getAutoPolicyConfig_());
+    const id=String(profileId||'').trim();
+    const key=String(groupKey||'').trim().toLowerCase();
+    if(!id||!key) throw new Error('CANDIDATE_POLICY_ASSIGNMENT_INVALID');
+    const profile=(next.profiles||[]).find(p=>String(p.id||'').trim()===id);
+    if(!profile) throw new Error('CANDIDATE_IX_PROFILE_INVALID: '+id);
+    (next.profiles||[]).forEach(p=>{
+      p.groupKeys=(p.groupKeys||[]).map(x=>String(x||'').trim().toLowerCase()).filter(Boolean).filter(x=>x!==key);
+    });
+    profile.groupKeys=[...new Set([...(profile.groupKeys||[]),key])];
+    validateAutoPolicy_(next);
+    PropertiesService.getDocumentProperties().setProperty(CFG.AUTO_POLICY_KEY,JSON.stringify(next));
+    return {profileId:id,groupKey:key};
+  }
+
   function candidateProductionCountForProfile_(profileId,policyConfig) {
     const config=policyConfig||getAutoPolicyConfig_();
     const sh=mustSheet_(SpreadsheetApp.getActiveSpreadsheet(),CFG.GROUP_SCAN_SHEET);
@@ -8636,11 +8652,12 @@ const RemoteApp = (() => {
     if(used>=capacity)throw new Error('CANDIDATE_CAPACITY_FULL: '+profileId+' '+used+'/'+capacity);
     const scan=mustSheet_(ss,CFG.GROUP_SCAN_SHEET);
     const added=initializeCandidateGroupRow_(scan,scan.getLastRow()+1,String(r[2]||''),'CANDIDATE_POOL');
-    scan.getRange(added.row,2).setValue(profileId);
+    scan.getRange(added.row,2).setValue('AUTO');
+    const policyAssignment=assignCandidateGroupToPolicyProfile_(config,profileId,added.groupKey||key);
     pool.getRange(row,14).setValue(profileId);
     pool.getRange(row,15).setValue('IN_TRIAL');
     pool.getRange(row,18).setValue('Queued to production row '+added.row+' • '+new Date().toISOString());
-    return {ok:true,row,groupKey:key,productionRow:added.row,ixProfile:profileId,capacity:{usedBefore:used,max:capacity},lifecycle:'NEW'};
+    return {ok:true,row,groupKey:key,productionRow:added.row,ixProfile:profileId,policyAssignment,capacity:{usedBefore:used,max:capacity},lifecycle:'NEW'};
   }
 
   function setGroupCandidateState_(command) {
