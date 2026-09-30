@@ -366,7 +366,7 @@ jobs:
           assert 'onclick="runDueGroups(false)"' not in ui
           assert "RUN_AUTO_MONITOR_TEST" in runtime  # hidden support diagnostic retained
 
-          assert "VERSION: '1.9.8.7-HF10.10-candidate-pool'" in runtime
+          assert "VERSION: '1.9.8.7-HF10.10.1-candidate-wave-hardening'" in runtime
           assert "CONTEXT_REQUIRED" in runtime
           assert "LEAD_LEGACY_ARCHIVE_SHEET" in runtime
           assert "OPPORTUNITY_TOTAL_COLS: 32" in runtime
@@ -410,6 +410,19 @@ jobs:
           assert "function canonicalCandidateIdentity_(" in runtime
           assert "function preScreenGroupCandidate_(" in runtime
           assert "function queueGroupCandidateTrial_(" in runtime
+          assert "function queueGroupCandidateWave_(" in runtime
+          assert "function getCandidateWaveReadiness_(" in runtime
+          assert "function candidateIdentityEvidence_(" in runtime
+          assert "function canonicalCandidateIdentityWithEvidence_(" in runtime
+          assert "function candidateProfileEligibility_(" in runtime
+          assert "function selectCandidateWaveRows_(" in runtime
+          assert "POOL_EXPORT_ALIAS_EVIDENCE" in runtime
+          assert "POOL_PROFILE_ELIGIBILITY" in runtime
+          assert "POOL_WAVE_BACKLOG_LIMITS" in runtime
+          assert "CANDIDATE_PROFILE_ELIGIBILITY_UNMAPPED" in runtime
+          assert "CANDIDATE_WAVE_BLOCKED" in runtime
+          assert "identityConflicts" in runtime
+          assert "batchProfilesByKey" in runtime
           assert "function candidateProductionCountForProfile_(" in runtime
           assert "function runCandidatePoolHarness_(" in runtime
           assert "POOL_CANDIDATE_NOT_SCHEDULER" in runtime
